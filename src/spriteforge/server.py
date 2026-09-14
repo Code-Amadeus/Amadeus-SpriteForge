@@ -1,0 +1,203 @@
+"""Loopback-only editor. Files and graph writes belong to one selected workspace."""
+from __future__ import annotations
+
+import json
+import threading
+import urllib.parse
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from .character_pack import load_character_pack
+from .graph import validate_graph
+from .workspace import atomic_json, clip_frames, discover, png_frames, read_json, resolve_asset
+
+WEB_ROOT = Path(__file__).parent / "web"
+
+
+def make_server(workspace: Path, port: int = 7788) -> ThreadingHTTPServer:
+    workspace = workspace.resolve()
+    if not workspace.is_dir():
+        raise ValueError("Workspace does not exist; run spriteforge init first")
+    pack = load_character_pack(workspace) if (workspace / "runtime_manifest.json").exists() else None
+    indexed = {p for frames in pack.clip_paths.values() for p in frames} if pack else set()
+    if pack:
+        indexed.update(p for frames in pack.mouth_overlay_paths.values() for p in frames)
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def send(self, status: int, content: bytes, mime: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(content)
+
+        def json(self, status: int, value: object) -> None:
+            self.send(status, json.dumps(value, ensure_ascii=False, allow_nan=False).encode(), "application/json; charset=utf-8")
+
+        def local_request(self) -> bool:
+            port = self.server.server_port
+            hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+            origin = self.headers.get("Origin")
+            return self.headers.get("Host") in hosts and (not origin or origin in {f"http://{h}" for h in hosts})
+
+        def do_GET(self) -> None:
+            if not self.local_request():
+                self.json(403, {"ok": False, "error": "Use the local editor URL"})
+                return
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query)
+            try:
+                if parsed.path == "/":
+                    self.send(200, (WEB_ROOT / "review.html").read_bytes(), "text/html; charset=utf-8")
+                elif parsed.path == "/favicon.ico":
+                    self.send(204, b"", "image/x-icon")
+                elif parsed.path in {"/static/review.js", "/static/review.css"}:
+                    name = parsed.path.rsplit("/", 1)[-1]
+                    self.send(200, (WEB_ROOT / name).read_bytes(), "text/javascript" if name.endswith(".js") else "text/css")
+                elif parsed.path == "/static/preview-media.js":
+                    self.send(200, (WEB_ROOT / "preview-media.js").read_bytes(), "text/javascript")
+                elif parsed.path.startswith("/static/vendor/"):
+                    name = parsed.path.rsplit("/", 1)[-1]
+                    if name not in {"pixi.min.js", "pixi-basis-ktx2.global.js", "basis_transcoder.js", "basis_transcoder.wasm"}:
+                        raise ValueError("Unknown browser dependency")
+                    self.send(200, (WEB_ROOT / "vendor" / name).read_bytes(), "application/wasm" if name.endswith(".wasm") else "text/javascript")
+                elif parsed.path == "/api/projects":
+                    sources = [{"id": "runtime", "label": f"KTX2 pack: {pack.manifest['displayName']} (read only)",
+                                "states": [{"id": label, "label": label, "root": label, "clips": {"loop": len(frames)}}
+                                           for label, frames in pack.clip_paths.items()]}] if pack else discover(workspace)
+                    self.json(200, {"ok": True, "readOnly": bool(pack), "sources": sources})
+                elif parsed.path == "/api/graph":
+                    path = resolve_asset(workspace, "graph_config.json")
+                    with lock:
+                        graph = pack.graph if pack else read_json(path) if path.exists() else {"nodes": [], "edges": []}
+                    if pack:
+                        graph = {"nodes": [{**n, "root": n["label"], "phase": pack.manifest["clips"][n["label"]]["phase"],
+                                            "frameIntervalMs": pack.manifest["clips"][n["label"]]["frameIntervalMs"],
+                                            "loopMode": pack.manifest["clips"][n["label"]]["loopMode"],
+                                            "x": 80 + (i % 3) * 150, "y": 90 + (i // 3) * 110}
+                                           for i, n in enumerate(pack.graph["nodes"])], "edges": pack.graph["edges"]}
+                    self.json(200, {"ok": True, "graph": graph})
+                elif parsed.path == "/api/clips":
+                    if pack:
+                        label = (qs.get("root") or [""])[0]
+                        if label not in pack.clip_paths:
+                            raise ValueError("Unknown manifest clip")
+                        clip = pack.manifest["clips"][label]
+                        self.json(200, {"ok": True, "layout": "runtime_ktx2", "root": label, "state_label": label,
+                                       "clips": {label: {**clip, "role": clip["phase"], "path": label,
+                                                         "frames": [p.relative_to(workspace).as_posix() for p in pack.clip_paths[label]]}}})
+                        return
+                    root = resolve_asset(workspace, (qs.get("root") or [""])[0])
+                    clips = {}
+                    candidates = [("flat", root)] if png_frames(workspace, root) else [(p, root / p) for p in ("in", "loop", "out")]
+                    for phase, directory in candidates:
+                        frames = png_frames(workspace, directory)
+                        if frames:
+                            clips[f"{root.name}/{phase}"] = {"role": phase, "path": directory.relative_to(workspace).as_posix(),
+                                "frames": [p.relative_to(workspace).as_posix() for p in frames]}
+                    if not clips:
+                        raise ValueError("No PNG frames here. Select an exact frame folder or a folder containing in/loop/out")
+                    self.json(200, {"ok": True, "layout": "flat" if candidates[0][0] == "flat" else "legacy_in_loop_out",
+                                    "root": root.relative_to(workspace).as_posix(), "state_label": root.name, "clips": clips})
+                elif parsed.path == "/api/report":
+                    if pack:
+                        raise ValueError("Image QA requires authoring PNG frames; KTX2 review uses manifest-indexed playback")
+                    root = resolve_asset(workspace, (qs.get("root") or [""])[0])
+                    # Check all assets before handing them to the optional image-analysis library.
+                    for frame in root.rglob("*.png"):
+                        resolve_asset(workspace, str(frame))
+                    try:
+                        from .qa import build_report
+                    except ImportError as exc:
+                        raise ValueError('QA needs the optional dependencies: pip install ".[qa]"') from exc
+                    self.json(200, {"ok": True, "report": build_report(root)})
+                elif parsed.path == "/api/mouth_masks":
+                    if pack:
+                        self.json(200, {"ok": True, "expressions": {}})
+                        return
+                    # Authoring-only overlay preview; no runtime or legacy installation lookup.
+                    path = resolve_asset(workspace, "spriteforge_mouth_config.json")
+                    raw = read_json(path) if path.exists() else {}
+                    expressions = {}
+                    for label, cfg in raw.get("expressions", {}).items():
+                        frames, openness = [], []
+                        for key, value in (("half", .65), ("full", 1.0)):
+                            ref = cfg.get("speaking_frames", {}).get(key)
+                            if ref:
+                                frame = resolve_asset(workspace, ref)
+                                if not frame.is_file() or frame.suffix.lower() != ".png":
+                                    raise ValueError(f"Missing PNG mouth frame for {label}")
+                                frames.append("/frame?path=" + urllib.parse.quote(frame.relative_to(workspace).as_posix()))
+                                openness.append(value)
+                        expressions[label] = {**{k: cfg[k] for k in ("cx", "cy", "width", "height", "curve") if k in cfg},
+                            "frameUrls": frames, "openness": openness, "closed_frame_idx": -1,
+                            "open_frame_idx": len(frames) - 1, "sf": True}
+                    self.json(200, {"ok": True, "expressions": expressions})
+                elif parsed.path == "/frame":
+                    frame = resolve_asset(workspace, (qs.get("path") or [""])[0])
+                    if not frame.is_file() or (frame not in indexed if pack else frame.suffix.lower() != ".png"):
+                        raise ValueError("Frame is not an indexed texture or workspace PNG")
+                    self.send(200, frame.read_bytes(), "image/ktx2" if pack else "image/png")
+                else:
+                    self.json(404, {"ok": False, "error": "Not found"})
+            except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+                self.json(400, {"ok": False, "error": str(exc)})
+
+        def do_POST(self) -> None:
+            if not self.local_request() or self.headers.get_content_type() != "application/json":
+                self.json(403, {"ok": False, "error": "Graph writes require a local JSON request"})
+                return
+            if self.path not in {"/api/graph", "/api/validate", "/api/preview-node"}:
+                self.json(404, {"ok": False, "error": "Not found"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 2_000_000:
+                    raise ValueError("Invalid graph request size")
+                raw = json.loads(self.rfile.read(length))
+                if pack:
+                    if self.path != "/api/preview-node":
+                        self.json(409, {"ok": False, "error": "Runtime packs are read-only. Edit the authoring workspace instead"})
+                        return
+                    node = next((n for n in pack.graph["nodes"] if n["id"] == raw.get("nodeId")), None)
+                    if node is None:
+                        raise ValueError("Unknown runtime node")
+                    clip = pack.manifest["clips"][node["label"]]
+                    self.json(200, {"ok": True, "node": {**node, "frameIntervalMs": clip["frameIntervalMs"], "loopMode": clip["loopMode"]},
+                                   "frames": [p.relative_to(workspace).as_posix() for p in pack.clip_paths[node["label"]]]})
+                    return
+                graph = validate_graph(workspace, raw.get("graph") if self.path == "/api/preview-node" else raw)
+                if self.path == "/api/graph":
+                    with lock:
+                        atomic_json(resolve_asset(workspace, "graph_config.json"), graph)
+                if self.path == "/api/preview-node":
+                    node = next((n for n in graph["nodes"] if n["id"] == raw.get("nodeId")), None)
+                    if node is None:
+                        raise ValueError("Unknown node")
+                    self.json(200, {"ok": True, "node": node,
+                                   "frames": [p.relative_to(workspace).as_posix() for p in clip_frames(workspace, node)]})
+                else:
+                    self.json(200, {"ok": True, "graph": graph})
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                self.json(400, {"ok": False, "error": str(exc)})
+
+        def log_message(self, *args) -> None:
+            pass
+
+    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+
+
+def serve(workspace: Path, port: int, no_browser: bool) -> None:
+    with make_server(workspace, port) as server:
+        url = f"http://127.0.0.1:{server.server_port}"
+        print(f"SpriteForge: {url}\nWorkspace: {workspace.resolve()}", flush=True)
+        if not no_browser:
+            webbrowser.open(url)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass

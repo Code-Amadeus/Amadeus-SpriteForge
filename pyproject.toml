@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amadeus-spriteforge"
+version = "0.1.0"
+description = "Local sprite asset review, behavior graph editing, and Amadeus pack export"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = []
+
+[project.optional-dependencies]
+qa = ["numpy>=1.24,<3", "opencv-python-headless>=4.8,<5"]
+dev = ["pytest>=8,<9"]
+
+[project.scripts]
+spriteforge = "spriteforge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+spriteforge = ["web/*.html", "web/*.css", "web/*.js", "web/vendor/*", "licenses/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

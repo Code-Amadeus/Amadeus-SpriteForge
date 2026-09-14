@@ -1,0 +1,46 @@
+{
+  "format": "amadeus.spriteforge.character-pack.v1",
+  "id": "demo",
+  "displayName": "Demo",
+  "version": "1.0.0",
+  "textureFormat": "ktx2",
+  "graph": "graph_config.json",
+  "mouthConfig": "spriteforge_mouth_config.json",
+  "clips": {
+    "idle": {
+      "phase": "flat",
+      "frameIntervalMs": 160,
+      "loopMode": "loop",
+      "frames": [
+        "textures/4fb62348858c2f6f/000000.ktx2",
+        "textures/4fb62348858c2f6f/000001.ktx2",
+        "textures/4fb62348858c2f6f/000002.ktx2"
+      ]
+    },
+    "idle_variant": {
+      "phase": "flat",
+      "frameIntervalMs": 160,
+      "loopMode": "loop",
+      "frames": [
+        "textures/178fa5f313874f74/000000.ktx2",
+        "textures/178fa5f313874f74/000001.ktx2",
+        "textures/178fa5f313874f74/000002.ktx2"
+      ]
+    },
+    "speaking_short": {
+      "phase": "flat",
+      "frameIntervalMs": 160,
+      "loopMode": "loop",
+      "frames": [
+        "textures/ebdea80845dbaa43/000000.ktx2",
+        "textures/ebdea80845dbaa43/000001.ktx2",
+        "textures/ebdea80845dbaa43/000002.ktx2"
+      ]
+    }
+  },
+  "mouthOverlays": {},
+  "clipCount": 3,
+  "frameCount": 9,
+  "textureCount": 9,
+  "textureBytes": 3840
+}

@@ -1,0 +1,69 @@
+{
+  "nodes": [
+    {
+      "id": "idle",
+      "label": "idle",
+      "root": "projects/demo/frames/idle/loop",
+      "phase": "flat",
+      "frameIntervalMs": 160,
+      "loopMode": "loop",
+      "isRoot": true,
+      "x": 90,
+      "y": 100
+    },
+    {
+      "id": "idle_variant",
+      "label": "idle_variant",
+      "root": "projects/demo/frames/idle_variant/loop",
+      "phase": "flat",
+      "frameIntervalMs": 160,
+      "loopMode": "loop",
+      "isRoot": false,
+      "x": 245,
+      "y": 200
+    },
+    {
+      "id": "speaking_short",
+      "label": "speaking_short",
+      "root": "projects/demo/frames/speaking_short/loop",
+      "phase": "flat",
+      "frameIntervalMs": 160,
+      "loopMode": "loop",
+      "isRoot": false,
+      "x": 400,
+      "y": 100
+    }
+  ],
+  "edges": [
+    {
+      "id": "idle_self",
+      "from": "idle",
+      "to": "idle",
+      "prob": 4
+    },
+    {
+      "id": "idle_variant",
+      "from": "idle",
+      "to": "idle_variant",
+      "prob": 1
+    },
+    {
+      "id": "variant_idle",
+      "from": "idle_variant",
+      "to": "idle",
+      "prob": 1
+    },
+    {
+      "id": "speak",
+      "from": "idle",
+      "to": "speaking_short",
+      "prob": 0
+    },
+    {
+      "id": "speak_idle",
+      "from": "speaking_short",
+      "to": "idle",
+      "prob": 1
+    }
+  ]
+}

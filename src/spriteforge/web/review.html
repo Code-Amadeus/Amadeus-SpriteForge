@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Art Asset Review</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="top">
+      <div>
+        <label>Source</label>
+        <select id="sourceSelect">
+          <option value="">Scanning…</option>
+        </select>
+      </div>
+      <div id="projectCol" style="display:none;">
+        <label>Project / Run</label>
+        <select id="projectSelect"></select>
+      </div>
+      <div>
+        <label>Frame folder / variant</label>
+        <select id="stateSelect" disabled>
+          <option value="">— choose source first —</option>
+        </select>
+      </div>
+      <div id="customCol" class="custom-row">
+        <div>
+          <label>Workspace Path</label>
+          <input id="customRoot" placeholder="projects/my-project/frames/idle/loop" style="width:360px;" />
+        </div>
+        <button id="customLoadBtn">Load</button>
+      </div>
+      <button id="qaBtn">Run QA</button>
+      <a href="https://github.com/Code-Amadeus/amadeus-spriteforge" target="_blank" rel="noopener" style="color:var(--muted)">Source &amp; export guide</a>
+    </div>
+    <div id="infoBar" class="info-line" style="display:none;">
+      Loaded: <strong id="infoRoot"></strong> &nbsp;|&nbsp;
+      <span id="infoClips"></span>
+    </div>
+  </header>
+  <main>
+    <aside>
+      <div class="row" style="margin-bottom:10px;">
+        <button id="defaultSeqBtn">Use in-loop-out</button>
+        <button id="clearSeqBtn">Clear</button>
+      </div>
+      <div id="stateHeader" class="state-header" style="display:none;"></div>
+      <div id="clips"></div>
+    </aside>
+    <section class="stage-wrap">
+      <div class="stage checker" id="stage">
+        <img id="frame" alt="" /><div id="ktxStage" style="display:none;"></div>
+        <canvas id="mouthCanvas"></canvas>
+      </div>
+      <div class="controls">
+        <div class="row">
+          <button id="playBtn">Play</button>
+          <button id="pauseBtn">Pause</button>
+          <button id="prevBtn">Prev</button>
+          <button id="nextBtn">Next</button>
+          <label style="margin:0 0 0 8px;">FPS</label>
+          <input id="fps" type="number" min="1" max="60" value="24" style="width:78px;" />
+        </div>
+        <div class="queue" id="queue"></div>
+        <div class="tiny mono" id="now">No frame loaded</div>
+      </div>
+    </section>
+    <section class="inspector">
+      <div id="inspResizeHandle" title="拖拽调整宽度"></div>
+      <div class="insp-tabs">
+        <button class="insp-tab active" id="tabInspQA">QA</button>
+        <button class="insp-tab" id="tabInspMouth">Mouth ⊙</button>
+        <button class="insp-tab" id="tabInspGraph">Graph ⬡</button>
+      </div>
+      <div id="qaPanel" class="insp-body">
+        <h3 style="margin-top:0;">QA</h3>
+        <div id="summary" class="tiny">Run QA to inspect seams.</div>
+        <h4>Clips</h4>
+        <div id="clipQa"></div>
+        <h4>Joins</h4>
+        <div id="joinQa"></div>
+      </div>
+      <div id="mouthPanel" class="insp-body" style="display:none;">
+        <div style="margin-bottom:8px;">
+          <label>Expression</label>
+          <select id="mouthExprSel" style="width:100%;margin-top:4px;"></select>
+        </div>
+        <div style="margin-bottom:8px;">
+          <label>Mouth value: <strong id="mouthValDisplay">0.00</strong></label>
+          <input type="range" id="mouthValSlider" class="mouth-slider" min="0" max="1" step="0.01" value="0">
+        </div>
+        <div class="row" style="gap:6px;margin-bottom:6px;">
+          <button class="mouth-toggle" id="mouthSpeakBtn">Speaking OFF</button>
+          <button class="mouth-toggle" id="mouthAnimBtn">Animate OFF</button>
+        </div>
+        <div class="row" style="gap:6px;margin-bottom:6px;">
+          <button class="mouth-toggle" id="mouthDebugBtn">Debug OFF</button>
+          <button class="mouth-toggle" id="mouthPreviewBtn">Preview OFF</button>
+        </div>
+        <!-- Position / size live tuning (shown for SF expressions) -->
+        <div id="mouthPosRow" style="display:none;margin-top:6px;padding:8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">
+            🎯 点击画布定位  ·  调节大小
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+            <label style="font-size:11px;color:var(--muted);">cx
+              <input type="number" id="mouthCxIn" step="0.5"
+                style="width:100%;padding:3px 5px;font-size:12px;margin-top:2px;background:#0d1017;color:var(--text);border:1px solid var(--border);border-radius:4px;">
+            </label>
+            <label style="font-size:11px;color:var(--muted);">cy
+              <input type="number" id="mouthCyIn" step="0.5"
+                style="width:100%;padding:3px 5px;font-size:12px;margin-top:2px;background:#0d1017;color:var(--text);border:1px solid var(--border);border-radius:4px;">
+            </label>
+            <label style="font-size:11px;color:var(--muted);">width
+              <input type="number" id="mouthWIn" step="1" min="4"
+                style="width:100%;padding:3px 5px;font-size:12px;margin-top:2px;background:#0d1017;color:var(--text);border:1px solid var(--border);border-radius:4px;">
+            </label>
+            <label style="font-size:11px;color:var(--muted);">height
+              <input type="number" id="mouthHIn" step="1" min="2"
+                style="width:100%;padding:3px 5px;font-size:12px;margin-top:2px;background:#0d1017;color:var(--text);border:1px solid var(--border);border-radius:4px;">
+            </label>
+          </div>
+          <button id="mouthCopyBtn" style="margin-top:8px;font-size:11px;padding:4px 10px;width:100%;">📋 Copy JSON</button>
+        </div>
+        <div id="mouthFrameInfo" class="mouth-frame-info">Optional workspace mouth overlay preview. JSON tuning is copied manually; this version exports body clips only.</div>
+      </div>
+      <!-- ── Graph editor panel ─────────────────────────────────── -->
+      <div id="graphPanel" class="insp-body" style="display:none;">
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;align-items:center;">
+          <button class="g-btn active" id="gModeSelect">↖ Select</button>
+          <button class="g-btn" id="gModeNode">⊕ Node</button>
+          <button class="g-btn" id="gModeEdge">→ Edge</button>
+          <span style="flex:1"></span>
+          <button class="g-btn" id="gPopulate" title="从已加载的 states 批量创建节点">Populate</button>
+          <button class="g-btn" id="gNormalize" title="自动归一化各节点出边概率">Normalize</button>
+          <button class="g-btn" id="gResetView" title="重置视图 (滚轮缩放，空白拖拽平移)">⊡ Reset View</button>
+          <button class="g-btn" id="gClear">Clear</button>
+          <button class="g-btn" id="gValidate">Validate</button>
+          <button class="g-btn" id="gSave">Save</button>
+          <button class="g-btn" id="gLoad">Load</button>
+        </div>
+        <div class="tiny" style="margin:6px 0">Weights are normalized during traversal. Clip preview uses the exact export frames and timing; speech policy stays in Amadeus.</div>
+        <div id="gStatus" style="font-size:10px;color:var(--muted);min-height:14px;margin-bottom:4px;"></div>
+        <canvas id="graphCanvas"></canvas>
+        <!-- Node properties -->
+        <div id="gNodeProp" class="g-prop" style="display:none;">
+          <div style="font-size:10px;color:var(--accent);margin-bottom:5px;font-weight:bold;">NODE</div>
+          <label>Label<input id="gNLabel" placeholder="state name"></label>
+          <label>Frame root<input id="gNRoot" placeholder="projects/example/frames/idle/loop"></label>
+          <label>Phase<select id="gNPhase"><option value="flat">PNG files directly in root</option><option value="in">in subfolder</option><option value="loop">loop subfolder</option><option value="out">out subfolder</option></select></label>
+          <label>Frame interval (ms)<input id="gNInterval" type="number" min="1" step="1" value="42"></label>
+          <label>Playback<select id="gNLoop"><option value="loop">Loop</option><option value="once_then_hold">Play once, then hold</option></select></label>
+          <label style="flex-direction:row;align-items:center;gap:6px;cursor:pointer;">
+            <input id="gNIsRoot" type="checkbox" style="width:auto;margin:0;">
+            <span style="color:var(--muted);font-size:11px;">Root pivot node (expression waypoint)</span>
+          </label>
+          <div style="display:flex;gap:6px;margin-top:4px;">
+            <button class="g-btn" id="gNView" style="flex:1;">Preview selected clip</button>
+            <button class="g-btn" id="gNDel" style="color:#f66;border-color:#633;flex:1;">Delete</button>
+          </div>
+        </div>
+        <!-- Edge properties -->
+        <div id="gEdgeProp" class="g-prop" style="display:none;">
+          <div style="font-size:10px;color:var(--accent);margin-bottom:5px;font-weight:bold;">EDGE <span id="gEFromTo" style="color:var(--muted);font-weight:normal;"></span></div>
+          <label>Traversal weight (0 = manual)<input id="gEProb" type="number" min="0" step="any"></label>
+          <div id="gEWarn" style="font-size:10px;color:#f90;display:none;margin:3px 0;"></div>
+          <div id="gEManual" style="font-size:10px;color:#7ab4ff;display:none;margin:3px 0;">⚡ Manual trigger only (prob = 0)</div>
+          <button class="g-btn" id="gEDel" style="margin-top:4px;color:#f66;border-color:#633;">Delete edge</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/preview-media.js"></script>
+<script src="/static/review.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "amadeus-spriteforge-ui-checks",
+  "private": true,
+  "scripts": {
+    "check": "node --check src/spriteforge/web/review.js",
+    "test:ui": "node tools/browser_smoke.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

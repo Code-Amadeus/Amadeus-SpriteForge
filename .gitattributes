@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.ktx2 binary
+*.wasm binary
+# Preserve vendored dependency bytes used by the provenance hashes.
+src/spriteforge/web/vendor/* -text -whitespace

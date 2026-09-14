@@ -1,0 +1,14 @@
+/.venv/
+/workspace/
+/exports/
+/dist/
+/build/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.log
+.env
+.env.*
+node_modules/
+/test-results/
