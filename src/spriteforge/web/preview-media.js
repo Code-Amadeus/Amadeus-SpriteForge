@@ -8,6 +8,15 @@ window.SpriteForgeMedia = (() => {
   const image = () => document.getElementById("frame");
   const holder = () => document.getElementById("ktxStage");
   const urlFor = (path) => "/frame?path=" + encodeURIComponent(path);
+  function fitTexture() {
+    if(!app || !sprite || !cache.size) return;
+    const width=holder().clientWidth, height=holder().clientHeight;
+    if(!width || !height) return;
+    app.renderer.resize(width,height);
+    sprite.scale.set(Math.min(width/sprite.texture.width,height/sprite.texture.height));
+    sprite.position.set(width/2,height/2);
+    app.renderer.render(app.stage);
+  }
   function loadScript(src) {
     return new Promise((resolve, reject) => {
       const script = document.createElement("script");
@@ -26,6 +35,7 @@ window.SpriteForgeMedia = (() => {
       sprite = new PIXI.Sprite();
       sprite.anchor.set(.5);
       app.stage.addChild(sprite);
+      new ResizeObserver(fitTexture).observe(holder());
       await PixiBasisKtx2Shim.KTX2Parser.loadTranscoder("/static/vendor/basis_transcoder.js", "/static/vendor/basis_transcoder.wasm");
       await PIXI.Assets.init({ texturePreference: { format: ["ktx2"] } });
     })();
@@ -57,13 +67,8 @@ window.SpriteForgeMedia = (() => {
       }
       if (token !== generation) return;
       cache.delete(url); cache.set(url, texture);
-      const width = Math.max(1, holder().clientWidth);
-      const height = Math.max(1, holder().clientHeight);
-      app.renderer.resize(width, height);
       sprite.texture = texture;
-      sprite.scale.set(Math.min(width / texture.width, height / texture.height));
-      sprite.position.set(width / 2, height / 2);
-      app.renderer.render(app.stage);
+      fitTexture();
       holder().dataset.frame = path;
       holder().dataset.width = String(texture.width);
       // Keep at most 12 frames / 64 MiB estimated decoded footprint, plus the current frame.

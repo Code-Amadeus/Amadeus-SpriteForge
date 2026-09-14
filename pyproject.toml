@@ -13,9 +13,9 @@ license-files = ["LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md", "LICENSES/*.t
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE"
-Repository = "https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE"
-Issues = "https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE/issues"
+Homepage = "https://github.com/Code-Amadeus/Amadeus-SpriteForge"
+Repository = "https://github.com/Code-Amadeus/Amadeus-SpriteForge"
+Issues = "https://github.com/Code-Amadeus/Amadeus-SpriteForge/issues"
 
 [project.optional-dependencies]
 qa = ["numpy>=1.24,<3", "opencv-python-headless>=4.8,<5"]

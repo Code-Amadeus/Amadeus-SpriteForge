@@ -1,4 +1,4 @@
-# AMADEUS-SPRITEFORGE
+# Amadeus-SpriteForge
 
 Local asset review and behavior graph editing for sprite animation. Import existing
 PNG frames, inspect clips and seams, edit a graph, and export a runtime-only
@@ -7,13 +7,34 @@ character pack for [Amadeus](https://github.com/Code-Amadeus/Amadeus).
 **Status: source alpha, 0.1.0.** Generation services and the Amadeus application
 runtime are separate. [中文说明](docs/README.zh-CN.md)
 
+## Reviewer screenshots
+
+![KTX2 character preview beside its original saved behavior graph](docs/images/reviewer-ktx2-graph.png)
+
+Direct KTX2 playback alongside the creator's saved node layout. This example uses a
+separately supplied character pack; the repository's runnable examples use geometric sprites.
+
+<details>
+<summary>Expanded behavior graph</summary>
+
+![Expanded reviewer preserving the original behavior graph wiring](docs/images/reviewer-saved-graph.png)
+
+</details>
+
+<details>
+<summary>Editable example included in the repository</summary>
+
+![Authoring example with editable node properties and clip preview](docs/images/reviewer-authoring-demo.png)
+
+</details>
+
 ## Try the example
 
 Python 3.10 or newer is required. Reference checks use Windows and Python 3.12.
 
 ```powershell
-git clone https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE.git
-cd AMADEUS-SPRITEFORGE
+git clone https://github.com/Code-Amadeus/Amadeus-SpriteForge.git
+cd Amadeus-SpriteForge
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install ".[qa]"
 .\.venv\Scripts\spriteforge.exe init workspace --demo

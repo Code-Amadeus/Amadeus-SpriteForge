@@ -1,13 +1,17 @@
 # SpriteForge 资产管理与图编辑工具
 
 这一版分离本地管理工具、生成服务与 Amadeus 主 runtime。
-组织仓库为 `Code-Amadeus/AMADEUS-SPRITEFORGE`。
+组织仓库为 `Code-Amadeus/Amadeus-SpriteForge`。
+
+![KTX2 角色预览与原始行为图](images/reviewer-ktx2-graph.png)
+
+截图展示当前 reviewer 与单独提供的角色包；仓库内可直接运行的示例使用几何图形素材。
 
 ## 启动
 
 ```powershell
-git clone https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE.git
-cd AMADEUS-SPRITEFORGE
+git clone https://github.com/Code-Amadeus/Amadeus-SpriteForge.git
+cd Amadeus-SpriteForge
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install ".[qa]"
 .\.venv\Scripts\spriteforge.exe init workspace --demo

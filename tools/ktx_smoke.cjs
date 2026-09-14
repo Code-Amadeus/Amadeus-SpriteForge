@@ -40,6 +40,10 @@ const { spawn } = require("node:child_process");
     await page.locator("#pauseBtn").click();
     await page.locator("#tabInspGraph").click();
     await page.waitForFunction(()=>gViewHeight>400 && gViewWidth>400);
+    await page.waitForFunction(()=> {
+      const holder=document.querySelector('#ktxStage'), canvas=holder.querySelector('canvas');
+      return canvas.width===holder.clientWidth && canvas.height===holder.clientHeight;
+    });
     const checkFit = async () => {
       const geometry=await page.evaluate(()=>({zoom:gZoom,width:gViewWidth,height:gViewHeight,
         nodes:graph.nodes.map(n=>({x:n.x*gZoom+gPan.x,y:n.y*gZoom+gPan.y,r:GR*gZoom}))}));

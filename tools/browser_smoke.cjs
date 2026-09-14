@@ -13,7 +13,7 @@ const { spawn, spawnSync } = require("node:child_process");
   const init = spawnSync(python, ["-m", "spriteforge", "init", workspace, "--demo"], { encoding: "utf8", windowsHide: true });
   assert.equal(init.status, 0, init.stderr);
   const server = spawn(python, ["-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser"], { windowsHide: true });
-  let browser;
+  let browser, page;
   try {
     const url = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("Editor startup timed out")), 15000);
@@ -25,7 +25,7 @@ const { spawn, spawnSync } = require("node:child_process");
       server.on("exit", (code) => { clearTimeout(timeout); reject(new Error(`Editor exited ${code}`)); });
     });
     browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL || undefined });
-    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+    page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(url);
@@ -34,6 +34,11 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.locator("#qaBtn").click();
     await page.locator("#summary").filter({ hasText: "Clips: 1" }).waitFor();
     await page.locator("#tabInspGraph").click();
+    await page.waitForFunction(()=> {
+      const viewport=document.querySelector('#graphViewport');
+      return viewport.clientWidth>0 && viewport.clientHeight>0 &&
+        gViewWidth===viewport.clientWidth && gViewHeight===viewport.clientHeight;
+    });
     await page.locator("#graphCanvas").click({ position: await page.evaluate(()=> {
       const node=graph.nodes.find(n=>n.id==='idle');return {x:node.x*gZoom+gPan.x,y:node.y*gZoom+gPan.y};
     }) });
@@ -55,6 +60,11 @@ const { spawn, spawnSync } = require("node:child_process");
     assert.equal(fs.readFileSync(graphPath, "utf8"), savedBytes);
     await page.locator("#gLoad").click();
     await page.locator("#gStatus").filter({ hasText: /^Loaded$/ }).waitFor();
+    await page.waitForFunction(()=> {
+      const viewport=document.querySelector('#graphViewport');
+      return viewport.clientWidth>0 && viewport.clientHeight>0 &&
+        gViewWidth===viewport.clientWidth && gViewHeight===viewport.clientHeight;
+    });
     await page.locator("#graphCanvas").click({ position: await page.evaluate(()=> {
       const node=graph.nodes.find(n=>n.id==='idle');return {x:node.x*gZoom+gPan.x,y:node.y*gZoom+gPan.y};
     }) });
@@ -71,6 +81,12 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.screenshot({ path: "test-results/manager.png", fullPage: true });
     assert.deepEqual(errors, []);
     console.log("PASS: asset preview, QA, edit/save/reload, rejected save, validation, exact timed hold preview");
+  } catch (error) {
+    if(page) {
+      fs.mkdirSync('test-results',{recursive:true});
+      await page.screenshot({path:'test-results/authoring-failure.png',fullPage:true});
+    }
+    throw error;
   } finally {
     if (browser) await browser.close();
     server.kill();

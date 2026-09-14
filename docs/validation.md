@@ -40,8 +40,8 @@ For an existing Edge installation, set `BROWSER_CHANNEL=msedge`. Set
 on PATH. The authoring UI smoke uses a temporary demo workspace and removes only
 that test directory. KTX smoke accepts an optional pack path and never saves it.
 
-Browser screenshots go into ignored `test-results/`. Personal character screenshots
-and media are not part of the repository. `examples/minimal/` and
+Test screenshots go into ignored `test-results/`. Selected reviewer screenshots
+are published under `docs/images/`; source character packs are not included. `examples/minimal/` and
 `examples/runtime-minimal/` contain only the generated geometric demo.
 
 Long sessions, full TTS behavior, mouth-overlay export, non-UASTC texture variants
