@@ -5,6 +5,8 @@ permissions:
 jobs:
   contracts:
     timeout-minutes: 15
+    env:
+      BROWSER_CHANNEL: ${{ matrix.os == 'windows-latest' && 'msedge' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -23,7 +25,8 @@ jobs:
       - run: node --check src/spriteforge/web/review.js
       - run: node --check src/spriteforge/web/preview-media.js
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - if: runner.os != 'Windows'
+        run: npx playwright install --with-deps chromium
       - run: npm run test:ui
       - run: node tools/ktx_smoke.cjs
       - run: python -m spriteforge init workspace --demo
