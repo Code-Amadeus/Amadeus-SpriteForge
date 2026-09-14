@@ -8,7 +8,8 @@ const { spawn } = require("node:child_process");
 (async () => {
   const workspace = path.resolve(process.argv[2] || "examples/runtime-minimal");
   const graphBefore = fs.readFileSync(path.join(workspace, "graph_config.json"));
-  const server = spawn(process.env.SPRITEFORGE_PYTHON || "python", ["-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser"], { windowsHide: true });
+  const layoutArgs=process.env.SPRITEFORGE_LAYOUT?['--layout',process.env.SPRITEFORGE_LAYOUT]:[];
+  const server = spawn(process.env.SPRITEFORGE_PYTHON || "python", ["-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser", ...layoutArgs], { windowsHide: true });
   let browser;
   try {
     const url = await new Promise((resolve, reject) => {
@@ -37,11 +38,34 @@ const { spawn } = require("node:child_process");
     const first = await page.locator("#ktxStage").getAttribute("data-frame");
     await page.waitForFunction(value => document.querySelector("#ktxStage").dataset.frame !== value, first);
     await page.locator("#pauseBtn").click();
+    await page.locator("#tabInspGraph").click();
+    await page.waitForFunction(()=>gViewHeight>400 && gViewWidth>400);
+    const checkFit = async () => {
+      const geometry=await page.evaluate(()=>({zoom:gZoom,width:gViewWidth,height:gViewHeight,
+        nodes:graph.nodes.map(n=>({x:n.x*gZoom+gPan.x,y:n.y*gZoom+gPan.y,r:GR*gZoom}))}));
+      assert.ok(geometry.nodes.every(n=>n.x-n.r>=0 && n.x+n.r<=geometry.width && n.y-n.r>=0 && n.y+n.r<=geometry.height),"Fit must include every node");
+      return geometry;
+    };
+    const initial = await checkFit();
+    const savedLayout=JSON.parse(fs.readFileSync(process.env.SPRITEFORGE_LAYOUT || workspace+'.graph-layout.json','utf8'));
+    const positions=await page.evaluate(()=>graph.nodes.map(n=>({id:n.id,x:n.x,y:n.y})));
+    assert.deepEqual(positions, savedLayout.nodes.map(n=>({id:n.id,x:n.x,y:n.y})), 'Use the exact original coordinates, not an automatic layout');
+    await page.locator("#gExpand").click();
+    await page.waitForFunction(()=>document.querySelector('.inspector').getBoundingClientRect().width>1400);
+    await checkFit();
+    await page.locator("#gZoomIn").click();
+    const beforeWheel = await page.evaluate(()=>gZoom);
+    const canvas = await page.locator("#graphCanvas").boundingBox();
+    await page.mouse.move(canvas.x+canvas.width/2,canvas.y+canvas.height/2);
+    await page.mouse.wheel(0,-300);
+    await page.waitForFunction(previous=>gZoom>previous,beforeWheel);
+    await page.locator("#gResetView").click();
+    await checkFit();
     fs.mkdirSync("test-results", { recursive: true });
     await page.screenshot({ path: process.argv[3] || "test-results/ktx2.png", fullPage: true });
     assert.deepEqual(fs.readFileSync(path.join(workspace, "graph_config.json")), graphBefore);
     assert.deepEqual(errors.filter(e => !e.includes("favicon.ico") && !e.includes("409 (Conflict)")), []);
-    console.log("PASS: direct KTX2 decode, visible pixels, frame playback, read-only runtime pack");
+    console.log(`PASS: KTX2 playback, read-only pack, ${initial.nodes.length}-node graph fit, expanded view and wheel zoom`);
   } finally {
     if (browser) await browser.close();
     server.kill();

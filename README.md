@@ -44,6 +44,21 @@ The verified encoding is Amadeus UASTC KTX2, not every KTX2 variant. Playback,
 frame stepping, graph inspection and exact node-clip preview are available. The
 renderer bounds its texture cache. Editing and PNG QA remain in the authoring workspace.
 
+Graph view preserves the creator's saved coordinates and curved wiring. Export
+writes a separate `<pack-name>.graph-layout.json` beside the runtime directory;
+keep it alongside the pack for graph viewing. An existing pack can also use its
+original authoring graph explicitly:
+
+```powershell
+spriteforge review --workspace path/to/character-pack --layout path/to/authoring/graph_config.json
+```
+
+The layout is matched by exact node ID and label and supplies only coordinates;
+runtime edges and playback remain authoritative. A pack without saved layout still
+plays clips but shows a missing-layout message instead of inventing a default layout.
+Use **Fit graph**, wheel or +/- zoom, empty-space dragging, and **Expand** to inspect
+large graphs. Viewing never rewrites coordinates or runtime package data.
+
 ## Existing assets
 
 ```powershell

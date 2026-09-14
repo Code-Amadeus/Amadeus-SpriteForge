@@ -34,7 +34,7 @@
     .custom-row { display: none; }
     .custom-row.show { display: flex; gap: 8px; align-items: end; }
     main { min-height: 0; display: grid; grid-template-columns: 260px minmax(240px,1fr) 510px; }
-    aside, section { min-height: 0; overflow: auto; border-right: 1px solid var(--border); }
+    aside, section { min-width: 0; min-height: 0; overflow: auto; border-right: 1px solid var(--border); }
     aside, .inspector { padding: 12px; background: var(--panel); }
     .stage-wrap { min-width: 0; display: grid; grid-template-rows: 1fr auto; background: #0a0c11; }
     .stage { min-height: 0; display: grid; place-items: center; padding: 12px; }
@@ -98,7 +98,7 @@
     .g-btn { border:1px solid var(--border); background:#0d1017; color:var(--muted); padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer; }
     .g-btn:hover:not(.active) { background:#1a2236; color:var(--text); }
     .g-btn.active { background:var(--accent); color:#000; font-weight:bold; border-color:var(--accent); }
-    #graphCanvas { display:block; border:1px solid var(--border); border-radius:6px; cursor:default; }
+    #graphCanvas { display:block; width:100%; height:100%; border:1px solid var(--border); border-radius:6px; cursor:default; }
     .g-prop { margin-top:8px; padding:8px; background:var(--panel2); border:1px solid var(--border); border-radius:6px; }
     .g-prop label { font-size:11px; display:block; margin-bottom:5px; color:var(--muted); }
     .g-prop input { width:100%; margin-top:2px; background:#0d1017; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 5px; font-size:12px; box-sizing:border-box; }
@@ -116,3 +116,16 @@
 #ktxStage { width:100%; height:100%; min-height:240px; min-width:0; place-items:center; overflow:hidden; }
 #ktxStage canvas { max-width:100%; max-height:100%; }
 button:disabled,input:disabled,select:disabled { opacity:.5; cursor:default; }
+
+main.graph-active { grid-template-columns: minmax(160px,16%) minmax(180px,24%) minmax(0,1fr); }
+.inspector.graph-active { display:flex; flex-direction:column; overflow:hidden; }
+.inspector.graph-active #graphPanel { display:flex !important; flex:1; flex-direction:column; min-height:0; }
+.graph-body { display:flex; flex:1; min-height:0; gap:10px; }
+#graphViewport { flex:1; min-width:0; min-height:180px; overflow:hidden; }
+#graphProperties { width:210px; flex-shrink:0; overflow:auto; }
+#graphProperties[hidden] { display:none; }
+#graphProperties .g-prop { margin-top:0; }
+#graphProperties select { min-width:0; max-width:100%; width:100%; }
+.inspector.graph-expanded { position:fixed; inset:10px; z-index:100; border:1px solid var(--border); border-radius:8px; }
+.inspector.graph-expanded #inspResizeHandle { display:none; }
+.top { display:flex; flex-wrap:wrap; }

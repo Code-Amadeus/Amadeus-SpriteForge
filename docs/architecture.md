@@ -46,3 +46,11 @@ reading and editing that directory. This is not a hosted multi-user service.
 - Shared runtime preview if full intent/speech simulation is required.
 - Separate migration of the wallpaper `scenario_graph.json` contract.
 - Broader clip metadata management without hidden frame-selection rules.
+
+## Saved graph view
+
+The author's existing graph owns node positions. Review can read those positions
+from --layout or the exported sibling <pack-name>.graph-layout.json. The sibling
+contains only IDs, labels and coordinates and stays outside the runtime package.
+It cannot override runtime topology, probabilities or clip bindings. Missing
+positions are reported instead of replaced with an automatically invented layout.

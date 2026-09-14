@@ -46,3 +46,11 @@ and media are not part of the repository. `examples/minimal/` and
 
 Long sessions, full TTS behavior, mouth-overlay export, non-UASTC texture variants
 and wallpaper scenario graphs are outside this acceptance scope.
+
+## Graph viewport repair (2026-09-15)
+
+Runtime packages omit authoring layout. The reviewer accepts the original authoring
+graph via --layout or the exported sibling .graph-layout.json, validates exact node
+identities, and preserves its coordinates. Browser checks cover all-node fit,
+expanded canvas, wheel zoom, and exact coordinate preservation. The application
+never substitutes a three-column or automatic layout for the creator's saved wiring.

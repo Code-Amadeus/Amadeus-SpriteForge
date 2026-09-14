@@ -34,6 +34,8 @@ def test_export_preserves_selected_variant_timing_and_graph(workspace, tmp_path,
     assert all("root" not in n and "x" not in n for n in pack.graph["nodes"])
     assert pack.graph["edges"] == before["edges"]
     assert read_json(workspace / "graph_config.json") == before
+    companion = read_json(output.with_name("pack.graph-layout.json"))
+    assert companion == {"nodes": [{k: n[k] for k in ("id", "label", "x", "y")} for n in before["nodes"]]}
     with pytest.raises(ValueError, match="already exists"):
         export_pack(workspace, output, pack_id="demo", display_name="Demo", version="1")
 
@@ -58,3 +60,12 @@ def test_missing_encoder_and_mouth_config_are_explicit(workspace, tmp_path, monk
         export_pack(workspace, output, pack_id="demo", display_name="Demo", version="1")
     export_pack(workspace, output, pack_id="demo", display_name="Demo", version="1", no_mouth=True)
     assert load_character_pack(output).mouth_config == {"expressions": {}, "profiles": {}}
+
+
+def test_existing_layout_companion_is_not_overwritten(workspace, tmp_path):
+    companion = tmp_path / "pack.graph-layout.json"
+    companion.write_text("existing creator layout")
+    with pytest.raises(ValueError, match="companion already exists"):
+        export_pack(workspace, tmp_path / "pack", pack_id="demo", display_name="Demo", version="1")
+    assert companion.read_text() == "existing creator layout"
+    assert not (tmp_path / "pack").exists()

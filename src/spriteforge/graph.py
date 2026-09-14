@@ -9,6 +9,27 @@ from .character_pack import validate_character_pack_graph
 from .workspace import clip_frames, png_frames, relative_asset, resolve_asset
 
 
+def layout_coordinates(graph: dict, layout: object) -> dict:
+    """Read saved positions by exact node identity without changing runtime topology."""
+    if not isinstance(layout, dict) or not isinstance(layout.get("nodes"), list):
+        raise ValueError("Layout must contain the saved graph's nodes")
+    coordinates = {}
+    expected = {n["id"]: n["label"] for n in graph["nodes"]}
+    for node in layout["nodes"]:
+        if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+            raise ValueError("Invalid layout node")
+        node_id = node["id"]
+        if node_id in coordinates or node_id not in expected or node.get("label") != expected[node_id]:
+            raise ValueError("Layout node identities do not match this graph")
+        if any(isinstance(node.get(k), bool) or not isinstance(node.get(k), (float, int))
+               or not math.isfinite(node[k]) for k in ("x", "y")):
+            raise ValueError(f"Layout node {node_id!r} requires saved x/y coordinates")
+        coordinates[node_id] = {"x": node["x"], "y": node["y"]}
+    if coordinates.keys() != expected.keys():
+        raise ValueError("Layout must contain exactly the nodes in this graph")
+    return coordinates
+
+
 def runtime_graph(graph: dict) -> dict:
     return {"nodes": [{k: n[k] for k in ("id", "label", "isRoot") if k in n} for n in graph["nodes"]],
             "edges": [{k: e[k] for k in ("id", "from", "to", "prob")} for e in graph["edges"]]}

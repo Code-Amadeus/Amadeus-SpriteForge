@@ -9,17 +9,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .character_pack import load_character_pack
-from .graph import validate_graph
+from .graph import layout_coordinates, validate_graph
 from .workspace import atomic_json, clip_frames, discover, png_frames, read_json, resolve_asset
 
 WEB_ROOT = Path(__file__).parent / "web"
 
 
-def make_server(workspace: Path, port: int = 7788) -> ThreadingHTTPServer:
+def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = None) -> ThreadingHTTPServer:
     workspace = workspace.resolve()
     if not workspace.is_dir():
         raise ValueError("Workspace does not exist; run spriteforge init first")
     pack = load_character_pack(workspace) if (workspace / "runtime_manifest.json").exists() else None
+    saved_positions = {}
+    if layout_path is not None and not pack:
+        raise ValueError("--layout is for runtime packs; authoring workspaces already own their saved coordinates")
+    if pack:
+        companion = workspace.with_name(workspace.name + ".graph-layout.json")
+        source = layout_path if layout_path is not None else companion if companion.is_file() else None
+        if source is not None:
+            saved_positions = layout_coordinates(pack.graph, read_json(source))
+        elif all("x" in n and "y" in n for n in pack.graph["nodes"]):
+            saved_positions = layout_coordinates(pack.graph, pack.graph)
     indexed = {p for frames in pack.clip_paths.values() for p in frames} if pack else set()
     if pack:
         indexed.update(p for frames in pack.mouth_overlay_paths.values() for p in frames)
@@ -78,9 +88,9 @@ def make_server(workspace: Path, port: int = 7788) -> ThreadingHTTPServer:
                         graph = {"nodes": [{**n, "root": n["label"], "phase": pack.manifest["clips"][n["label"]]["phase"],
                                             "frameIntervalMs": pack.manifest["clips"][n["label"]]["frameIntervalMs"],
                                             "loopMode": pack.manifest["clips"][n["label"]]["loopMode"],
-                                            "x": 80 + (i % 3) * 150, "y": 90 + (i // 3) * 110}
-                                           for i, n in enumerate(pack.graph["nodes"])], "edges": pack.graph["edges"]}
-                    self.json(200, {"ok": True, "graph": graph})
+                                            **saved_positions.get(n["id"], {})}
+                                           for n in pack.graph["nodes"]], "edges": pack.graph["edges"]}
+                    self.json(200, {"ok": True, "graph": graph, "layoutAvailable": not pack or bool(saved_positions)})
                 elif parsed.path == "/api/clips":
                     if pack:
                         label = (qs.get("root") or [""])[0]
@@ -191,8 +201,8 @@ def make_server(workspace: Path, port: int = 7788) -> ThreadingHTTPServer:
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
-def serve(workspace: Path, port: int, no_browser: bool) -> None:
-    with make_server(workspace, port) as server:
+def serve(workspace: Path, port: int, no_browser: bool, layout_path: Path | None = None) -> None:
+    with make_server(workspace, port, layout_path) as server:
         url = f"http://127.0.0.1:{server.server_port}"
         print(f"SpriteForge: {url}\nWorkspace: {workspace.resolve()}", flush=True)
         if not no_browser:

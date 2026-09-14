@@ -18,6 +18,7 @@ def main() -> int:
     review.add_argument("--workspace", type=Path, required=True)
     review.add_argument("--port", type=int, default=7788)
     review.add_argument("--no-browser", action="store_true")
+    review.add_argument("--layout", type=Path, help="Saved authoring graph or companion layout for runtime-pack viewing")
     imp = commands.add_parser("import", help="Copy existing PNG frames into a new workspace project")
     imp.add_argument("--workspace", type=Path, required=True)
     imp.add_argument("--source", type=Path, required=True)
@@ -52,7 +53,7 @@ def main() -> int:
             print(f"Created {args.workspace.resolve()}")
         elif args.command == "review":
             from .server import serve
-            serve(args.workspace, args.port, args.no_browser)
+            serve(args.workspace, args.port, args.no_browser, args.layout)
         elif args.command == "import":
             workspace = args.workspace.resolve()
             if not workspace.is_dir() or not args.source.is_dir():

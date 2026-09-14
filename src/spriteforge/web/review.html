@@ -136,15 +136,21 @@
           <span style="flex:1"></span>
           <button class="g-btn" id="gPopulate" title="从已加载的 states 批量创建节点">Populate</button>
           <button class="g-btn" id="gNormalize" title="自动归一化各节点出边概率">Normalize</button>
-          <button class="g-btn" id="gResetView" title="重置视图 (滚轮缩放，空白拖拽平移)">⊡ Reset View</button>
+          <button class="g-btn" id="gResetView" title="Fit all nodes into the canvas">⊡ Fit graph</button>
+          <button class="g-btn" id="gZoomOut" title="Zoom out">−</button>
+          <span id="gZoomLabel" class="tiny">100%</span>
+          <button class="g-btn" id="gZoomIn" title="Zoom in">+</button>
+          <button class="g-btn" id="gExpand">Expand</button>
           <button class="g-btn" id="gClear">Clear</button>
           <button class="g-btn" id="gValidate">Validate</button>
           <button class="g-btn" id="gSave">Save</button>
           <button class="g-btn" id="gLoad">Load</button>
         </div>
-        <div class="tiny" style="margin:6px 0">Weights are normalized during traversal. Clip preview uses the exact export frames and timing; speech policy stays in Amadeus.</div>
+        <div class="tiny" style="margin:6px 0">Scroll to zoom · Drag empty space to pan · Select a node to preview its clip</div>
         <div id="gStatus" style="font-size:10px;color:var(--muted);min-height:14px;margin-bottom:4px;"></div>
-        <canvas id="graphCanvas"></canvas>
+        <div class="graph-body">
+        <div id="graphViewport"><canvas id="graphCanvas"></canvas></div>
+        <div id="graphProperties" hidden>
         <!-- Node properties -->
         <div id="gNodeProp" class="g-prop" style="display:none;">
           <div style="font-size:10px;color:var(--accent);margin-bottom:5px;font-weight:bold;">NODE</div>
@@ -169,6 +175,8 @@
           <div id="gEWarn" style="font-size:10px;color:#f90;display:none;margin:3px 0;"></div>
           <div id="gEManual" style="font-size:10px;color:#7ab4ff;display:none;margin:3px 0;">⚡ Manual trigger only (prob = 0)</div>
           <button class="g-btn" id="gEDel" style="margin-top:4px;color:#f66;border-color:#633;">Delete edge</button>
+        </div>
+        </div>
         </div>
       </div>
     </section>

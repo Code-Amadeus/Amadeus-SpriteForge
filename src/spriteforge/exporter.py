@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 from .character_pack import CHARACTER_PACK_FORMAT, load_character_pack
-from .graph import runtime_graph, validate_graph
+from .graph import layout_coordinates, runtime_graph, validate_graph
 from .workspace import atomic_json, clip_frames, read_json, resolve_asset
 
 
@@ -20,6 +21,13 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
     if not all(isinstance(v, str) and v.strip() for v in (pack_id, display_name, version)):
         raise ValueError("Pack id, display name and version are required")
     graph = validate_graph(workspace, read_json(resolve_asset(workspace, "graph_config.json")))
+    layout = None
+    if all("x" in node and "y" in node for node in graph["nodes"]):
+        coordinates = layout_coordinates(graph, graph)
+        layout = {"nodes": [{"id": n["id"], "label": n["label"], **coordinates[n["id"]]} for n in graph["nodes"]]}
+    layout_path = output.with_name(output.name + ".graph-layout.json")
+    if layout_path.exists():
+        raise ValueError("Export layout companion already exists; choose a new destination")
     # The legacy mask model is not silently translated or discarded.
     mouth_path = resolve_asset(workspace, "spriteforge_mouth_config.json")
     if mouth_path.exists() and not no_mouth:
@@ -35,6 +43,8 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
         selected.setdefault(node["label"], (node, clip_frames(workspace, node)))
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+    created_layout = False
+    published = False
     try:
         clips = {}
         for label, (node, frames) in selected.items():
@@ -68,8 +78,15 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
         # Destination is immutable; rename only after cross-file validation succeeds.
         if output.exists():
             raise ValueError("Export destination was created during encoding")
+        if layout is not None:
+            with layout_path.open("x", encoding="utf-8", newline="\n") as stream:
+                created_layout = True
+                stream.write(json.dumps(layout, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
         staging.rename(output)
+        published = True
         return manifest
     finally:
+        if created_layout and not published:
+            layout_path.unlink()
         if staging.exists():
             shutil.rmtree(staging)

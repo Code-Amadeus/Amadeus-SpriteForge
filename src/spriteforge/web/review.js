@@ -731,7 +731,10 @@ function setInspTab(tab) {
   q("mouthPanel").style.display = isMouth ? "" : "none";
   q("graphPanel").style.display = isGraph ? "" : "none";
   if (isMouth && !Object.keys(mouthAllConfigs).length) loadMouthConfigs();
-  if (isGraph) gResize();
+  document.querySelector('main').classList.toggle('graph-active',isGraph);
+  document.querySelector('.inspector').classList.toggle('graph-active',isGraph);
+  if(!isGraph) gSetExpanded(false);
+  if (isGraph) requestAnimationFrame(gResize);
 }
 
 q("tabInspQA").addEventListener("click",    () => setInspTab("qa"));
@@ -823,7 +826,10 @@ let gDrag    = null;          // { nodeId, offX, offY }
 let gEdgeFrom = null;         // nodeId — 正在绘制边的起点
 let gMouse   = { x: 0, y: 0 };
 let gPan     = { x: 0, y: 0 };  // 画布平移偏移（像素）
-const gZoom  = 1.0;              // 固定缩放（不再支持滚轮缩放）
+let gZoom = 1.0;
+let gFitActive = true;
+let gViewWidth = 0, gViewHeight = 0, gPixelRatio = 1;
+let gLayoutAvailable = true;
 let gPanning = false;            // 是否正在平移画布
 let gPanStart = { x: 0, y: 0 }; // 开始平移时的鼠标位置
 let gPanOrigin = { x: 0, y: 0 };// 开始平移时的 gPan 值
@@ -881,28 +887,69 @@ function gEdgeMid(e) {
 }
 
 // -- Drawing ------------------------------------------------------------------
-function gResize() {
-  const cv = q('graphCanvas'); if (!cv) return;
-  const hdr = document.querySelector('header');
-  const hdrH = hdr ? hdr.offsetHeight : 60;
-  cv.width  = cv.parentElement.clientWidth - 6;
-  cv.height = Math.max(240, Math.min(320, window.innerHeight - hdrH - 480));
+function gBounds() {
+  if(!gLayoutAvailable || !graph.nodes.length) return null;
+  const points=graph.nodes.map(n=>({x:n.x,y:n.y}));
+  for(const edge of graph.edges) {
+    const shape=gEdgeGeom(edge);
+    if(shape && Number.isFinite(shape.cpx))points.push({x:shape.cpx,y:shape.cpy});
+  }
+  return {left:Math.min(...points.map(p=>p.x))-85,right:Math.max(...points.map(p=>p.x))+85,
+          top:Math.min(...points.map(p=>p.y))-80,bottom:Math.max(...points.map(p=>p.y))+65};
+}
+function gFitGraph() {
+  gFitActive=true;
+  const bounds=gBounds();
+  if(!bounds || !gViewWidth || !gViewHeight) return;
+  gZoom=Math.min(1,(gViewWidth-28)/(bounds.right-bounds.left),(gViewHeight-28)/(bounds.bottom-bounds.top));
+  gPan={x:(gViewWidth-(bounds.left+bounds.right)*gZoom)/2,y:(gViewHeight-(bounds.top+bounds.bottom)*gZoom)/2};
   gDraw();
+}
+function gZoomAt(factor,x=gViewWidth/2,y=gViewHeight/2) {
+  const next=Math.max(.03,Math.min(4,gZoom*factor));
+  gPan={x:x-(x-gPan.x)*next/gZoom,y:y-(y-gPan.y)*next/gZoom};
+  gZoom=next; gFitActive=false; gDraw();
+}
+function gSetExpanded(expanded) {
+  document.querySelector('.inspector').classList.toggle('graph-expanded',expanded);
+  q('gExpand').textContent=expanded?'Collapse':'Expand';
+  requestAnimationFrame(gResize);
+}
+function gResize() {
+  const cv=q('graphCanvas'), viewport=q('graphViewport');
+  if(!viewport.clientWidth || !viewport.clientHeight) return;
+  const oldWidth=gViewWidth, oldHeight=gViewHeight;
+  gViewWidth=viewport.clientWidth; gViewHeight=viewport.clientHeight;
+  gPixelRatio=window.devicePixelRatio||1;
+  cv.width=Math.round(gViewWidth*gPixelRatio); cv.height=Math.round(gViewHeight*gPixelRatio);
+  if(gFitActive) gFitGraph();
+  else {
+    gPan.x+=(gViewWidth-oldWidth)/2; gPan.y+=(gViewHeight-oldHeight)/2;
+    gDraw();
+  }
 }
 function gDraw() {
   const cv = q('graphCanvas'); if (!cv || !cv.width) return;
   const ctx = cv.getContext('2d');
-  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(gPixelRatio,0,0,gPixelRatio,0,0);
+  ctx.clearRect(0, 0, gViewWidth, gViewHeight);
+  q("gZoomLabel").textContent=Math.round(gZoom*100)+"%";
   // 背景
-  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, gViewWidth, gViewHeight);
   // 网格（固定在屏幕，不随 pan 移动，给人无限画布感）
   const gs = 30;
   const ox = ((gPan.x % gs) + gs) % gs;
   const oy = ((gPan.y % gs) + gs) % gs;
   ctx.fillStyle = '#1c2435';
-  for (let x = ox; x < cv.width;  x += gs)
-    for (let y = oy; y < cv.height; y += gs)
+  for (let x = ox; x < gViewWidth;  x += gs)
+    for (let y = oy; y < gViewHeight; y += gs)
       ctx.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
+  if(!gLayoutAvailable) {
+    ctx.fillStyle='#98a3b7';ctx.font='13px sans-serif';
+    ctx.fillText('This pack has no saved editor layout.',20,35);
+    ctx.fillText('Supply its authoring graph with --layout to view the original wiring.',20,58);
+    return;
+  }
   // 应用 pan + zoom 变换
   ctx.save();
   ctx.translate(gPan.x, gPan.y);
@@ -960,7 +1007,7 @@ function gDrawEdge(ctx, e) {
   }
   const mp=gEdgeMid(e);
   if (mp) {
-    const txt=isManual?'manual':'weight '+e.prob;
+    const txt=isManual?'manual':(e.prob*100).toFixed(0)+'%';
     ctx.font='9px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
     const tw=ctx.measureText(txt).width;
     ctx.fillStyle='rgba(11,14,20,0.85)'; ctx.fillRect(mp.x-tw/2-3,mp.y-7,tw+6,14);
@@ -1025,13 +1072,14 @@ function gOnDown(e) {
   } else {
     // 空白处：平移画布
     gSel=null; gDrag=null;
-    gPanning=true; gPanStart={x:sx,y:sy}; gPanOrigin={x:gPan.x,y:gPan.y};
+    gFitActive=false; gPanning=true; gPanStart={x:sx,y:sy}; gPanOrigin={x:gPan.x,y:gPan.y};
   }
   gRefreshProps(); gDraw();
 }
 function gOnMove(e) {
   const {x,y,sx,sy}=gXY(e);
   gMouse={x,y};
+  q("graphCanvas").title=gHitNode(x,y)?.label||"Scroll to zoom; drag empty space to pan";
   if (gPanning) {
     gPan.x=gPanOrigin.x+(sx-gPanStart.x);
     gPan.y=gPanOrigin.y+(sy-gPanStart.y);
@@ -1039,7 +1087,7 @@ function gOnMove(e) {
   }
   if (gDrag) {
     const n=gFindNode(gDrag.nodeId);
-    if (n) { n.x=x-gDrag.offX; n.y=y-gDrag.offY; }
+    if (n) {gFitActive=false; n.x=x-gDrag.offX; n.y=y-gDrag.offY; }
   }
   if (gDrag||gEdgeFrom) gDraw();
 }
@@ -1050,7 +1098,7 @@ function gOnDbl(e) {
   if (hitN) { gSel={type:'node',id:hitN.id}; gRefreshProps(); setTimeout(()=>{q('gNLabel').focus();q('gNLabel').select();},30); }
 }
 function gOnCtx(e) {
-  e.preventDefault(); const {x,y}=gXY(e);
+  e.preventDefault(); if(graphReadOnly)return; const {x,y}=gXY(e);
   const hitN=gHitNode(x,y); if(hitN){gDeleteNode(hitN.id);return;}
   const hitE=gHitEdge(x,y); if(hitE) gDeleteEdge(hitE.id);
 }
@@ -1080,6 +1128,8 @@ function gNormalize() {
 
 // -- Property panel -----------------------------------------------------------
 function gRefreshProps() {
+  q('graphProperties').hidden=!gSel;
+  requestAnimationFrame(gResize);
   const np=q('gNodeProp'),ep=q('gEdgeProp');
   if(!gSel){np.style.display='none';ep.style.display='none';return;}
   if(gSel.type==='node') {
@@ -1143,7 +1193,7 @@ async function gSaveGraph() {
 async function gLoadGraph() {
   try {
     const r=await fetch('/api/graph'),d=await r.json();
-    if(d.ok&&d.graph){graph=d.graph;gSel=null;gRefreshProps();gDraw();gSetStatus(graphReadOnly?'Runtime pack · read only':'Loaded');}else gSetStatus('Error: '+d.error);
+    if(d.ok&&d.graph){graph=d.graph;gLayoutAvailable=d.layoutAvailable!==false;gFitActive=true;gSel=null;gRefreshProps();gResize();gSetStatus(!gLayoutAvailable?'No saved layout supplied. Open with --layout path/to/graph_config.json':graphReadOnly?'Runtime pack · saved layout · read only':'Loaded');}else gSetStatus('Error: '+d.error);
   } catch(ex){gSetStatus('Load failed');}
 }
 
@@ -1174,7 +1224,7 @@ function gInitGraph() {
   const cv=q('graphCanvas'); if(!cv) return;
   cv.addEventListener('mousedown',  gOnDown);
   cv.addEventListener('mousemove',  gOnMove);
-  cv.addEventListener('mouseup',    gOnUp);
+  window.addEventListener('mouseup', gOnUp);
   cv.addEventListener('dblclick',   gOnDbl);
   cv.addEventListener('contextmenu',gOnCtx);
   window.addEventListener('resize',()=>{if(q('graphPanel').style.display!=='none')gResize();});
@@ -1183,7 +1233,13 @@ function gInitGraph() {
   q('gModeEdge').addEventListener('click',  ()=>gSetMode('edge'));
   q('gNormalize').addEventListener('click', gNormalize);
   q('gPopulate').addEventListener('click',  gPopulate);
-  q('gResetView').addEventListener('click', ()=>{ gPan={x:0,y:0}; gDraw(); });
+  q('gResetView').addEventListener('click', gFitGraph);
+  q('gZoomIn').addEventListener('click',()=>gZoomAt(1.25));
+  q('gZoomOut').addEventListener('click',()=>gZoomAt(.8));
+  q('gExpand').addEventListener('click',()=>gSetExpanded(!document.querySelector('.inspector').classList.contains('graph-expanded')));
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')gSetExpanded(false);});
+  cv.addEventListener('wheel',e=>{e.preventDefault();const p=gXY(e);gZoomAt(Math.exp(-e.deltaY*.0015),p.sx,p.sy);},{passive:false});
+  new ResizeObserver(gResize).observe(q('graphViewport'));
   q('gSave').addEventListener('click',      gSaveGraph);
   q('gLoad').addEventListener('click',      gLoadGraph);
   q('gValidate').addEventListener('click', async()=>{try {const res=await fetch('/api/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(graph)});const d=await res.json();gSetStatus(d.ok?'Valid topology and frame bindings':'Error: '+d.error);}catch(e){gSetStatus(String(e));}});
@@ -1238,7 +1294,7 @@ function gInitGraph() {
     if (!dragging) return;
     const dx  = startX - e.clientX;          // 向左拖 → dx 正 → 变宽
     const newW = Math.max(280, Math.min(window.innerWidth * 0.85, startW + dx));
-    document.querySelector('main').style.gridTemplateColumns = `310px 1fr ${newW}px`;
+    document.querySelector('main').style.gridTemplateColumns = `minmax(120px,16%) minmax(160px,1fr) ${newW}px`;
     if (q('graphPanel').style.display !== 'none') gResize();
   });
   document.addEventListener('mouseup', () => {

@@ -83,6 +83,10 @@ def test_runtime_pack_is_manifest_indexed_and_read_only():
     try:
         status, body = request(url, "/api/projects")
         assert status == 200 and json.loads(body)["readOnly"]
+        status, body = request(url, "/api/graph")
+        assert status == 200
+        assert json.loads(body)["layoutAvailable"]
+        assert json.loads(body)["graph"]["nodes"][0]["x"] == 90
         assert request(url, "/api/graph", {})[0] == 409
         status, body = request(url, "/api/preview-node", {"nodeId": "idle"})
         preview = json.loads(body)
@@ -92,6 +96,27 @@ def test_runtime_pack_is_manifest_indexed_and_read_only():
         assert request(url, "/api/report?root=idle")[0] == 400
         assert request(url, "/static/vendor/basis_transcoder.wasm")[0] == 200
         assert (root / "graph_config.json").read_bytes() == graph_before
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_pack_without_layout_does_not_invent_coordinates(tmp_path):
+    import shutil
+    from pathlib import Path
+    root = tmp_path / "pack"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "examples/runtime-minimal", root)
+    server = make_server(root, 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}"
+        status, body = request(url, "/api/graph")
+        response = json.loads(body)
+        assert status == 200 and response["layoutAvailable"] is False
+        assert all("x" not in n and "y" not in n for n in response["graph"]["nodes"])
+        assert request(url, "/api/clips?root=idle")[0] == 200
     finally:
         server.shutdown()
         server.server_close()

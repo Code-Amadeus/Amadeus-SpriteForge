@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from spriteforge.character_pack import CharacterPackError, _asset_path
-from spriteforge.graph import runtime_graph, validate_graph
+from spriteforge.graph import layout_coordinates, runtime_graph, validate_graph
 from spriteforge.workspace import atomic_json, clip_frames, discover, read_json, resolve_asset
 
 
@@ -82,3 +82,14 @@ def test_invalid_json_save_preserves_previous_file(workspace):
     with pytest.raises(ValueError):
         atomic_json(path, {"bad": float("nan")})
     assert path.read_bytes() == before
+
+
+def test_layout_uses_exact_saved_id_label_and_coordinates(workspace):
+    graph = read_json(workspace / "graph_config.json")
+    runtime = runtime_graph(graph)
+    positions = layout_coordinates(runtime, graph)
+    assert positions["idle"] == {"x": 90, "y": 100}
+    assert all("x" not in n for n in runtime["nodes"])
+    graph["nodes"][0]["label"] = "different character"
+    with pytest.raises(ValueError, match="identities"):
+        layout_coordinates(runtime, graph)

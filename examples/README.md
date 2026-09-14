@@ -4,6 +4,8 @@
   by `spriteforge.demo`, with a five-edge graph and explicit clip playback settings.
 - `runtime-minimal/`: the same nine frames encoded with KTX-Software 4.4.2 UASTC,
   exported through the standalone exporter. It is a valid Amadeus v1 character pack.
+- `runtime-minimal.graph-layout.json`: saved node positions for the reviewer. This
+  companion remains outside the runtime pack, which continues to contain only runtime data.
 
 ```powershell
 spriteforge review --workspace examples/minimal

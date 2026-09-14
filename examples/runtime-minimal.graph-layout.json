@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    {
+      "id": "idle",
+      "label": "idle",
+      "x": 90,
+      "y": 100
+    },
+    {
+      "id": "idle_variant",
+      "label": "idle_variant",
+      "x": 245,
+      "y": 200
+    },
+    {
+      "id": "speaking_short",
+      "label": "speaking_short",
+      "x": 400,
+      "y": 100
+    }
+  ]
+}
