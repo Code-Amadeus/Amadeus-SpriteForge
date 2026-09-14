@@ -1,13 +1,15 @@
 # SpriteForge 资产管理与图编辑工具
 
 这一版分离本地管理工具、生成服务与 Amadeus 主 runtime。
-组织仓库为 `Code-Amadeus/amadeus-spriteforge`。
+组织仓库为 `Code-Amadeus/AMADEUS-SPRITEFORGE`。
 
 ## 启动
 
 ```powershell
+git clone https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE.git
+cd AMADEUS-SPRITEFORGE
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[qa,dev]"
+.\.venv\Scripts\python.exe -m pip install ".[qa]"
 .\.venv\Scripts\spriteforge.exe init workspace --demo
 .\.venv\Scripts\spriteforge.exe review --workspace workspace
 ```

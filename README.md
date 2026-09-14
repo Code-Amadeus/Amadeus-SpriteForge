@@ -1,10 +1,10 @@
-# Amadeus SpriteForge
+# AMADEUS-SPRITEFORGE
 
 Local asset review and behavior graph editing for sprite animation. Import existing
 PNG frames, inspect clips and seams, edit a graph, and export a runtime-only
 character pack for [Amadeus](https://github.com/Code-Amadeus/Amadeus).
 
-**Status: source foundation, 0.1.0.** Generation services and the Amadeus application
+**Status: source alpha, 0.1.0.** Generation services and the Amadeus application
 runtime are separate. [中文说明](docs/README.zh-CN.md)
 
 ## Try the example
@@ -12,14 +12,20 @@ runtime are separate. [中文说明](docs/README.zh-CN.md)
 Python 3.10 or newer is required. Reference checks use Windows and Python 3.12.
 
 ```powershell
+git clone https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE.git
+cd AMADEUS-SPRITEFORGE
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[qa,dev]"
+.\.venv\Scripts\python.exe -m pip install ".[qa]"
 .\.venv\Scripts\spriteforge.exe init workspace --demo
 .\.venv\Scripts\spriteforge.exe review --workspace workspace
 ```
 
 On Linux/macOS use `.venv/bin/python` and `.venv/bin/spriteforge`. Those platforms
 need their own verification; a configured CI job is not completed platform evidence.
+
+Commands below use `spriteforge` for readability. Activate this virtual environment,
+or replace it with `.\.venv\Scripts\spriteforge.exe` on Windows and
+`.venv/bin/spriteforge` on Linux/macOS. Node.js is only needed to develop/test the UI.
 
 The editor opens at `http://127.0.0.1:7788`. Use `--port 8788` or `--no-browser`
 to configure startup. The base installation (`pip install -e .`) has no third-party Python
@@ -121,7 +127,10 @@ See [architecture](docs/architecture.md) and [authoring](docs/authoring.md).
 
 ## Checks
 
+Contributors should install the development extra first; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ```powershell
+python -m pip install -e ".[qa,dev]"
 python -m pytest
 node --check src/spriteforge/web/review.js
 ```

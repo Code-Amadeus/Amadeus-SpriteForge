@@ -1,7 +1,10 @@
 name: Tests
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   contracts:
+    timeout-minutes: 15
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -24,4 +27,11 @@ jobs:
       - run: node tools/ktx_smoke.cjs
       - run: python -m spriteforge init workspace --demo
       - run: python -m spriteforge validate-graph --workspace workspace
-      - run: python -m pip wheel . --no-deps --wheel-dir dist
+      - run: python -m pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: ignore

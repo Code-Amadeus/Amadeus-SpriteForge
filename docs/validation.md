@@ -4,7 +4,7 @@ Local reference: 2026-09-14–15, Windows, Python 3.12, Node 22, headless Micros
 This records observed checks, not a completed public CI run or cross-platform support claim.
 
 - Fresh repository-local virtual environment installed with `.[qa,dev]`.
-- Python suite: 28 passed, 1 skipped. The skipped case needs permission to create
+- Python suite after layout repair: 31 passed, 1 skipped. The skipped case needs permission to create
   symlinks on Windows; direct traversal/foreign absolute path cases passed.
 - Browser authoring journey: discover example frames, run QA, select a node,
   change label/timing/loop mode, save, reject missing frames without losing the
@@ -54,3 +54,19 @@ graph via --layout or the exported sibling .graph-layout.json, validates exact n
 identities, and preserves its coordinates. Browser checks cover all-node fit,
 expanded canvas, wheel zoom, and exact coordinate preservation. The application
 never substitutes a three-column or automatic layout for the creator's saved wiring.
+
+## Public source candidate (2026-09-15)
+
+- Current Python regression suite: 31 passed, 1 Windows symlink-capability skip.
+- Source distribution contains the contribution guide, schemas, PNG and KTX2
+  examples, layout companion, and browser test tools.
+- A new virtual environment installed the built wheel with `--no-deps`. From the
+  extracted source distribution, KTX2 playback, graph fit/zoom and exact saved
+  coordinates passed with that installed wheel; no OpenCV/NumPy was present.
+- A fresh demo workspace exported three clips / nine KTX2 frames with the real
+  encoder, retaining the layout companion; the exported pack passed validation.
+- Tracked media consists only of the generated example PNG/KTX2 files. Browser
+  decoder bytes in the wheel match the recorded vendor hashes.
+
+The workflow records current Windows/Ubuntu results remotely. Consult the run for
+the revision being evaluated; these local checks do not substitute for a remote run.

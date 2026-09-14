@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,8 +8,14 @@ version = "0.1.0"
 description = "Local sprite asset review, behavior graph editing, and Amadeus pack export"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {file = "LICENSE"}
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md", "LICENSES/*.txt"]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE"
+Repository = "https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE"
+Issues = "https://github.com/Code-Amadeus/AMADEUS-SPRITEFORGE/issues"
 
 [project.optional-dependencies]
 qa = ["numpy>=1.24,<3", "opencv-python-headless>=4.8,<5"]
