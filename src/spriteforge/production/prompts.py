@@ -140,6 +140,17 @@ def render(library: dict, template_id: str, subject: str, variables: dict[str, o
             "placeholders": placeholders, "complete": not placeholders, "sha256": digest, "renderedAt": now()}
 
 
+def pose_prompt(library: dict, character: dict, pose: dict) -> dict:
+    return render(library, pose["prompt"]["template"], pose["prompt"]["subject"],
+                  {"character": character["displayName"], "pose": pose["id"], "description": pose.get("description", "")})
+
+
+def clip_prompt(library: dict, character: dict, clip: dict) -> dict:
+    return render(library, clip["prompt"]["template"], clip["prompt"]["subject"],
+                  {"character": character["displayName"], "from": clip["from"], "to": clip["to"],
+                   "duration": clip["generation"]["durationS"]})
+
+
 def require_complete(rendered: dict) -> None:
     if not rendered["complete"]:
         hints = "; ".join(rendered["placeholders"][:4])

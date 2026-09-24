@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SpriteForge Production</title>
+  <link rel="stylesheet" href="/static/production.css">
+</head>
+<body>
+<header>
+  <div class="brand"><strong id="title">Production</strong> <span id="canvasInfo" class="muted"></span></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="stills" class="active">Stills</button>
+    <button data-tab="clips">Clips</button>
+    <button data-tab="prompts">Prompts</button>
+    <button data-tab="jobs">Jobs <span id="jobBadge" class="badge" hidden></span></button>
+  </nav>
+  <div id="tools" class="tools"></div>
+  <a href="/" class="nav-link">Review &amp; graph</a>
+</header>
+<main>
+  <section id="notice" class="notice" hidden></section>
+  <section id="tab-stills" class="tab split">
+    <aside><div class="aside-head"><h2>Poses</h2><button id="addPose">+ Pose</button></div><div id="poseList"></div></aside>
+    <div id="poseDetail" class="detail"></div>
+  </section>
+  <section id="tab-clips" class="tab split" hidden>
+    <aside><div class="aside-head"><h2>Clips</h2><button id="addClip">+ Clip</button></div><div id="clipList"></div>
+      <button id="graphSync" class="wide">Sync graph timing</button></aside>
+    <div id="clipDetail" class="detail"></div>
+  </section>
+  <section id="tab-prompts" class="tab" hidden><div id="promptList" class="detail"></div></section>
+  <section id="tab-jobs" class="tab" hidden><div id="jobList" class="detail"></div></section>
+</main>
+<div id="toast" role="status" hidden></div>
+<script src="/static/production.js"></script>
+</body>
+</html>

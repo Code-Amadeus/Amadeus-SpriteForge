@@ -10,9 +10,12 @@ from pathlib import Path
 
 from .character_pack import load_character_pack
 from .graph import layout_coordinates, validate_graph
+from .production.api import ProductionApi
 from .workspace import atomic_json, clip_frames, discover, png_frames, read_json, resolve_asset
 
 WEB_ROOT = Path(__file__).parent / "web"
+STATIC = {"review.js": "text/javascript", "review.css": "text/css", "preview-media.js": "text/javascript",
+          "production.js": "text/javascript", "production.css": "text/css"}
 
 
 def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = None) -> ThreadingHTTPServer:
@@ -34,6 +37,7 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
     if pack:
         indexed.update(p for frames in pack.mouth_overlay_paths.values() for p in frames)
     lock = threading.Lock()
+    production = None if pack else ProductionApi(workspace)
 
     class Handler(BaseHTTPRequestHandler):
         def send(self, status: int, content: bytes, mime: str) -> None:
@@ -54,6 +58,43 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
             origin = self.headers.get("Origin")
             return self.headers.get("Host") in hosts and (not origin or origin in {f"http://{h}" for h in hosts})
 
+        def send_file(self, path: Path, mime: str) -> None:
+            """Serve a file with single byte-range support so videos can seek."""
+            size = path.stat().st_size
+            start, end = 0, size - 1
+            ranged = self.headers.get("Range", "")
+            if ranged.startswith("bytes=") and "," not in ranged:
+                first, _, last = ranged[6:].partition("-")
+                start, end = (int(first), int(last) if last else size - 1) if first else (max(0, size - int(last)), size - 1)
+                if not 0 <= start <= end < size:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.end_headers()
+                    return
+            self.send_response(206 if ranged.startswith("bytes=") else 200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(end - start + 1))
+            self.send_header("Accept-Ranges", "bytes")
+            if ranged.startswith("bytes="):
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            with open(path, "rb") as stream:
+                stream.seek(start)
+                remaining = end - start + 1
+                while remaining:
+                    chunk = stream.read(min(remaining, 1 << 20))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+
+        def production_api(self) -> ProductionApi:
+            if production is None:
+                raise PermissionError("Production belongs to an authoring workspace, not a runtime pack")
+            return production
+
         def do_GET(self) -> None:
             if not self.local_request():
                 self.json(403, {"ok": False, "error": "Use the local editor URL"})
@@ -61,15 +102,19 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
             parsed = urllib.parse.urlparse(self.path)
             qs = urllib.parse.parse_qs(parsed.query)
             try:
-                if parsed.path == "/":
-                    self.send(200, (WEB_ROOT / "review.html").read_bytes(), "text/html; charset=utf-8")
+                if parsed.path in {"/", "/production"}:
+                    page = "review.html" if parsed.path == "/" else "production.html"
+                    self.send(200, (WEB_ROOT / page).read_bytes(), "text/html; charset=utf-8")
                 elif parsed.path == "/favicon.ico":
                     self.send(204, b"", "image/x-icon")
-                elif parsed.path in {"/static/review.js", "/static/review.css"}:
-                    name = parsed.path.rsplit("/", 1)[-1]
-                    self.send(200, (WEB_ROOT / name).read_bytes(), "text/javascript" if name.endswith(".js") else "text/css")
-                elif parsed.path == "/static/preview-media.js":
-                    self.send(200, (WEB_ROOT / "preview-media.js").read_bytes(), "text/javascript")
+                elif parsed.path.startswith("/static/") and parsed.path[8:] in STATIC:
+                    self.send(200, (WEB_ROOT / parsed.path[8:]).read_bytes(), STATIC[parsed.path[8:]])
+                elif parsed.path == "/api/production":
+                    self.json(200, self.production_api().overview())
+                elif parsed.path == "/api/production/jobs":
+                    self.json(200, {"ok": True, "jobs": self.production_api().job_list()})
+                elif parsed.path == "/api/production/media":
+                    self.send_file(*self.production_api().media((qs.get("path") or [""])[0]))
                 elif parsed.path.startswith("/static/vendor/"):
                     name = parsed.path.rsplit("/", 1)[-1]
                     if name not in {"pixi.min.js", "pixi-basis-ktx2.global.js", "basis_transcoder.js", "basis_transcoder.wasm"}:
@@ -154,12 +199,20 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                     self.send(200, frame.read_bytes(), "image/ktx2" if pack else "image/png")
                 else:
                     self.json(404, {"ok": False, "error": "Not found"})
-            except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+            except PermissionError as exc:
+                self.json(409, {"ok": False, "error": str(exc)})
+            except (ValueError, OSError, KeyError, TypeError, RuntimeError, ImportError) as exc:
                 self.json(400, {"ok": False, "error": str(exc)})
 
         def do_POST(self) -> None:
-            if not self.local_request() or self.headers.get_content_type() != "application/json":
-                self.json(403, {"ok": False, "error": "Graph writes require a local JSON request"})
+            parsed = urllib.parse.urlparse(self.path)
+            upload = parsed.path == "/api/production/upload"
+            expected = "application/octet-stream" if upload else "application/json"
+            if not self.local_request() or self.headers.get_content_type() != expected:
+                self.json(403, {"ok": False, "error": "Writes require a local request with the expected content type"})
+                return
+            if parsed.path.startswith("/api/production/"):
+                self.production_post(parsed, upload)
                 return
             if self.path not in {"/api/graph", "/api/validate", "/api/preview-node"}:
                 self.json(404, {"ok": False, "error": "Not found"})
@@ -193,6 +246,35 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                 else:
                     self.json(200, {"ok": True, "graph": graph})
             except (ValueError, OSError, KeyError, TypeError) as exc:
+                self.json(400, {"ok": False, "error": str(exc)})
+
+        def production_post(self, parsed: urllib.parse.ParseResult, upload: bool) -> None:
+            try:
+                api = self.production_api()
+                length = int(self.headers.get("Content-Length", "0"))
+                if upload:
+                    qs = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
+                    fps = float(qs["fps"]) if qs.get("fps") else None
+                    result = api.upload(qs.get("kind", ""), qs.get("owner", ""), qs.get("name", ""), self.rfile,
+                                        length, fps, qs.get("note", ""))
+                else:
+                    if not 0 < length <= 2_000_000:
+                        raise ValueError("Invalid request size")
+                    body = json.loads(self.rfile.read(length))
+                    if not isinstance(body, dict):
+                        raise ValueError("Request body must be a JSON object")
+                    route = parsed.path.removeprefix("/api/production/")
+                    try:
+                        result = api.post(route, body)
+                    except KeyError as exc:
+                        if exc.args == (route,):
+                            self.json(404, {"ok": False, "error": "Not found"})
+                            return
+                        raise
+                self.json(200, {"ok": True, **result})
+            except PermissionError as exc:
+                self.json(409, {"ok": False, "error": str(exc)})
+            except (ValueError, OSError, KeyError, TypeError, ImportError) as exc:
                 self.json(400, {"ok": False, "error": str(exc)})
 
         def log_message(self, *args) -> None:

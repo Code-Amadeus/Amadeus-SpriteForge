@@ -84,6 +84,7 @@ def _summary(owner: dict, take: dict) -> dict:
 def overview(workspace: Path) -> dict:
     character = load_character(workspace)
     tools = load_tools(workspace)
+    library = prompts.load_library(workspace)
     anchors_take = (character.get("anchors") or {}).get("take")
     poses = []
     for pose in list_owners(workspace, "pose"):
@@ -91,18 +92,19 @@ def overview(workspace: Path) -> dict:
         accepted = next((t for t in takes if t["status"] == "accepted"), None)
         recheck = bool(accepted and pose["id"] != character["basePose"]
                        and (accepted.get("qa") or {}).get("anchorsTake") != anchors_take)
-        poses.append({**pose, "takes": takes, "needsRecheck": recheck})
+        poses.append({**pose, "takes": takes, "needsRecheck": recheck,
+                      "promptPreview": prompts.pose_prompt(library, character, pose)})
     clips = []
     for clip in list_owners(workspace, "clip"):
         state, reasons = render_freshness(workspace, clip)
         render = read_render(workspace, clip["id"])
         clips.append({**clip, "takes": [_summary(clip, t) for t in list_takes(workspace, "clip", clip["id"])],
-                      "output": output_root(clip["id"]),
+                      "promptPreview": prompts.clip_prompt(library, character, clip), "output": output_root(clip["id"]),
                       "render": {"state": state, "reasons": reasons, **({k: render.get(k) for k in (
                           "take", "frameCount", "frameIntervalMs", "loopMode", "phase", "renderedAt", "qa")} if render else {})}})
     providers = {name: {"model": config.get("model"), "keySet": bool(os.environ.get(str(config.get("apiKeyEnv") or "")))}
                  for name, config in (tools.get("providers") or {}).items()}
-    return {"character": character, "prompts": prompts.load_library(workspace), "poses": poses, "clips": clips,
+    return {"character": character, "prompts": library, "poses": poses, "clips": clips,
             "tools": {"ffmpeg": bool(shutil.which(tools.get("ffmpeg") or "ffmpeg")), "alpha": bool(tools.get("alpha")),
                       "interpolate": bool(tools.get("interpolate")), "providers": providers}}
 

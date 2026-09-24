@@ -16,7 +16,7 @@ import numpy as np
 from .checks import still_report
 from .geometry import composite, estimate_similarity, framing_placement, measure, placement, warp
 from .media import IMAGE_SUFFIXES, copy_durable, read_bgra, write_png
-from .prompts import load_library, render
+from .prompts import load_library, pose_prompt
 from .records import (canvas_size, decide, load_character, load_owner, load_take, new_take, save_character,
                       save_owner, save_take, still_path, take_dir)
 from .tools import load_tools, run_processor
@@ -35,8 +35,7 @@ def matte(tools: dict, image: np.ndarray, background: list[int]) -> np.ndarray:
 
 
 def still_prompt(workspace: Path, character: dict, pose: dict) -> dict:
-    return render(load_library(workspace), pose["prompt"]["template"], pose["prompt"]["subject"],
-                  {"character": character["displayName"], "pose": pose["id"], "description": pose.get("description", "")})
+    return pose_prompt(load_library(workspace), character, pose)
 
 
 def import_still(workspace: Path, pose_id: str, source: Path, *, note: str = "",

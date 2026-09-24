@@ -17,7 +17,8 @@ import numpy as np
 from ..workspace import atomic_json
 from .geometry import composite
 from .media import VIDEO_SUFFIXES, copy_durable, encode_png, read_bgra, sorted_pngs, video_info, write_durable
-from .prompts import load_library, render, require_complete
+from . import prompts
+from .prompts import require_complete
 from .providers import VideoJob, download, get_provider
 from .records import (canvas_size, clip_settings, load_character, load_owner, load_take, new_take, save_take,
                       still_path, take_dir)
@@ -26,9 +27,7 @@ from .tools import load_tools
 
 
 def clip_prompt(workspace: Path, character: dict, clip: dict) -> dict:
-    return render(load_library(workspace), clip["prompt"]["template"], clip["prompt"]["subject"],
-                  {"character": character["displayName"], "from": clip["from"], "to": clip["to"],
-                   "duration": clip["generation"]["durationS"]})
+    return prompts.clip_prompt(prompts.load_library(workspace), character, clip)
 
 
 def upload_image(character: dict, still: np.ndarray, scale: float = 1.0) -> bytes:
