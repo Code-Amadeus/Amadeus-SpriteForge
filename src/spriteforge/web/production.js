@@ -20,11 +20,21 @@ function h(tag, attrs, ...children) {
     else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
     else el.setAttribute(key, value === true ? "" : value);
   }
+  return append(el, children);
+}
+
+function append(el, children) {
   for (const child of children.flat(Infinity)) {
     if (child === null || child === undefined || child === false) continue;
     el.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
   return el;
+}
+
+// Like replaceChildren, but nested arrays are flattened and empty values skipped.
+function fill(el, ...children) {
+  el.replaceChildren();
+  return append(el, children);
 }
 
 const badge = (text, kind) => h("span", { class: `badge ${kind || text}` }, text);
@@ -86,7 +96,7 @@ function render() {
 
 function renderTools() {
   const tools = state.tools;
-  $("tools").replaceChildren(
+  fill($("tools"),
     ...["ffmpeg", "alpha", "interpolate"].map((k) => badge(`${k} ${tools[k] ? "✓" : "✗"}`, tools[k] ? "yes" : "no")),
     ...Object.entries(tools.providers).map(([name, p]) => badge(`${name} key ${p.keySet ? "set" : "missing"}`, p.keySet ? "yes" : "missing")));
 }
@@ -107,7 +117,7 @@ function poseStatus(pose) {
 function renderPoses() {
   const poses = state.poses;
   if (!poses.some((p) => p.id === selection.pose)) selection.pose = poses.length ? poses[0].id : null;
-  $("poseList").replaceChildren(...poses.map((pose) => {
+  fill($("poseList"), ...poses.map((pose) => {
     const [text, kind] = poseStatus(pose);
     return h("div", { class: "item" + (pose.id === selection.pose ? " active" : ""), "data-pose": pose.id,
       onclick: () => { selection.pose = pose.id; selection.poseTake = null; renderPoses(); } },
@@ -119,14 +129,14 @@ function renderPoses() {
 
 function renderPoseDetail(pose) {
   const root = $("poseDetail");
-  if (!pose) { root.replaceChildren(h("p", { class: "muted" }, "Add a pose to start.")); return; }
+  if (!pose) { fill(root, h("p", { class: "muted" }, "Add a pose to start.")); return; }
   const ready = pose.takes.filter((t) => t.state === "ready" && t.media && t.media.still);
   const current = ready.find((t) => t.id === selection.poseTake) || ready.find((t) => t.status === "accepted") || ready[ready.length - 1];
   selection.poseTake = current ? current.id : null;
   const upload = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", id: "stillUpload",
     onchange: (e) => uploadFile("pose", pose.id, e.target.files[0]) });
   const expected = pose.expected || {};
-  root.replaceChildren(
+  fill(root,
     h("div", { class: "row" }, h("h2", {}, pose.id), pose.description ? h("span", { class: "muted" }, pose.description) : null,
       Object.keys(expected).length ? badge("intended offset " + JSON.stringify(expected), "watch") : null,
       pose.needsRecheck ? badge("base anchors changed: approve again", "watch") : null),
@@ -238,7 +248,7 @@ function decisionButtons(kind, owner, take) {
 function renderClips() {
   const clips = state.clips;
   if (!clips.some((c) => c.id === selection.clip)) selection.clip = clips.length ? clips[0].id : null;
-  $("clipList").replaceChildren(...clips.map((clip) => h("div", {
+  fill($("clipList"), ...clips.map((clip) => h("div", {
     class: "item" + (clip.id === selection.clip ? " active" : ""), "data-clip": clip.id,
     onclick: () => { selection.clip = clip.id; renderClips(); } },
   h("div", { class: "row" }, h("strong", {}, clip.id), badge(clip.render.state),
@@ -258,14 +268,14 @@ function generateHint(clip, provider) {
 function renderClipDetail(clip) {
   const root = $("clipDetail");
   clearInterval(previewTimer);
-  if (!clip) { root.replaceChildren(h("p", { class: "muted" }, "Add a clip between two approved poses.")); return; }
+  if (!clip) { fill(root, h("p", { class: "muted" }, "Add a clip between two approved poses.")); return; }
   const provider = state.tools.providers[clip.generation.provider];
   const hint = generateHint(clip, provider);
   const upload = h("input", { type: "file", accept: "video/mp4,video/webm,video/quicktime", id: "takeUpload",
     onchange: (e) => uploadFile("clip", clip.id, e.target.files[0]) });
   const active = clip.takes.filter((t) => t.status !== "rejected").reverse();
   const archived = clip.takes.filter((t) => t.status === "rejected").reverse();
-  root.replaceChildren(
+  fill(root,
     h("div", { class: "row" }, h("h2", {}, clip.id), h("span", { class: "muted" }, `${clip.from} → ${clip.to} · ${clip.kind} · phase ${clip.phase}`)),
     h("div", { class: "inputs", style: "max-width:320px" }, endpoint(clip.from, "first frame"), endpoint(clip.to, "last frame")),
     h("h3", {}, "Settings"), settingsForm(clip),
@@ -433,7 +443,7 @@ function renderPrompts() {
   }
   const rank = (id) => (id.startsWith("pose.") ? 1 : id.startsWith("clip.") ? 2 : 0);
   const ids = Object.keys(library.blocks).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
-  $("promptList").replaceChildren(
+  fill($("promptList"),
     h("h2", {}, "Prompt library"),
     h("p", { class: "tiny" }, "Saving a block adds a version; takes keep the exact text and versions they used. " +
       "Prompts containing {{PLACEHOLDER: ...}} are never sent to a paid provider."),
@@ -486,7 +496,7 @@ function renderJobs() {
   const running = jobs.filter((j) => j.status === "running").length;
   $("jobBadge").hidden = !running;
   $("jobBadge").textContent = String(running);
-  $("jobList").replaceChildren(h("h2", {}, "Jobs"), jobs.length ? jobs.map((j) => h("div", { class: "card", style: "margin-top:10px" },
+  fill($("jobList"), h("h2", {}, "Jobs"), jobs.length ? jobs.map((j) => h("div", { class: "card", style: "margin-top:10px" },
     h("div", { class: "row" }, h("strong", {}, `${j.action} ${j.clip}`),
       badge(j.status, j.status === "succeeded" ? "pass" : j.status === "failed" ? "fail" : "pending"),
       h("span", { class: "tiny" }, j.startedAt), j.result ? h("span", { class: "tiny" }, "result: " + j.result) : null),

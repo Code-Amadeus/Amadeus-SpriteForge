@@ -24,6 +24,7 @@ jobs:
       - run: python -m pytest
       - run: node --check src/spriteforge/web/review.js
       - run: node --check src/spriteforge/web/preview-media.js
+      - run: node --check src/spriteforge/web/production.js
       - run: npm ci
       - if: runner.os != 'Windows'
         run: npx playwright install --with-deps chromium

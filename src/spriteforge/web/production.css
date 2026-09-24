@@ -3,6 +3,7 @@
   --accent: #64a8ff; --bad: #ff6b6b; --warn: #f3bb4c; --fix: #ff9f5a; --ok: #64d28a;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
 header { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); background: #151820; }
 .brand strong { font-size: 16px; }
