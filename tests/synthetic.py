@@ -1,11 +1,16 @@
 """Deterministic synthetic character media for production tests (no third-party artwork)."""
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
 
-from spriteforge.production.project import init_production
+from spriteforge.production.clips import import_clip_take
+from spriteforge.production.media import read_bgra
+from spriteforge.production.project import add_clip, add_pose, init_production, set_clip
+from spriteforge.production.records import decide, still_path
+from spriteforge.production.stills import approve_still, import_still
 from spriteforge.production.tools import load_tools, save_tools
 
 PROCESSORS = Path(__file__).parent / "processors"
@@ -62,6 +67,43 @@ def write_video(path: Path, frames: list[np.ndarray], fps: float = 30) -> Path:
         writer.write(frame)
     writer.release()
     return path
+
+
+def shifted(image: np.ndarray, scale: float, dx: float, dy: float) -> np.ndarray:
+    """A 'generated' still: opaque, on white, slightly off the master's framing."""
+    matrix = np.array([[scale, 0, dx], [0, scale, dy]], np.float32)
+    return cv2.warpAffine(flatten(image), matrix, image.shape[1::-1], flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255))
+
+
+def build_studio(tmp_path: Path) -> SimpleNamespace:
+    """Workspace with an approved base still ('idle') and an approved expression ('smile')."""
+    root = production_workspace(tmp_path / "studio ws")
+    take = import_still(root, "idle", save(tmp_path / "master.png", figure(400, 700)))
+    approve_still(root, "idle", take["id"])
+    add_pose(root, "smile", "gentle smile")
+    smile = import_still(root, "smile", save(tmp_path / "smile.png", shifted(figure(400, 700, mouth=3), 1.03, 6, -4)))
+    approve_still(root, "smile", smile["id"])
+    return SimpleNamespace(root=root, tmp=tmp_path)
+
+
+def still(studio, pose: str) -> np.ndarray:
+    return read_bgra(still_path(studio.root, pose)[0])[0]
+
+
+def frame_folder(studio, name: str, start: str, end: str, count: int) -> Path:
+    folder = studio.tmp / name
+    for index, frame in enumerate(provider_frames(still(studio, start), still(studio, end), count)):
+        save(folder / f"{index:04d}.png", frame)
+    return folder
+
+
+def clip_with_take(studio, clip_id: str, start: str, end: str, count: int, **settings) -> dict:
+    add_clip(studio.root, clip_id, start, end)
+    if settings:
+        set_clip(studio.root, clip_id, **settings)
+    take = import_clip_take(studio.root, clip_id, frame_folder(studio, clip_id, start, end, count), fps=30)
+    decide(studio.root, "clip", clip_id, take["id"], "accept")
+    return take
 
 
 def production_workspace(root: Path) -> Path:

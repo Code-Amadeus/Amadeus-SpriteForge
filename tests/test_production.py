@@ -7,7 +7,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from synthetic import CANVAS, figure, flatten, production_workspace, provider_frames, save, write_video  # noqa: E402
+from synthetic import CANVAS, clip_with_take, figure, frame_folder, provider_frames, save, still, write_video  # noqa: E402
 
 from spriteforge.character_pack import load_character_pack  # noqa: E402
 from spriteforge.exporter import export_pack  # noqa: E402
@@ -18,51 +18,14 @@ from spriteforge.production.geometry import measure  # noqa: E402
 from spriteforge.production.media import read_bgra, sorted_pngs  # noqa: E402
 from spriteforge.production.project import add_clip, add_pose, graph_sync, overview, set_clip  # noqa: E402
 from spriteforge.production.records import (decide, load_character, load_owner, load_take, read_render,  # noqa: E402
-                                            render_freshness, still_path)
+                                            render_freshness)
 from spriteforge.production.render import render_clip  # noqa: E402
 from spriteforge.production.stills import approve_still, import_still, set_expected  # noqa: E402
 from spriteforge.workspace import atomic_json, discover, read_json  # noqa: E402
 
 
-def shifted(image: np.ndarray, scale: float, dx: float, dy: float) -> np.ndarray:
-    """A 'generated' still: opaque, on white, slightly off the master's framing."""
-    matrix = np.array([[scale, 0, dx], [0, scale, dy]], np.float32)
-    return cv2.warpAffine(flatten(image), matrix, image.shape[1::-1], flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255))
-
-
-@pytest.fixture
-def studio(tmp_path):
-    root = production_workspace(tmp_path / "studio ws")
-    take = import_still(root, "idle", save(tmp_path / "master.png", figure(400, 700)))
-    approve_still(root, "idle", take["id"])
-    add_pose(root, "smile", "gentle smile")
-    smile = import_still(root, "smile", save(tmp_path / "smile.png", shifted(figure(400, 700, mouth=3), 1.03, 6, -4)))
-    approve_still(root, "smile", smile["id"])
-    return SimpleNamespace(root=root, tmp=tmp_path)
-
-
-def load_owner_take(studio, pose):
+def accepted_still_take(studio, pose):
     return load_take(studio.root, "pose", pose, load_owner(studio.root, "pose", pose)["acceptedTake"])
-
-
-def still(studio, pose):
-    return read_bgra(still_path(studio.root, pose)[0])[0]
-
-
-def frame_folder(studio, name, start, end, count):
-    folder = studio.tmp / name
-    for index, frame in enumerate(provider_frames(still(studio, start), still(studio, end), count)):
-        save(folder / f"{index:04d}.png", frame)
-    return folder
-
-
-def clip_with_take(studio, clip_id, start, end, count, **settings):
-    add_clip(studio.root, clip_id, start, end)
-    if settings:
-        set_clip(studio.root, clip_id, **settings)
-    take = import_clip_take(studio.root, clip_id, frame_folder(studio, clip_id, start, end, count), fps=30)
-    decide(studio.root, "clip", clip_id, take["id"], "accept")
-    return take
 
 
 def test_base_still_defines_the_canvas_contract(studio):
@@ -71,7 +34,7 @@ def test_base_still_defines_the_canvas_contract(studio):
     assert base["size"] == list(CANVAS) and base["edges"] == ["bottom"]
     assert character["anchors"]["headTopY"] == base["headTopY"] and abs(base["headTopY"] - 0.02 * CANVAS[1]) <= 1
     source = measure(figure(400, 700))
-    scale = load_owner_take(studio, "idle")["normalization"]["matrix"][0][0]
+    scale = accepted_still_take(studio, "idle")["normalization"]["matrix"][0][0]
     assert abs(scale * (source["bbox"][2] - source["bbox"][0] + 1) - 0.71 * CANVAS[0]) < 1
     smile = measure(still(studio, "smile"))
     assert abs(smile["headTopY"] - base["headTopY"]) <= 1 and abs(smile["headCenterX"] - base["headCenterX"]) <= 1
