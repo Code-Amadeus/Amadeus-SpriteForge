@@ -1,0 +1,283 @@
+"""`spriteforge production ...` commands."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+def _owner(parser: argparse.ArgumentParser, clip_only: bool = False) -> None:
+    group = parser.add_mutually_exclusive_group(required=True)
+    if not clip_only:
+        group.add_argument("--pose", help="Pose id (still takes)")
+    group.add_argument("--clip", help="Clip id (video takes)")
+
+
+def add_parser(commands) -> None:
+    production = commands.add_parser("production", help="Pose stills, video takes, rendering and production QA")
+    sub = production.add_subparsers(dest="action", required=True)
+
+    def command(name: str, help_text: str) -> argparse.ArgumentParser:
+        parser = sub.add_parser(name, help=help_text)
+        parser.add_argument("--workspace", type=Path, required=True)
+        return parser
+
+    init = command("init", "Create the production character, prompt library and tool settings")
+    init.add_argument("--id", required=True)
+    init.add_argument("--display-name", required=True)
+    init.add_argument("--canvas", required=True, help="WIDTHxHEIGHT of every runtime frame, e.g. 764x1028")
+    init.add_argument("--base-pose", default="idle")
+    init.add_argument("--background", default="255,255,255", help="R,G,B used to flatten stills for providers")
+    init.add_argument("--cut-edges", default="bottom", help="Comma list of canvas edges the body may cross")
+    status = command("status", "Summarise poses, clips, takes and renders")
+    status.add_argument("--json", action="store_true")
+
+    pose = sub.add_parser("pose", help="Plan poses").add_subparsers(dest="pose_action", required=True)
+    pose_add = pose.add_parser("add")
+    pose_add.add_argument("--workspace", type=Path, required=True)
+    pose_add.add_argument("id")
+    pose_add.add_argument("--description", default="")
+    expect = pose.add_parser("expect", help="Record an intended head offset for a pose (e.g. a side turn)")
+    expect.add_argument("--workspace", type=Path, required=True)
+    expect.add_argument("id")
+    expect.add_argument("--head-top", type=float)
+    expect.add_argument("--head-center", type=float)
+
+    clip = sub.add_parser("clip", help="Plan clips").add_subparsers(dest="clip_action", required=True)
+    clip_add = clip.add_parser("add")
+    clip_add.add_argument("--workspace", type=Path, required=True)
+    clip_add.add_argument("id")
+    clip_add.add_argument("--from", dest="source", required=True)
+    clip_add.add_argument("--to", dest="target", required=True)
+    clip_add.add_argument("--phase", choices=["in", "loop", "out"])
+    clip_set = clip.add_parser("set", help="Change generation, processing or playback settings")
+    clip_set.add_argument("--workspace", type=Path, required=True)
+    clip_set.add_argument("id")
+    clip_set.add_argument("--provider")
+    clip_set.add_argument("--duration", type=int, help="Seconds requested from the provider")
+    clip_set.add_argument("--resolution")
+    clip_set.add_argument("--seed", type=int)
+    clip_set.add_argument("--input-scale", type=float, help="Shrink the subject inside provider inputs (0.5-1)")
+    clip_set.add_argument("--interpolate", type=int, help="Frame multiplier from the interpolate processor")
+    clip_set.add_argument("--pingpong", action=argparse.BooleanOptionalAction)
+    clip_set.add_argument("--lock-head", type=int, help="Frames blended into the start still")
+    clip_set.add_argument("--lock-tail", type=int, help="Frames blended into the end still")
+    clip_set.add_argument("--edge-guard", type=int, help="Clear alpha this many px from closed canvas edges")
+    clip_set.add_argument("--speed", type=float, help="Playback speed multiplier")
+    clip_set.add_argument("--loop-mode", choices=["loop", "once_then_hold"])
+
+    prompt = sub.add_parser("prompt", help="Versioned prompt blocks").add_subparsers(dest="prompt_action", required=True)
+    show = prompt.add_parser("show")
+    show.add_argument("--workspace", type=Path, required=True)
+    show.add_argument("block", nargs="?")
+    set_block = prompt.add_parser("set", help="Add a version to a prompt block")
+    set_block.add_argument("--workspace", type=Path, required=True)
+    set_block.add_argument("block")
+    text = set_block.add_mutually_exclusive_group(required=True)
+    text.add_argument("--text")
+    text.add_argument("--file", type=Path)
+    set_block.add_argument("--description")
+    render_prompt = prompt.add_parser("render", help="Show the prompt a pose or clip would use now")
+    render_prompt.add_argument("--workspace", type=Path, required=True)
+    _owner(render_prompt)
+
+    prepare = command("prepare", "Write the exact inputs and prompt for an external generator")
+    _owner(prepare)
+    prepare.add_argument("--output", type=Path, required=True)
+
+    take = sub.add_parser("take", help="Import, review and resume takes").add_subparsers(dest="take_action", required=True)
+    imp = take.add_parser("import", help="Import a still image (pose) or a video/frame folder (clip)")
+    imp.add_argument("--workspace", type=Path, required=True)
+    _owner(imp)
+    imp.add_argument("path", type=Path)
+    imp.add_argument("--fps", type=float, help="Frame rate of a frame-folder clip import")
+    imp.add_argument("--note", default="")
+    imp.add_argument("--place", help="SCALE,DX,DY placing a still on the canvas instead of automatic placement")
+    for name in ("accept", "reject", "restore"):
+        decision = take.add_parser(name)
+        decision.add_argument("--workspace", type=Path, required=True)
+        _owner(decision)
+        decision.add_argument("take")
+        decision.add_argument("--reason", default="")
+    resume = take.add_parser("resume", help="Continue polling a submitted provider task")
+    resume.add_argument("--workspace", type=Path, required=True)
+    _owner(resume, clip_only=True)
+    resume.add_argument("take")
+
+    generate = command("generate", "Submit a clip to its image-to-video provider")
+    _owner(generate, clip_only=True)
+    generate.add_argument("--provider")
+    generate.add_argument("--dry-run", action="store_true", help="Print the request without sending it")
+    generate.add_argument("--no-wait", action="store_true", help="Return after submission; resume later")
+    render = command("render", "Render accepted takes into graph-bindable frames")
+    target = render.add_mutually_exclusive_group(required=True)
+    target.add_argument("--clip")
+    target.add_argument("--stale", action="store_true", help="Every clip whose render is missing or stale")
+    render.add_argument("--keep-work", action="store_true")
+    qa = command("qa", "Check graph seams and production-bound nodes")
+    qa.add_argument("--output", type=Path)
+    sync = command("graph-sync", "Copy render timing onto bound graph nodes")
+    sync.add_argument("--add-missing", action="store_true", help="Add a node for each rendered clip not in the graph")
+
+
+def _print_status(state: dict) -> None:
+    character = state["character"]
+    anchors = character.get("anchors")
+    print(f"{character['displayName']} ({character['id']}): canvas {character['canvas']['width']}x"
+          f"{character['canvas']['height']}, base pose {character['basePose']}, "
+          + (f"head top {anchors['headTopY']}, head centre {anchors['headCenterX']}" if anchors else "no approved base still"))
+    tools = state["tools"]
+    print("tools: " + ", ".join(f"{k}={'yes' if tools[k] else 'no'}" for k in ("ffmpeg", "alpha", "interpolate"))
+          + "; providers: " + ", ".join(f"{n} key={'set' if p['keySet'] else 'missing'}" for n, p in tools["providers"].items()))
+    for pose in state["poses"]:
+        counts = {}
+        for take in pose["takes"]:
+            counts[take["status"]] = counts.get(take["status"], 0) + 1
+        print(f"pose {pose['id']:24s} accepted={pose['acceptedTake'] or '-'} takes={counts or {}}"
+              + (" RECHECK: base anchors changed" if pose["needsRecheck"] else ""))
+    for clip in state["clips"]:
+        counts = {}
+        for take in clip["takes"]:
+            counts[take["status"]] = counts.get(take["status"], 0) + 1
+        render = clip["render"]
+        qa = (render.get("qa") or {}).get("status", "-")
+        print(f"clip {clip['id']:24s} {clip['from']}->{clip['to']} ({clip['kind']}) accepted={clip['acceptedTake'] or '-'} "
+              f"takes={counts or {}} render={render['state']} qa={qa}"
+              + (f" ({'; '.join(render['reasons'])})" if render["state"] == "stale" else ""))
+
+
+def run(args) -> None:
+    from . import project, prompts
+    from .records import load_character
+    workspace = args.workspace.resolve()
+    action = args.action
+    if action == "init":
+        width, height = (int(v) for v in args.canvas.lower().split("x"))
+        character = project.init_production(
+            workspace, character_id=args.id, display_name=args.display_name, width=width, height=height,
+            base_pose=args.base_pose, background=[int(v) for v in args.background.split(",")],
+            cut_edges=[e.strip() for e in args.cut_edges.split(",") if e.strip()])
+        print(f"Production character {character['id']} ready; import the base still with "
+              f"'production take import --pose {character['basePose']} IMAGE'")
+    elif action == "status":
+        state = project.overview(workspace)
+        if args.json:
+            print(json.dumps(state, ensure_ascii=False, indent=2))
+        else:
+            _print_status(state)
+    elif action == "pose":
+        if args.pose_action == "add":
+            project.add_pose(workspace, args.id, args.description)
+            print(f"Pose {args.id} added")
+        else:
+            from .stills import set_expected
+            pose = set_expected(workspace, args.id, args.head_top, args.head_center)
+            print(f"Pose {args.id} expected anchors: {pose['expected'] or 'base anchors'}")
+    elif action == "clip":
+        if args.clip_action == "add":
+            clip = project.add_clip(workspace, args.id, args.source, args.target, args.phase)
+            print(f"Clip {clip['id']}: {clip['from']} -> {clip['to']} ({clip['kind']}, phase {clip['phase']})")
+        else:
+            changes = {k: getattr(args, k) for k in project.CLIP_SETTINGS}
+            clip = project.set_clip(workspace, args.id, **changes)
+            print(json.dumps({k: clip[k] for k in ("generation", "processing", "playback")}, indent=2))
+    elif action == "prompt":
+        if args.prompt_action == "show":
+            library = prompts.load_library(workspace)
+            blocks = [args.block] if args.block else sorted(library["blocks"])
+            for block_id in blocks:
+                version = prompts.current(library, block_id)
+                print(f"[{block_id}] v{version['version']}: {version['text']}")
+        elif args.prompt_action == "set":
+            library = prompts.load_library(workspace)
+            text = args.text if args.text is not None else args.file.read_text(encoding="utf-8")
+            version = prompts.set_block(library, args.block, text, args.description)
+            prompts.save_library(workspace, library)
+            print(f"{args.block} is at version {version}")
+        else:
+            rendered = _render_for(workspace, args)
+            print(rendered["text"] + ("\n\nNEGATIVE:\n" + rendered["negative"] if rendered["negative"] else ""))
+            print(f"\nblocks={rendered['blocks']} complete={rendered['complete']}")
+    elif action == "prepare":
+        from .clips import prepare
+        kind, owner = ("pose", args.pose) if args.pose else ("clip", args.clip)
+        for path in prepare(workspace, kind, owner, args.output.resolve()):
+            print(path)
+    elif action == "take":
+        _run_take(workspace, args)
+    elif action == "generate":
+        from .clips import generate_clip_take
+        result = generate_clip_take(workspace, args.clip, provider=args.provider, wait=not args.no_wait, dry_run=args.dry_run)
+        print(json.dumps(result, ensure_ascii=False, indent=2) if args.dry_run else f"Take {result['id']}: {result['state']}")
+    elif action == "render":
+        from .records import list_owners, render_freshness
+        from .render import render_clip
+        targets = [args.clip] if args.clip else [c["id"] for c in list_owners(workspace, "clip")
+                                                 if c.get("acceptedTake") and render_freshness(workspace, c)[0] != "current"]
+        for clip_id in targets:
+            render_clip(workspace, clip_id, keep_work=args.keep_work)
+        if not targets:
+            print("Every accepted clip is rendered and current")
+    elif action == "qa":
+        from ..workspace import atomic_json, read_json, resolve_asset
+        from .checks import graph_report
+        report = graph_report(workspace, read_json(resolve_asset(workspace, "graph_config.json")), load_character(workspace))
+        if args.output:
+            atomic_json(args.output, report)
+        for node in report["nodes"]:
+            print(f"node {node['label']:24s} {node['level']:5s} {'; '.join(node['issues'])}")
+        for edge in report["edges"]:
+            print(f"edge {edge['from']} -> {edge['to']}: {edge['level']} faceL={edge['faceL']} "
+                  f"dHeadTop={edge['dHeadTop']} dHeadCenter={edge['dHeadCenter']}")
+        print(f"QA: {report['status']}")
+    elif action == "graph-sync":
+        result = project.graph_sync(workspace, add_missing=args.add_missing)
+        for line in result["changes"]:
+            print("updated " + line)
+        for clip_id in result["added"]:
+            print("added node " + clip_id)
+        for clip_id in result["notRendered"]:
+            print(f"not rendered: {clip_id}")
+        if not any(result.values()):
+            print("Graph already matches the rendered clips")
+
+
+def _render_for(workspace: Path, args) -> dict:
+    from .clips import clip_prompt
+    from .records import load_character, load_owner
+    from .stills import still_prompt
+    character = load_character(workspace)
+    if args.pose:
+        return still_prompt(workspace, character, load_owner(workspace, "pose", args.pose))
+    return clip_prompt(workspace, character, load_owner(workspace, "clip", args.clip))
+
+
+def _run_take(workspace: Path, args) -> None:
+    from .records import decide
+    kind, owner = ("pose", args.pose) if getattr(args, "pose", None) else ("clip", args.clip)
+    if args.take_action == "import":
+        if kind == "pose":
+            from .stills import import_still
+            place = tuple(float(v) for v in args.place.split(",")) if args.place else None
+            if place is not None and len(place) != 3:
+                raise ValueError("--place needs SCALE,DX,DY")
+            take = import_still(workspace, owner, args.path, note=args.note, place=place)
+            print(f"Still take {take['id']}: QA {take['qa']['status']}")
+            for check in take["qa"]["checks"]:
+                print(f"  {check['level']}: {check['message']}")
+        else:
+            from .clips import import_clip_take
+            take = import_clip_take(workspace, owner, args.path, fps=args.fps, note=args.note)
+            print(f"Clip take {take['id']}: {take['media']['count']} frames at {take['media']['fps']:g} fps")
+    elif args.take_action == "resume":
+        from .clips import resume_clip_take
+        take = resume_clip_take(workspace, owner, args.take)
+        print(f"Take {take['id']}: {take['state']}")
+    elif args.take_action == "accept" and kind == "pose":
+        from .stills import approve_still
+        approve_still(workspace, owner, args.take, args.reason)
+        print(f"Approved still {args.take} for pose {owner}")
+    else:
+        decide(workspace, kind, owner, args.take, args.take_action, args.reason)
+        done = {"accept": "Accepted", "reject": "Rejected", "restore": "Restored"}[args.take_action]
+        print(f"{done} {kind} take {args.take}")

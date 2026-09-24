@@ -1,0 +1,306 @@
+"""File-backed production records: character, poses, clips and their takes.
+
+Everything lives under ``<workspace>/production``. A take directory belongs to
+one pose (a still image) or one clip (a video), and the owner record names at
+most one accepted take. Take status is derived from those two files, so there
+is no third copy of the decision that could disagree with them.
+"""
+from __future__ import annotations
+
+import re
+import secrets
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from ..workspace import atomic_json, read_json, resolve_asset
+
+ROOT = "production"
+CHARACTER_FORMAT = "spriteforge.production.character.v1"
+POSE_FORMAT = "spriteforge.production.pose.v1"
+CLIP_FORMAT = "spriteforge.production.clip.v1"
+TAKE_FORMAT = "spriteforge.production.take.v1"
+EDGES = ("left", "right", "top", "bottom")
+OWNERS = {"pose": "poses", "clip": "clips"}
+IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+TAKE_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
+# Reference framing measured on the shipped Kurisu pack: visible width is 71% of the
+# canvas width and the head top sits at 2% of the canvas height.
+DEFAULT_FRAMING = {"visibleWidth": 0.71, "headTop": 0.02}
+DEFAULT_TOLERANCES = {"headTopPx": 3, "headCenterPx": 3, "areaPct": 15}
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def check_id(value: object, what: str) -> str:
+    if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
+        raise ValueError(f"{what} id must be 1-64 lowercase letters, digits, '_' or '-'")
+    return value
+
+
+def production_dir(workspace: Path) -> Path:
+    return resolve_asset(workspace, ROOT)
+
+
+def create_character(workspace: Path, *, character_id: str, display_name: str, width: int, height: int,
+                     base_pose: str, background: tuple[int, int, int], cut_edges: list[str]) -> dict:
+    path = production_dir(workspace) / "character.json"
+    if path.exists():
+        raise ValueError("This workspace already has a production character")
+    if not display_name.strip() or width < 16 or height < 16:
+        raise ValueError("A display name and a canvas of at least 16x16 are required")
+    if any(edge not in EDGES for edge in cut_edges) or any(not 0 <= c <= 255 for c in background):
+        raise ValueError("Cut edges are left/right/top/bottom and background channels are 0-255")
+    character = {"format": CHARACTER_FORMAT, "id": check_id(character_id, "Character"), "displayName": display_name,
+                 "basePose": check_id(base_pose, "Pose"), "canvas": {"width": width, "height": height},
+                 "background": list(background), "cutEdges": sorted(set(cut_edges), key=EDGES.index),
+                 "framing": dict(DEFAULT_FRAMING), "tolerances": dict(DEFAULT_TOLERANCES), "anchors": None}
+    atomic_json(path, character)
+    return character
+
+
+def load_character(workspace: Path) -> dict:
+    path = production_dir(workspace) / "character.json"
+    if not path.is_file():
+        raise ValueError("This workspace has no production character; run 'spriteforge production init'")
+    character = read_json(path)
+    if character.get("format") != CHARACTER_FORMAT:
+        raise ValueError("Unsupported production character format")
+    return character
+
+
+def save_character(workspace: Path, character: dict) -> None:
+    atomic_json(production_dir(workspace) / "character.json", character)
+
+
+def canvas_size(character: dict) -> tuple[int, int]:
+    return int(character["canvas"]["width"]), int(character["canvas"]["height"])
+
+
+def owner_dir(workspace: Path, kind: str, owner_id: str) -> Path:
+    if kind not in OWNERS:
+        raise ValueError("A take belongs to a pose or a clip")
+    return resolve_asset(workspace, f"{ROOT}/{OWNERS[kind]}/{check_id(owner_id, kind.title())}")
+
+
+def load_owner(workspace: Path, kind: str, owner_id: str) -> dict:
+    path = owner_dir(workspace, kind, owner_id) / f"{kind}.json"
+    if not path.is_file():
+        raise ValueError(f"Unknown {kind}: {owner_id}")
+    return read_json(path)
+
+
+def save_owner(workspace: Path, kind: str, record: dict) -> None:
+    atomic_json(owner_dir(workspace, kind, record["id"]) / f"{kind}.json", record)
+
+
+def list_owners(workspace: Path, kind: str) -> list[dict]:
+    base = production_dir(workspace) / OWNERS[kind]
+    if not base.is_dir():
+        return []
+    return [read_json(p / f"{kind}.json") for p in sorted(base.iterdir()) if (p / f"{kind}.json").is_file()]
+
+
+def create_pose(workspace: Path, pose_id: str, description: str = "") -> dict:
+    load_character(workspace)
+    if (owner_dir(workspace, "pose", pose_id) / "pose.json").exists():
+        raise ValueError(f"Pose {pose_id} already exists")
+    pose = {"format": POSE_FORMAT, "id": pose_id, "description": description,
+            "prompt": {"template": "still", "subject": f"pose.{pose_id}"}, "expected": {}, "acceptedTake": None}
+    save_owner(workspace, "pose", pose)
+    return pose
+
+
+def clip_defaults(kind: str) -> dict:
+    transition = kind == "transition"
+    return {
+        "generation": {"provider": "manual", "durationS": 2 if transition else 4, "resolution": "720P",
+                       "seed": None, "inputScale": 1.0},
+        "processing": {"interpolate": 1, "pingpong": False, "lockHeadFrames": 6 if transition else 0,
+                       "lockTailFrames": 12 if transition else 0, "edgeGuardPx": 0},
+        "playback": {"speed": 1.0, "loopMode": "once_then_hold" if transition else "loop"},
+    }
+
+
+def create_clip(workspace: Path, clip_id: str, source: str, target: str, *, phase: str | None = None) -> dict:
+    character = load_character(workspace)
+    if (owner_dir(workspace, "clip", clip_id) / "clip.json").exists():
+        raise ValueError(f"Clip {clip_id} already exists")
+    for pose_id in (source, target):
+        load_owner(workspace, "pose", pose_id)
+    kind = "loop" if source == target else "transition"
+    phase = phase or ("loop" if kind == "loop" else "out" if target == character["basePose"] else "in")
+    if phase not in {"in", "loop", "out"}:
+        raise ValueError("Clip phase must be in, loop or out")
+    clip = {"format": CLIP_FORMAT, "id": clip_id, "kind": kind, "from": source, "to": target, "phase": phase,
+            "prompt": {"template": kind, "subject": f"clip.{clip_id}"}, **clip_defaults(kind),
+            "acceptedTake": None, "notes": ""}
+    save_owner(workspace, "clip", clip)
+    return clip
+
+
+def new_take_id() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
+
+
+def take_dir(workspace: Path, kind: str, owner_id: str, take_id: str) -> Path:
+    if not isinstance(take_id, str) or not TAKE_ID.fullmatch(take_id):
+        raise ValueError(f"Invalid take id: {take_id!r}")
+    return owner_dir(workspace, kind, owner_id) / "takes" / take_id
+
+
+def new_take(workspace: Path, kind: str, owner_id: str, source: dict[str, Any]) -> tuple[dict, Path]:
+    for _ in range(8):
+        take_id = new_take_id()
+        directory = take_dir(workspace, kind, owner_id, take_id)
+        try:
+            directory.mkdir(parents=True)
+        except FileExistsError:
+            continue
+        take = {"format": TAKE_FORMAT, "id": take_id, "owner": {"kind": kind, "id": owner_id}, "createdAt": now(),
+                "state": "created", "source": source, "prompt": None, "inputs": {}, "media": None,
+                "rejected": None, "history": [], "error": None}
+        return take, directory
+    raise ValueError("Could not allocate a unique take id")
+
+
+def load_take(workspace: Path, kind: str, owner_id: str, take_id: str) -> dict:
+    path = take_dir(workspace, kind, owner_id, take_id) / "take.json"
+    if not path.is_file():
+        raise ValueError(f"Unknown take {take_id} for {kind} {owner_id}")
+    return read_json(path)
+
+
+def save_take(workspace: Path, take: dict) -> None:
+    owner = take["owner"]
+    atomic_json(take_dir(workspace, owner["kind"], owner["id"], take["id"]) / "take.json", take)
+
+
+def list_takes(workspace: Path, kind: str, owner_id: str) -> list[dict]:
+    base = owner_dir(workspace, kind, owner_id) / "takes"
+    if not base.is_dir():
+        return []
+    return [read_json(p / "take.json") for p in sorted(base.iterdir()) if (p / "take.json").is_file()]
+
+
+def take_status(owner: dict, take: dict) -> str:
+    if take.get("state") == "failed":
+        return "failed"
+    if take.get("state") != "ready":
+        return "pending"
+    if take.get("rejected"):
+        return "rejected"
+    return "accepted" if owner.get("acceptedTake") == take["id"] else "candidate"
+
+
+def _log(take: dict, action: str, reason: str) -> None:
+    take["history"].append({"at": now(), "action": action, **({"reason": reason} if reason else {})})
+
+
+def decide(workspace: Path, kind: str, owner_id: str, take_id: str, action: str, reason: str = "") -> dict:
+    """Accept, reject or restore a take. Writes are ordered so that an interruption
+    between the owner and take files leaves a plain, unaccepted candidate."""
+    owner = load_owner(workspace, kind, owner_id)
+    take = load_take(workspace, kind, owner_id, take_id)
+    reason = str(reason or "").strip()
+    if action == "accept":
+        if take.get("state") != "ready":
+            raise ValueError("Only a ready take can be accepted")
+        if take.get("rejected"):
+            take["rejected"] = None
+            _log(take, "restored", "")
+            save_take(workspace, take)
+        owner["acceptedTake"] = take_id
+        save_owner(workspace, kind, owner)
+        _log(take, "accepted", reason)
+    elif action == "reject":
+        if owner.get("acceptedTake") == take_id:
+            owner["acceptedTake"] = None
+            save_owner(workspace, kind, owner)
+        take["rejected"] = {"at": now(), "reason": reason}
+        _log(take, "rejected", reason)
+    elif action == "restore":
+        if not take.get("rejected"):
+            raise ValueError("Only a rejected take can be restored")
+        take["rejected"] = None
+        _log(take, "restored", reason)
+    else:
+        raise ValueError("Decision must be accept, reject or restore")
+    save_take(workspace, take)
+    return take
+
+
+def accepted_take(workspace: Path, kind: str, owner_id: str) -> dict:
+    owner = load_owner(workspace, kind, owner_id)
+    if not owner.get("acceptedTake"):
+        noun = "still" if kind == "pose" else "take"
+        raise ValueError(f"{kind.title()} {owner_id} has no accepted {noun}")
+    take = load_take(workspace, kind, owner_id, owner["acceptedTake"])
+    if take_status(owner, take) != "accepted":
+        raise ValueError(f"The accepted take of {kind} {owner_id} is not ready")
+    return take
+
+
+def still_path(workspace: Path, pose_id: str) -> tuple[Path, dict]:
+    take = accepted_take(workspace, "pose", pose_id)
+    return take_dir(workspace, "pose", pose_id, take["id"]) / take["media"]["still"], take
+
+
+def output_root(clip_id: str) -> str:
+    """Stable graph root of a clip; it always holds the render of the accepted take."""
+    return f"{ROOT}/{OWNERS['clip']}/{check_id(clip_id, 'Clip')}/output"
+
+
+def bound_clip(root: object) -> str | None:
+    parts = str(root or "").replace("\\", "/").strip("/").split("/")
+    if len(parts) == 4 and parts[:2] == [ROOT, OWNERS["clip"]] and parts[3] == "output" and IDENTIFIER.fullmatch(parts[2]):
+        return parts[2]
+    return None
+
+
+def read_render(workspace: Path, clip_id: str) -> dict | None:
+    path = resolve_asset(workspace, output_root(clip_id)) / "render.json"
+    return read_json(path) if path.is_file() else None
+
+
+def clip_settings(clip: dict) -> dict:
+    """Validated processing and playback settings of a clip."""
+    processing, playback, generation = clip["processing"], clip["playback"], clip["generation"]
+    values = {key: processing.get(key, 0) for key in ("interpolate", "lockHeadFrames", "lockTailFrames", "edgeGuardPx")}
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in values.values()) or values["interpolate"] < 1:
+        raise ValueError("processing.interpolate must be >= 1 and lock/edge values non-negative integers")
+    speed = playback.get("speed", 1.0)
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.1 <= speed <= 16:
+        raise ValueError("playback.speed must be between 0.1 and 16")
+    if playback.get("loopMode") not in {"loop", "once_then_hold"}:
+        raise ValueError("playback.loopMode must be loop or once_then_hold")
+    if processing.get("pingpong") and clip["kind"] != "loop":
+        raise ValueError("pingpong only applies to loop clips")
+    duration, scale = generation.get("durationS"), generation.get("inputScale", 1.0)
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1 or not 0.5 <= float(scale) <= 1.0:
+        raise ValueError("generation.durationS must be a positive integer and inputScale between 0.5 and 1.0")
+    return {**values, "pingpong": bool(processing.get("pingpong")), "speed": float(speed), "loopMode": playback["loopMode"]}
+
+
+def recipe(clip: dict) -> dict:
+    """Clip fields that determine the rendered frames and their timing."""
+    return {"phase": clip["phase"], "processing": clip["processing"], "playback": clip["playback"]}
+
+
+def render_freshness(workspace: Path, clip: dict) -> tuple[str, list[str]]:
+    """'missing', 'stale' or 'current', with the reasons a render no longer matches its inputs."""
+    render = read_render(workspace, clip["id"])
+    if render is None:
+        return "missing", ["not rendered"]
+    reasons = []
+    if render.get("take") != clip.get("acceptedTake"):
+        reasons.append("the accepted take changed")
+    if render.get("recipe") != recipe(clip):
+        reasons.append("processing or playback settings changed")
+    for end in ("from", "to"):
+        pose = load_owner(workspace, "pose", clip[end])
+        if (render.get("stills") or {}).get(end) != pose.get("acceptedTake"):
+            reasons.append(f"the {clip[end]} still changed")
+    return ("stale" if reasons else "current"), reasons

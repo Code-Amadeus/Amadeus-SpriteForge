@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .character_pack import CHARACTER_PACK_FORMAT, load_character_pack
 from .graph import layout_coordinates, runtime_graph, validate_graph
+from .production.records import bound_clip
 from .workspace import atomic_json, clip_frames, read_json, resolve_asset
 
 
@@ -21,6 +22,9 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
     if not all(isinstance(v, str) and v.strip() for v in (pack_id, display_name, version)):
         raise ValueError("Pack id, display name and version are required")
     graph = validate_graph(workspace, read_json(resolve_asset(workspace, "graph_config.json")))
+    if any(bound_clip(node["root"]) for node in graph["nodes"]):
+        from .production.project import export_gate
+        export_gate(workspace, graph)
     layout = None
     if all("x" in node and "y" in node for node in graph["nodes"]):
         coordinates = layout_coordinates(graph, graph)

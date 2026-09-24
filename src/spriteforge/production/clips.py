@@ -1,0 +1,198 @@
+"""Clip takes: prepare provider inputs, import external videos, generate and resume.
+
+Every take directory keeps the exact first/last frame images and the prompt
+snapshot it corresponds to. For a generated take they are what was sent; for an
+imported take they are the inputs 'production prepare' handed out, recorded as
+assumed because the external tool cannot be verified.
+"""
+from __future__ import annotations
+
+import hashlib
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from ..workspace import atomic_json
+from .geometry import composite
+from .media import VIDEO_SUFFIXES, copy_durable, encode_png, read_bgra, sorted_pngs, video_info, write_durable
+from .prompts import load_library, render, require_complete
+from .providers import VideoJob, download, get_provider
+from .records import (canvas_size, clip_settings, load_character, load_owner, load_take, new_take, save_take,
+                      still_path, take_dir)
+from .stills import still_prompt
+from .tools import load_tools
+
+
+def clip_prompt(workspace: Path, character: dict, clip: dict) -> dict:
+    return render(load_library(workspace), clip["prompt"]["template"], clip["prompt"]["subject"],
+                  {"character": character["displayName"], "from": clip["from"], "to": clip["to"],
+                   "duration": clip["generation"]["durationS"]})
+
+
+def upload_image(character: dict, still: np.ndarray, scale: float = 1.0) -> bytes:
+    """Opaque canvas image for a provider; an optional scale leaves a safety margin around the subject."""
+    flat = composite(still, character["background"])
+    if scale != 1.0:
+        width, height = canvas_size(character)
+        small = cv2.resize(flat, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA)
+        flat = np.empty_like(flat)
+        flat[:] = character["background"][::-1]
+        y, x = (height - small.shape[0]) // 2, (width - small.shape[1]) // 2
+        flat[y:y + small.shape[0], x:x + small.shape[1]] = small
+    return encode_png(flat)
+
+
+def clip_inputs(workspace: Path, character: dict, clip: dict) -> tuple[bytes, bytes, dict]:
+    clip_settings(clip)
+    scale = float(clip["generation"].get("inputScale", 1.0))
+    images, record = {}, {}
+    for end in ("from", "to"):
+        path, take = still_path(workspace, clip[end])
+        images[end] = upload_image(character, read_bgra(path)[0], scale)
+        record["first" if end == "from" else "last"] = {"pose": clip[end], "still": take["id"],
+                                                         "sha256": hashlib.sha256(images[end]).hexdigest()}
+    return images["from"], images["to"], record
+
+
+def _store_inputs(directory: Path, first: bytes, last: bytes, record: dict) -> None:
+    write_durable(directory / "first.png", first)
+    write_durable(directory / "last.png", last)
+    record["first"]["file"], record["last"]["file"] = "first.png", "last.png"
+
+
+def prepare(workspace: Path, kind: str, owner_id: str, target: Path) -> list[Path]:
+    """Write the exact inputs and prompt for generating a take in an external tool."""
+    character = load_character(workspace)
+    target = Path(target)
+    if target.exists() and any(target.iterdir()):
+        raise ValueError(f"Prepare target must be a new or empty directory: {target}")
+    files: dict[str, bytes] = {}
+    if kind == "clip":
+        clip = load_owner(workspace, "clip", owner_id)
+        snapshot = clip_prompt(workspace, character, clip)
+        files["first.png"], files["last.png"], _ = clip_inputs(workspace, character, clip)
+    else:
+        pose = load_owner(workspace, "pose", owner_id)
+        snapshot = still_prompt(workspace, character, pose)
+        base, _ = still_path(workspace, character["basePose"])
+        files["base.png"] = upload_image(character, read_bgra(base)[0])
+    files["prompt.txt"] = snapshot["text"].encode()
+    files["negative.txt"] = snapshot["negative"].encode()
+    written = []
+    for name, data in files.items():
+        write_durable(target / name, data)
+        written.append(target / name)
+    atomic_json(target / "prompt.json", snapshot)
+    return [*written, target / "prompt.json"]
+
+
+def import_clip_take(workspace: Path, clip_id: str, media: Path, *, fps: float | None = None, note: str = "") -> dict:
+    character, clip = load_character(workspace), load_owner(workspace, "clip", clip_id)
+    media = Path(media)
+    frames = sorted_pngs(media) if media.is_dir() else []
+    if media.is_dir() and (not frames or not fps or fps <= 0):
+        raise ValueError("A frame folder import needs PNG frames and --fps")
+    if media.is_file() and media.suffix.lower() not in VIDEO_SUFFIXES:
+        raise ValueError(f"Clip media must be a video ({', '.join(sorted(VIDEO_SUFFIXES))}) or a PNG frame folder")
+    if not media.exists():
+        raise ValueError(f"Clip media not found: {media}")
+    first, last, inputs = clip_inputs(workspace, character, clip)
+    take, directory = new_take(workspace, "clip", clip_id, {"provider": "manual", "file": media.name, "note": note})
+    try:
+        take["prompt"] = clip_prompt(workspace, character, clip)
+        _store_inputs(directory, first, last, inputs)
+        take["inputs"] = {**inputs, "assumed": True}
+        if frames:
+            for index, frame in enumerate(frames):
+                copy_durable(frame, directory / "frames" / f"{index:06d}.png")
+            size = read_bgra(frames[0])[0].shape
+            take["media"] = {"dir": "frames", "fps": float(fps), "count": len(frames), "width": size[1], "height": size[0]}
+        else:
+            copy_durable(media, directory / f"media{media.suffix.lower()}")
+            take["media"] = {"video": f"media{media.suffix.lower()}", **video_info(directory / f"media{media.suffix.lower()}")}
+            if fps:
+                take["media"]["fps"] = float(fps)
+        take["state"] = "ready"
+    except Exception as exc:
+        take.update(state="failed", error=str(exc))
+        raise
+    finally:
+        save_take(workspace, take)
+    return take
+
+
+def generate_clip_take(workspace: Path, clip_id: str, *, provider: str | None = None, wait: bool = True,
+                       dry_run: bool = False, log=print) -> dict:
+    character, clip, tools = load_character(workspace), load_owner(workspace, "clip", clip_id), load_tools(workspace)
+    name = provider or clip["generation"]["provider"]
+    if name == "manual":
+        raise ValueError("This clip is generated manually: run 'production prepare', then 'production take import'")
+    adapter = get_provider(name, tools)
+    snapshot = clip_prompt(workspace, character, clip)
+    first, last, inputs = clip_inputs(workspace, character, clip)
+    generation = clip["generation"]
+    job = VideoJob(snapshot["text"], snapshot["negative"] if adapter.negative_prompt else "", first, last,
+                   int(generation["durationS"]), str(generation["resolution"]), generation.get("seed"))
+    request = adapter.preview(job)
+    if dry_run:
+        return {"provider": name, "model": adapter.model, "request": request, "prompt": snapshot}
+    require_complete(snapshot)
+    adapter.key()  # a missing key fails before a take is recorded
+    take, directory = new_take(workspace, "clip", clip_id, {"provider": name, "model": adapter.model, "request": request})
+    take["prompt"] = {**snapshot, "negativeSent": bool(job.negative)}
+    _store_inputs(directory, first, last, inputs)
+    take["inputs"] = inputs
+    take["state"] = "submitting"
+    save_take(workspace, take)
+    try:
+        take["source"]["taskId"] = adapter.submit(job)
+    except Exception as exc:
+        take.update(state="failed", error=str(exc))
+        save_take(workspace, take)
+        raise
+    take["state"] = "submitted"
+    save_take(workspace, take)
+    log(f"Submitted {name} task {take['source']['taskId']} as take {take['id']}")
+    return finish_take(workspace, take, log=log) if wait else take
+
+
+def finish_take(workspace: Path, take: dict, *, log=print) -> dict:
+    """Poll a submitted take until its video is downloaded or the provider reports failure."""
+    if take.get("state") != "submitted":
+        raise ValueError(f"Take {take['id']} is {take.get('state')}, not waiting for a provider")
+    adapter = get_provider(take["source"]["provider"], load_tools(workspace))
+    deadline = time.monotonic() + adapter.timeout_seconds
+    while True:
+        status, url, detail = adapter.poll(take["source"]["taskId"])
+        if status == "succeeded":
+            directory = take_dir(workspace, "clip", take["owner"]["id"], take["id"])
+            download(url, directory / "media.mp4")
+            take.update(state="ready", media={"video": "media.mp4", **video_info(directory / "media.mp4")})
+            save_take(workspace, take)
+            log(f"Take {take['id']} is ready for review")
+            return take
+        if status == "failed":
+            take.update(state="failed", error=detail)
+            save_take(workspace, take)
+            raise ValueError(f"Provider reported failure for take {take['id']}: {detail}")
+        if time.monotonic() > deadline:
+            raise ValueError(f"Take {take['id']} is still {detail}; run 'production take resume' later")
+        log(f"Take {take['id']}: {detail or 'pending'}")
+        time.sleep(adapter.poll_seconds)
+
+
+def resume_clip_take(workspace: Path, clip_id: str, take_id: str, *, log=print) -> dict:
+    return finish_take(workspace, load_take(workspace, "clip", clip_id, take_id), log=log)
+
+
+def take_media_frames(workspace: Path, take: dict) -> list[Path] | Path:
+    """A frame folder take's frames, or the path of its video."""
+    directory = take_dir(workspace, "clip", take["owner"]["id"], take["id"])
+    media = take.get("media") or {}
+    if media.get("dir"):
+        return sorted_pngs(directory / media["dir"])
+    if media.get("video"):
+        return directory / media["video"]
+    raise ValueError(f"Take {take['id']} has no media")
