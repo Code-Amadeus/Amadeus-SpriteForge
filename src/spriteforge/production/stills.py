@@ -14,7 +14,8 @@ from pathlib import Path
 import numpy as np
 
 from .checks import still_report
-from .geometry import composite, estimate_similarity, framing_placement, measure, placement, warp
+from .geometry import (composite, estimate_similarity, fit_placement, framing_placement, is_rigid, measure, placement,
+                       warp)
 from .media import IMAGE_SUFFIXES, copy_durable, read_bgra, write_png
 from .prompts import load_library, pose_prompt
 from .records import (canvas_size, decide, load_character, load_owner, load_take, new_take, save_character,
@@ -61,18 +62,26 @@ def import_still(workspace: Path, pose_id: str, source: Path, *, note: str = "",
         elif is_base:
             matrix, method = framing_placement(image, width, height, character["framing"]), "framing"
         else:
+            # A rigid match means the generator moved the whole picture: undo it. Otherwise
+            # the pose itself changed, and the generator's framing is kept for review.
             base_file, base_take = still_path(workspace, character["basePose"])
             take["inputs"] = {"base": {"pose": character["basePose"], "still": base_take["id"]}}
             base = read_bgra(base_file)[0]
-            matrix, registration = estimate_similarity(composite(image, character["background"]),
-                                                       composite(base, character["background"]))
-            method = "registration"
+            try:
+                matrix, registration = estimate_similarity(composite(image, character["background"]),
+                                                           composite(base, character["background"]))
+            except ValueError as exc:
+                matrix, registration = None, {"error": str(exc)}
+            if matrix is not None and is_rigid(registration):
+                method = "registration"
+            else:
+                matrix, method = fit_placement(image, width, height), "fit"
         still = warp(image, matrix, width, height, (0, 0, 0, 0))
         write_png(directory / "still.png", still)
+        normalization = {"method": method, "matrix": np.round(matrix, 6).tolist(),
+                         **({"registration": registration} if registration else {})}
         take.update(state="ready", media={"source": f"source{source.suffix.lower()}", "still": "still.png"},
-                    normalization={"method": method, "matrix": np.round(matrix, 6).tolist(),
-                                   **({"registration": registration} if registration else {})},
-                    qa=qa_for(character, pose, still, registration))
+                    normalization=normalization, qa=qa_for(character, pose, still, normalization))
     except Exception as exc:
         take.update(state="failed", error=str(exc))
         raise
@@ -81,8 +90,8 @@ def import_still(workspace: Path, pose_id: str, source: Path, *, note: str = "",
     return take
 
 
-def qa_for(character: dict, pose: dict, still: np.ndarray, registration: dict | None) -> dict:
-    return {**still_report(character, pose, still, registration), "anchorsTake": (character.get("anchors") or {}).get("take")}
+def qa_for(character: dict, pose: dict, still: np.ndarray, normalization: dict | None) -> dict:
+    return {**still_report(character, pose, still, normalization), "anchorsTake": (character.get("anchors") or {}).get("take")}
 
 
 def approve_still(workspace: Path, pose_id: str, take_id: str, reason: str = "") -> dict:
@@ -92,7 +101,7 @@ def approve_still(workspace: Path, pose_id: str, take_id: str, reason: str = "")
     if take.get("state") != "ready":
         raise ValueError("Only a ready still can be approved")
     still = read_bgra(take_dir(workspace, "pose", pose_id, take_id) / take["media"]["still"])[0]
-    take["qa"] = qa_for(character, pose, still, (take.get("normalization") or {}).get("registration"))
+    take["qa"] = qa_for(character, pose, still, take.get("normalization"))
     save_take(workspace, take)
     if take["qa"]["status"] == "fail":
         failed = "; ".join(c["message"] for c in take["qa"]["checks"] if c["level"] == "fail")

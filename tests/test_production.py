@@ -54,6 +54,29 @@ def test_still_geometry_gate_and_explicit_pose_offset(studio):
     assert load_owner(studio.root, "pose", "lean")["acceptedTake"] == take["id"]
 
 
+def test_rigid_edits_are_registered_and_pose_changes_keep_their_framing(studio):
+    assert accepted_still_take(studio, "smile")["normalization"]["method"] == "registration"
+    changed = still(studio, "idle").copy()
+    changed[:, :, :3] = figure(*CANVAS, seed=99)[:, :, :3]  # same silhouette, different content: not a rigid copy
+    add_pose(studio.root, "turn")
+    take = import_still(studio.root, "turn", save(studio.tmp / "turn.png", changed))
+    assert take["normalization"]["method"] == "fit" and take["normalization"]["matrix"] == [[1, 0, 0], [0, 1, 0]]
+    assert take["qa"]["status"] == "watch" and [c["check"] for c in take["qa"]["checks"]] == ["framing"]
+    approve_still(studio.root, "turn", take["id"])
+
+
+def test_camera_drift_is_reported(studio):
+    add_clip(studio.root, "drifting", "idle", "smile")
+    folder = studio.tmp / "drift"
+    for index, frame in enumerate(provider_frames(still(studio, "idle"), still(studio, "smile"), 20, drift=(18, 0))):
+        save(folder / f"{index:04d}.png", frame)
+    take = import_clip_take(studio.root, "drifting", folder, fps=30)
+    decide(studio.root, "clip", "drifting", take["id"], "accept")
+    render = render_clip(studio.root, "drifting", log=lambda *_: None)
+    drift = next(c for c in render["qa"]["checks"] if c["check"] == "drift")
+    assert drift["level"] == "fail" and abs(render["registration"]["drift"]["tx"] + 18 / 1.06) < 1
+
+
 def test_take_decisions_keep_one_accepted_and_archive_rejections(studio):
     add_clip(studio.root, "smile_in", "idle", "smile")
     folder = frame_folder(studio, "frames", "idle", "smile", 6)

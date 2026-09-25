@@ -17,6 +17,10 @@ VISIBLE_ALPHA = 128
 HEAD_BAND = 0.04                 # rows below the head top used for the head centre, as a canvas fraction
 FACE_ROI = (0.05, 0.24, 0.30)    # half width, top and bottom offsets below the head top, as canvas fractions
 MIN_INLIERS = 20
+# A registration is rigid when most matches agree on one similarity transform: the
+# picture was moved as a whole. On Kurisu, an expression edit keeps 93% of the matches;
+# lean, thinking and side poses keep 3-20%, where a whole-image transform is wrong.
+RIGID_INLIER_RATIO = 0.5
 
 
 def visible(image: np.ndarray) -> np.ndarray:
@@ -92,6 +96,16 @@ def placement(scale: float, dx: float, dy: float) -> np.ndarray:
     if not (math.isfinite(scale) and scale > 0 and math.isfinite(dx) and math.isfinite(dy)):
         raise ValueError("Placement needs a positive scale and finite offsets")
     return np.array([[scale, 0, dx], [0, scale, dy]], np.float64)
+
+
+def is_rigid(registration: dict) -> bool:
+    return registration["inliers"] >= RIGID_INLIER_RATIO * registration["matches"]
+
+
+def fit_placement(image: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Keep the generator's framing: scale uniformly into the canvas and centre."""
+    scale = min(width / image.shape[1], height / image.shape[0])
+    return placement(scale, (width - scale * image.shape[1]) / 2, (height - scale * image.shape[0]) / 2)
 
 
 def framing_placement(image: np.ndarray, width: int, height: int, framing: dict) -> np.ndarray:

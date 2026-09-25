@@ -114,10 +114,10 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
             write_png(target, frame)
             written.append(target)
 
-        qa = clip_report(character, written, clip["kind"], start, end)
-        interval = round(1000 / (fps * factor * settings["speed"]))
         drift = {"scale": round(tail_info["scale"] / head_info["scale"] - 1, 5),
                  **{key: round(tail_info[key] - head_info[key], 3) for key in ("tx", "ty", "rotationDeg")}}
+        qa = clip_report(character, written, clip["kind"], start, end, drift)
+        interval = round(1000 / (fps * factor * settings["speed"]))
         render = {"format": RENDER_FORMAT, "clip": clip_id, "take": take["id"],
                   "stills": {"from": start_take["id"], "to": end_take["id"]}, "recipe": recipe(clip), "renderedAt": now(),
                   "phase": clip["phase"], "frameCount": total, "sourceFps": fps, "interpolate": factor,

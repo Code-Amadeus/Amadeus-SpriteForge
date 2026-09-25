@@ -49,12 +49,13 @@ def flatten(image: np.ndarray) -> np.ndarray:
 
 
 def provider_frames(start: np.ndarray, end: np.ndarray, count: int, *, size=(256, 344), scale=1.06,
-                    offset=(9.0, -5.0)) -> list[np.ndarray]:
-    """What an image-to-video model returns: its own resolution and framing, cross-fading start to end."""
-    matrix = np.array([[scale, 0, offset[0]], [0, scale, offset[1]]], np.float32)
+                    offset=(9.0, -5.0), drift=(0.0, 0.0)) -> list[np.ndarray]:
+    """What an image-to-video model returns: its own resolution and framing, cross-fading start to end.
+    ``drift`` moves the virtual camera by that many pixels over the clip."""
     frames = []
     for index in range(count):
         t = index / (count - 1)
+        matrix = np.array([[scale, 0, offset[0] + drift[0] * t], [0, scale, offset[1] + drift[1] * t]], np.float32)
         mixed = (flatten(start).astype(np.float32) * (1 - t) + flatten(end).astype(np.float32) * t).round().astype(np.uint8)
         frames.append(cv2.warpAffine(mixed, matrix, size, flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255)))
     return frames

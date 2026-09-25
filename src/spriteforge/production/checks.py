@@ -22,7 +22,11 @@ EDGE_L = (1.2, 1.8, 2.5)
 AREA_STEP_FAIL = 0.12
 FLASH_WATCH = 3.0
 LOOP_SPAN_WATCH = 6
-REGISTRATION_WATCH = 40
+# Head and tail registrations of one take map the same video onto the same canvas; with
+# a locked camera they agree (real Wan takes: <0.2% scale, <1px). Disagreement means the
+# camera drifted or an endpoint still is misplaced.
+DRIFT_SCALE = (0.01, 0.03, 0.03)
+DRIFT_PX = (4.0, 12.0, 12.0)
 
 
 def worst(levels) -> str:
@@ -42,7 +46,7 @@ def expected_anchor(character: dict, pose: dict) -> dict:
     return {key: (pose.get("expected") or {}).get(key, anchors.get(key)) for key in ("headTopY", "headCenterX")}
 
 
-def still_report(character: dict, pose: dict, image: np.ndarray, registration: dict | None = None) -> dict:
+def still_report(character: dict, pose: dict, image: np.ndarray, normalization: dict | None = None) -> dict:
     width, height = canvas_size(character)
     metrics = measure(image)
     checks = []
@@ -62,9 +66,12 @@ def still_report(character: dict, pose: dict, image: np.ndarray, registration: d
         ratio = metrics["area"] / max(1, anchors["area"]) - 1
         if abs(ratio) * 100 > tolerance["areaPct"]:
             checks.append(_check("area", "watch", f"Visible area differs from the base still by {ratio:+.0%}"))
-    if registration and registration.get("inliers", REGISTRATION_WATCH) < REGISTRATION_WATCH:
-        checks.append(_check("registration", "watch",
-                             f"Only {registration['inliers']} registration inliers; confirm the overlay visually"))
+    if (normalization or {}).get("method") == "fit":
+        registration = normalization.get("registration") or {}
+        agreement = (f"{registration['inliers']}/{registration['matches']} matches agree" if "inliers" in registration
+                     else registration.get("error", "no registration"))
+        checks.append(_check("framing", "watch", f"The pose changed ({agreement}), so the generator's framing was kept; "
+                             "confirm the overlay against the base still"))
     return {"status": worst(c["level"] for c in checks), "metrics": metrics, "checks": checks}
 
 
@@ -81,9 +88,16 @@ def seam(character: dict, tail: np.ndarray, head: np.ndarray, bounds: tuple[floa
     return {"faceL": delta, "dHeadTop": d_top, "dHeadCenter": d_center, "level": level}
 
 
-def clip_report(character: dict, frames: list[Path], kind: str, start: np.ndarray, end: np.ndarray) -> dict:
+def clip_report(character: dict, frames: list[Path], kind: str, start: np.ndarray, end: np.ndarray,
+                drift: dict | None = None) -> dict:
     width, height = canvas_size(character)
     checks, tops, centers = [], [], []
+    if drift:
+        level = worst([grade(abs(drift["scale"]), DRIFT_SCALE), grade(max(abs(drift["tx"]), abs(drift["ty"])), DRIFT_PX)])
+        if level != "pass":
+            checks.append(_check("drift", level, "Head and tail registrations disagree (scale "
+                                 f"{drift['scale']:+.2%}, shift {drift['tx']:+.1f},{drift['ty']:+.1f}px): the camera "
+                                 "drifted or an endpoint still is misplaced", **drift))
     bad_size, bad_edges, broken, flashes = [], [], [], []
     first = previous = previous_metrics = None
     for index, path in enumerate(frames):
