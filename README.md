@@ -163,11 +163,12 @@ spriteforge_mouth_config.json
 textures/**/*.ktx2
 ```
 
-The first exporter handles **body clips without mouth overlays**. An existing
-workspace with mouth expressions/profiles stops export with an explanation.
-`--no-mouth` explicitly exports body clips only. The editor retains authoring
-mouth-overlay preview and Copy JSON tuning; this is not proof of Amadeus mouth-runtime
-equivalence.
+Speaking loops produced in the production pipeline export **mouth silence
+overlays**: a tracked mask per frame and a closed-mouth image tone-matched to the loop,
+which Amadeus paints while the character is silent (see
+[the production guide](docs/production.md#mouth-overlays-for-speaking-loops)).
+A legacy authoring `spriteforge_mouth_config.json` with expressions/profiles still
+stops export with an explanation; `--no-mouth` explicitly exports body clips only.
 
 Amadeus still owns semantic aliases, speech transitions, post-speech holds and
 presentation priority. Node preview plays a selected clip, not a whole TTS turn.

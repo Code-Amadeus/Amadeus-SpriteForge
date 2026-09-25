@@ -223,7 +223,52 @@ Bind a node to a clip with root `production/clips/<clip>/output` and the clip's 
 `production graph-sync` copies phase, frame interval and loop mode from `render.json`
 onto bound nodes; `--add-missing` also adds a node for each rendered clip that is not
 in the graph (the base loop becomes root if the graph has none). Edges and weights stay
-the author's decision in the graph editor. Export is unchanged otherwise.
+the author's decision in the graph editor. Export also writes the mouth overlays below.
+
+## Mouth overlays for speaking loops
+
+Speaking loops are generated with a moving mouth, so the mouth shape while talking is
+the video itself. Amadeus only has to close the mouth during silence: when the
+character is not speaking or the playback RMS is at or below 0.08, it paints a
+closed-mouth image inside an ellipse around the mouth, shifted so that image's mouth
+lands on the current frame's mouth. Audio never selects a mouth shape. Production
+therefore computes, per speaking loop:
+
+- **mask track and size**: the mouth is found where the loop changes most near the
+  expected position (the mouth set, moved with the pose's head offset), then tracked
+  per frame by template matching (at most 6 px per frame, median-smoothed);
+- **closed-mouth image and its mouth anchor**, tone-matched to the loop;
+- **closedness per frame**: difference from the closed mouth, which Amadeus uses only
+  to pick the most closed frame when it holds or samples frames.
+
+`production clip set C --mouth neutral` enables it (loops only). The closed mouth is,
+by default, the **shared closed mouth**: the base still, reused by every expression.
+It is not frame 0, because a loop entered through a transition does not necessarily
+start closed. A pose whose face differs (a side view) chooses its own with
+`production mouth pose side --use side`; `production mouth shared POSE` changes the
+shared one; one clip can override with `--mouth-source still|frame:N|pose:ID`.
+
+A shared closed mouth comes from another expression, so its skin tone differs (blush,
+grading); pasted as is, the mask shows as an oval. The render measures the mean Lab of
+the skin the mask covers around the mouth, in the loop and in the closed image, and
+shifts the closed image by that difference inside a margin around its mouth. The
+result is stored as `output/.mouth/closed.png` with the render and is what export
+encodes; a shift above 8 L* is reported for review. The Production page's **Simulate
+silence** preview draws the tracked mask and pastes this image exactly as the renderer
+does.
+
+Mouth sets (`production mouth set NAME --cx --cy --width --height --curve`, in pixels
+from the canvas centre) are priors for detection and become the pack's `expressions`.
+Approving the base still creates `neutral` from its anchors: centre 29% of the canvas
+height below the head top, 4.5% of the width wide, 1.75% of the height tall (Kurisu's
+hand-tuned neutral mouth is 4.0 / −196 / 34 × 18; the derived one is 5.8 / −195.9 /
+34.4 × 18.0).
+
+Export writes one profile per bound speaking-loop node (`mouth_set`, `cx`, `cy`,
+`width`, `height`, `closed_frame_idx`, `openness`, `anchor_track`,
+`runtime_overlay_anchor`) and one KTX2 overlay in `mouthOverlays`; `--no-mouth` drops
+them. Amadeus applies profiles only to the labels it treats as speaking loops and keeps
+its own per-label mask adjustments.
 
 ## Providers
 

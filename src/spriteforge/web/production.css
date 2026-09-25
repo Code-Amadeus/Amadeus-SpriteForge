@@ -56,7 +56,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin:
 .form { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; }
 .form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
 .notice { margin: 14px; padding: 12px; border: 1px solid var(--warn); border-radius: 8px; color: var(--warn); }
-.player { width: 100%; max-width: 360px; background: repeating-conic-gradient(#333 0% 25%, #444 0% 50%) 0 0 / 16px 16px; border-radius: 6px; }
+.player { display: block; width: 100%; max-width: 360px; background: repeating-conic-gradient(#333 0% 25%, #444 0% 50%) 0 0 / 16px 16px; border-radius: 6px; }
 .inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
 .inputs img { width: 100%; border-radius: 4px; }
 #toast { position: fixed; right: 16px; bottom: 16px; max-width: 520px; padding: 10px 14px; border-radius: 8px; background: #1b3526; border: 1px solid var(--ok); z-index: 10; white-space: pre-wrap; }

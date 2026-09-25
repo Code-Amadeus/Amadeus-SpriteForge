@@ -20,12 +20,13 @@ from .checks import clip_report, expected_anchor, worst
 from .clips import take_media_frames
 from .geometry import composite, estimate_similarity, lerp_matrix, premultiplied_blend, smoothstep, warp
 from .media import copy_durable, decode_video, find_ffmpeg, read_bgra, sorted_pngs, write_png
-from .mouth import analyze, prior
+from .mouth import TONE_WATCH, analyze, harmonize, prior
 from .records import (accepted_take, canvas_size, clip_settings, load_character, load_owner, now, output_root, owner_dir,
                       recipe, render_stills, still_path)
 from .tools import load_tools, run_processor
 
 RENDER_FORMAT = "spriteforge.production.render.v1"
+MOUTH_OVERLAY = ".mouth/closed.png"  # hidden from frame-folder discovery; export encodes it
 
 
 def recover_output(clip_directory: Path) -> None:
@@ -124,7 +125,7 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
         qa = clip_report(character, written, clip["kind"], start, end, drift)
         interval = round(1000 / (fps * factor * settings["speed"]))
         stills = {"from": start_take["id"], "to": end_take["id"]}
-        mouth = _mouth_track(workspace, character, clip, written, stills, log) if clip.get("mouth") else None
+        mouth = _mouth_track(workspace, character, clip, written, stills, output, log) if clip.get("mouth") else None
         if mouth:
             qa["checks"] += [{"check": f"mouth.{name}", "level": level, "message": message}
                              for name, level, message in mouth.pop("checks")]
@@ -145,10 +146,12 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
             shutil.rmtree(work, ignore_errors=True)
 
 
-def _mouth_track(workspace: Path, character: dict, clip: dict, frames: list[Path], stills: dict, log) -> dict:
+def _mouth_track(workspace: Path, character: dict, clip: dict, frames: list[Path], stills: dict, output: Path,
+                 log) -> dict:
     """Silence-overlay data for a speaking loop. The closed-mouth image is, by default, the
     shared closed mouth of the loop's pose (the base still for front poses), never frame 0:
-    a loop entered through a transition does not necessarily start closed."""
+    a loop entered through a transition does not necessarily start closed. The image is
+    tone-matched to the loop and stored with the render, which is what export encodes."""
     settings = clip["mouth"]
     sets = character.get("mouthSets") or {}
     if settings["set"] not in sets:
@@ -172,7 +175,12 @@ def _mouth_track(workspace: Path, character: dict, clip: dict, frames: list[Path
         closed = {"kind": source["kind"], "pose": pose_id, "still": still_take["id"]}
     log(f"{clip['id']}: tracking the mouth for silence overlays")
     track = analyze(frames, image, prior(sets[settings["set"]], offset), character["background"], source_is_frame=frame_index)
-    return {"set": settings["set"], "closedSource": closed, **track}
+    overlay, shift = harmonize(image, frames, track["anchorTrack"], track["sourceAnchor"])
+    write_png(output / MOUTH_OVERLAY, overlay)
+    if abs(shift[0]) > TONE_WATCH:
+        track["checks"].append(("tone", "watch", f"The closed mouth needed a {shift[0]:+.1f} L* tone shift for this loop; "
+                                                  "consider a closed-mouth source closer to this look"))
+    return {"set": settings["set"], "closedSource": closed, "overlay": MOUTH_OVERLAY, "toneShift": shift, **track}
 
 
 def _edge_guard(frame: np.ndarray, band: int, cut_edges: list[str]) -> np.ndarray:

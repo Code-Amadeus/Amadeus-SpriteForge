@@ -28,6 +28,11 @@ SEARCH = 2.5          # detection window around the prior, in mouth sizes
 TRACK_STEP = 6.0      # largest per-frame anchor move, px (head motion in loops is small)
 TRACK_WATCH = 0.6     # mean template correlation below this needs a look
 SPAN_WATCH = 12.0     # anchor movement across the loop, px
+# The renderer's default silence mask: half axes of 1.8 x width/2 and (1 + 1.5 x 0.75) x height/2.
+MASK = (1.8, 2.125)
+# Tone is adjusted with margin for per-label mask overrides in Amadeus (up to about 1.9 x 3.2).
+HARMONIZE_REGION = (2.4, 3.4)
+TONE_WATCH = 8.0      # a larger L* shift means the closed mouth comes from a very different look
 
 
 def default_set(anchors: dict, width: int, height: int) -> dict:
@@ -159,3 +164,36 @@ def analyze(frames: list[Path], source: np.ndarray, guess: dict, background: lis
 
 def _median(values: list[float], radius: int = 2) -> list[float]:
     return [float(np.median(values[max(0, i - radius):i + radius + 1])) for i in range(len(values))]
+
+
+def _ellipse(shape: tuple[int, int], anchor: dict, grow_w: float, grow_h: float) -> np.ndarray:
+    height, width = shape
+    mask = np.zeros((height, width), np.uint8)
+    cv2.ellipse(mask, (round(anchor["cx"] + width / 2), round(anchor["cy"] + height / 2)),
+                (max(1, round(anchor["width"] / 2 * grow_w)), max(1, round(anchor["height"] / 2 * grow_h))), 0, 0, 360, 255, -1)
+    return mask > 0
+
+
+def _ring_lab(image: np.ndarray, anchor: dict) -> np.ndarray:
+    """Mean Lab of the skin the runtime mask covers around the mouth (the mouth itself excluded)."""
+    shape = image.shape[:2]
+    ring = _ellipse(shape, anchor, *MASK) & ~_ellipse(shape, anchor, 1.15, 1.4)
+    lab = cv2.cvtColor(np.ascontiguousarray(image[:, :, :3]), cv2.COLOR_BGR2LAB).astype(np.float32)
+    return lab[ring].mean(axis=0)
+
+
+def harmonize(source: np.ndarray, frames: list[Path], track: list[dict], anchor: dict) -> tuple[np.ndarray, list[float]]:
+    """The closed-mouth image with its mouth area shifted to the loop's skin tone.
+
+    A shared closed mouth comes from another expression (blush, grading); pasted as is,
+    the mask shows as a pale or dark oval. One Lab shift, measured on the skin ring the
+    mask covers, is applied inside a margin around the mask; the runtime is unchanged."""
+    step = max(1, len(frames) // 30)
+    target = np.median([_ring_lab(read_bgra(p)[0], a) for p, a in zip(frames[::step], track[::step])], axis=0)
+    shift = target - _ring_lab(source, anchor)
+    lab = cv2.cvtColor(np.ascontiguousarray(source[:, :, :3]), cv2.COLOR_BGR2LAB).astype(np.float32)
+    region = _ellipse(source.shape[:2], anchor, *HARMONIZE_REGION)
+    lab[region] = np.clip(lab[region] + shift, 0, 255)
+    result = source.copy()
+    result[:, :, :3] = cv2.cvtColor(lab.round().astype(np.uint8), cv2.COLOR_LAB2BGR)
+    return result, [round(float(v), 2) for v in shift]

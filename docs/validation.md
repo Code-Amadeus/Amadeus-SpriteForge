@@ -75,7 +75,7 @@ the revision being evaluated; these local checks do not substitute for a remote 
 
 Local: Windows, Python 3.12, FFmpeg 9.0.2, KTX-Software 4.4.2, Edge (Playwright).
 
-- Python suite: 51 passed, 1 Windows symlink-capability skip. Production tests use
+- Python suite: 56 passed, 1 Windows symlink-capability skip. Production tests use
   generated geometric figures, a white-key alpha processor and a linear interpolation
   processor (`tests/processors/`), and cover still framing and geometry gates, rigid
   registration versus kept framing, take decisions and archive, prompt versions and
@@ -111,3 +111,19 @@ Read-only check on the shipped Kurisu sources (copies in a scratch workspace):
   speed) exported with the real encoder and passed Amadeus
   `tools/validate_character_pack.py`.
 - `gmfss_interpolate.py` was not run (it needs CUDA and the GMFSS weights).
+
+Mouth overlays (2026-09-26), on the same scratch copies:
+
+- The real `kurisu_shy_speaking_loop.mp4` (90 frames) rendered as `shy_speaking1`
+  with the default shared closed mouth (the idle still). The mouth was found by
+  motion at (5.0, −191.5), 34.4 × 19 px; the shipped hand-tuned profile has
+  (4.27, −192.85), 34 × 20.2. Tracking correlation 0.995; the head does not move in
+  this loop (the shipped track is also constant).
+- Pasting the idle closed mouth as is left a visible pale oval on the blushing shy
+  face. The render shifted it by L* +3.7, b* +2.5 inside the mask, which removed the
+  oval in the runtime-style composite of the three most open frames.
+- The three-clip pack (210 frames plus one mouth overlay) passed Amadeus
+  `tools/validate_character_pack.py`, and Amadeus's own `SpriteForgeAnimator`, started
+  on that pack with a probe engine, loaded the `shy_speaking1` profile as a
+  `silence_close` config with the overlay KTX2, its source anchor and 90-frame anchor
+  and openness tracks.

@@ -140,12 +140,26 @@ function renderPoseDetail(pose) {
     h("div", { class: "row" }, h("h2", {}, pose.id), pose.description ? h("span", { class: "muted" }, pose.description) : null,
       Object.keys(expected).length ? badge("intended offset " + JSON.stringify(expected), "watch") : null,
       pose.needsRecheck ? badge("base anchors changed: approve again", "watch") : null),
-    h("div", { class: "row", style: "margin:8px 0" }, h("label", { class: "tiny" }, "Import a generated still ", upload)),
+    h("div", { class: "row", style: "margin:8px 0" }, h("label", { class: "tiny" }, "Import a generated still ", upload),
+      closedMouthControl(pose)),
     current ? comparePanel(pose, current) : h("p", { class: "muted" }, "No normalised still yet. Import a generated or edited image."),
     h("h3", {}, "Takes"),
     h("div", { class: "grid" }, pose.takes.slice().reverse().map((t) => poseTakeCard(pose, t, t.id === selection.poseTake))),
     h("h3", {}, pose.id === state.character.basePose ? "Prompt" : "Prompt for the still editor (input: the base still)"),
     promptView(pose.promptPreview));
+}
+
+function closedMouthControl(pose) {
+  const character = state.character;
+  const base = pose.id === character.basePose;
+  const shared = character.closedMouth || character.basePose;
+  const options = base ? state.poses.map((p) => p.id) : ["", ...state.poses.map((p) => p.id)];
+  const select = h("select", { id: "closedMouthSelect" }, options.map((id) =>
+    h("option", { value: id }, id || `shared (${shared})`)));
+  select.value = base ? shared : (pose.closedMouth || "");
+  select.onchange = () => run(() => api("/api/production/closed-mouth", base ? { source: select.value }
+    : { pose: pose.id, source: select.value || null }), "Closed mouth updated; affected speaking loops are now stale");
+  return h("label", { class: "tiny" }, base ? "Shared closed mouth for speaking loops " : "Closed mouth for this pose's speaking loops ", select);
 }
 
 function comparePanel(pose, take) {
@@ -313,7 +327,12 @@ function settingsForm(clip) {
     ["speed", "Playback speed", "number", clip.playback.speed],
     ["loop_mode", "Playback", "select", clip.playback.loopMode, ["loop", "once_then_hold"]],
   ];
-  if (clip.kind === "loop") fields.push(["pingpong", "Pingpong loop", "checkbox", clip.processing.pingpong]);
+  if (clip.kind === "loop") {
+    fields.push(["pingpong", "Pingpong loop", "checkbox", clip.processing.pingpong]);
+    fields.push(["mouth", "Mouth set (silence overlay)", "select", clip.mouth ? clip.mouth.set : "off",
+      ["off", ...Object.keys(state.character.mouthSets || {})]]);
+    fields.push(["mouth_source", "Closed mouth: shared, still, frame:N or pose:ID", "text", sourceText(clip.mouth)]);
+  }
   const inputs = {};
   const form = h("div", { class: "form" }, fields.map(([key, label, type, value, options]) => {
     const input = type === "select" ? h("select", {}, options.map((o) => h("option", { value: o }, o)))
@@ -329,10 +348,17 @@ function settingsForm(clip) {
       else if (type === "number") { if (input.value !== "") changes[key] = Number(input.value); }
       else changes[key] = input.value;
     }
+    if (changes.mouth === "off" || !changes.mouth_source) delete changes.mouth_source;
     run(() => api("/api/production/clip-settings", { clip: clip.id, changes }), "Settings saved");
   } }, "Save settings");
   return h("div", {}, form, h("div", { class: "row actions" }, save,
     h("span", { class: "tiny" }, "Changing processing or playback makes the current render stale.")));
+}
+
+function sourceText(mouth) {
+  const source = mouth && mouth.closedSource;
+  if (!source) return "shared";
+  return source.kind === "frame" ? `frame:${source.index}` : source.kind === "pose" ? `pose:${source.pose}` : source.kind;
 }
 
 function clipTakeCard(clip, take) {
@@ -362,28 +388,76 @@ function renderPanel(clip) {
     r.state !== "current" ? h("span", { class: "tiny" }, (r.reasons || []).join("; ")) : null,
     r.frameCount ? h("span", { class: "tiny" }, `${r.frameCount} frames · ${r.frameIntervalMs} ms/frame · ${r.loopMode} · take ${r.take}`) : null));
   if (r.frameCount) {
-    const img = h("img", { class: "player", id: "renderPreview" });
-    box.append(h("div", { class: "tiny" }, "Preview is capped at 30 fps; runtime timing is shown above."), img, qaList(r.qa), seamTable(r.qa));
-    playOutput(clip, img, r);
+    const { width, height } = state.character.canvas;
+    const canvas = h("canvas", { class: "player", id: "renderPreview", width, height });
+    const silence = r.mouth ? h("input", { type: "checkbox", id: "silencePreview" }) : null;
+    box.append(h("div", { class: "tiny" }, "Preview is capped at 30 fps; runtime timing is shown above."),
+      silence ? h("label", { class: "tiny" }, silence, " Simulate silence: paste the closed mouth inside the tracked mask") : null,
+      canvas, r.mouth ? mouthSummary(r.mouth) : null, qaList(r.qa), seamTable(r.qa));
+    playOutput(clip, canvas, r, silence);
   }
   return box;
 }
 
-async function playOutput(clip, img, render) {
+function closedMouthUrl(clip, mouth) {
+  return frameUrl(`${clip.output}/${mouth.overlay}`);
+}
+
+function mouthSummary(mouth) {
+  const source = mouth.closedSource;
+  const from = source.kind === "frame" ? `output frame ${source.index}` : `${source.pose} still (${source.kind})`;
+  return h("div", { class: "tiny" }, `Mouth set ${mouth.set} · closed mouth from ${from} · mask ${mouth.roi.width}×${mouth.roi.height}px · `
+    + `tracking ${mouth.qa.trackMean} (min ${mouth.qa.trackMin}) · movement ${mouth.qa.span}px · most closed frame ${mouth.closedFrame}`
+    + ` · tone shift L*a*b* ${mouth.toneShift.join(" / ")}`);
+}
+
+async function playOutput(clip, canvas, render, silence) {
   try {
     const data = await api("/api/clips?root=" + encodeURIComponent(clip.output));
     const frames = (Object.values(data.clips)[0] || {}).frames || [];
+    const mouth = render.mouth;
+    const closed = new Image();
+    if (mouth) closed.src = closedMouthUrl(clip, mouth) || "";
+    const ctx = canvas.getContext("2d");
+    const frame = new Image();
     let index = 0;
+    let shown = 0;
     let hold = 0;
+    frame.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(frame, 0, 0);
+      canvas.dataset.frame = String(shown);
+      if (!mouth || !silence || !silence.checked) return;
+      // The renderer's silence overlay: an ellipse around the tracked mouth, filled with the
+      // closed-mouth image shifted so its mouth lands on the current one.
+      const anchor = mouth.anchorTrack[Math.min(shown, mouth.anchorTrack.length - 1)];
+      const source = mouth.sourceAnchor;
+      const cx = anchor.cx + canvas.width / 2;
+      const cy = anchor.cy + canvas.height / 2;
+      const rx = (anchor.width / 2) * 1.8;
+      const ry = (anchor.height / 2) * (1 + 1.5 * 0.75);
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, 2 * Math.PI);
+      ctx.clip();
+      if (closed.complete && closed.naturalWidth) ctx.drawImage(closed, anchor.cx - source.cx, anchor.cy - source.cy);
+      ctx.restore();
+      ctx.strokeStyle = "#ffe066";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, 2 * Math.PI);
+      ctx.stroke();
+      canvas.dataset.silence = "1";
+    };
     clearInterval(previewTimer);
     previewTimer = setInterval(() => {
-      if (!frames.length || !document.body.contains(img)) { clearInterval(previewTimer); return; }
-      img.src = frameUrl(frames[index]);
+      if (!frames.length || !document.body.contains(canvas)) { clearInterval(previewTimer); return; }
+      shown = index;
+      frame.src = frameUrl(frames[index]);
       if (index < frames.length - 1) index += 1;
       else if (render.loopMode === "loop" || ++hold > 30) { index = 0; hold = 0; }
     }, Math.max(33, render.frameIntervalMs));
   } catch (error) {
-    img.replaceWith(h("div", { class: "tiny" }, String(error.message || error)));
+    canvas.replaceWith(h("div", { class: "tiny" }, String(error.message || error)));
   }
 }
 

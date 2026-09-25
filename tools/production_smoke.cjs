@@ -52,8 +52,14 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.locator("[data-clip='smile_in'] .badge").filter({ hasText: /^stale$/ }).waitFor();
     await page.locator("#renderBtn").click();
     await page.locator("[data-clip='smile_in'] .badge").filter({ hasText: /^current$/ }).waitFor({ timeout: 60000 });
-    await page.waitForFunction(() => (document.querySelector("#renderPreview") || {}).naturalWidth === 240);
+    await page.waitForFunction(() => (document.querySelector("#renderPreview") || {}).dataset?.frame !== undefined);
     await page.screenshot({ path: "test-results/production-clips.png", fullPage: true });
+
+    await page.locator("[data-clip='smile_talk']").click();
+    await page.locator("#clipDetail").filter({ hasText: "closed mouth from idle still (shared)" }).waitFor();
+    await page.locator("#silencePreview").check();
+    await page.waitForFunction(() => document.querySelector("#renderPreview").dataset.silence === "1");
+    await page.screenshot({ path: "test-results/production-mouth.png", fullPage: true });
 
     await page.locator("#tabs button[data-tab='prompts']").click();
     const block = page.locator("textarea[data-block='video.loop']");
@@ -65,7 +71,7 @@ const { spawn, spawnSync } = require("node:child_process");
 
     assert.deepEqual(errors, []);
     assert.equal(await page.locator("body").evaluate((b) => /(^|\n)(null|\[object)/.test(b.innerText)), false);
-    console.log("PASS: still overlay, take decision, stale render, render job, prompt version");
+    console.log("PASS: still overlay, take decision, stale render, render job, silence overlay preview, prompt version");
   } catch (error) {
     if (page) {
       fs.mkdirSync("test-results", { recursive: true });

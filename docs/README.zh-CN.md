@@ -36,7 +36,8 @@ Graph 的 `Preview selected clip` 与导出共用帧选择、时间和循环配�
 普通队列播放器的 FPS 是人工检视速度，不改变节点的导出间隔。
 
 导出需独立安装 KTX-Software，传入 `--toktx`，命令见根 README。
-这版不导出口型覆盖层；已有口型配置会阻止导出，除非明确选择 `--no-mouth`。
+生产管线里开启了口型集的说话循环会导出静音闭嘴叠加层（见下方"口型叠加层"）；
+旧的作者端 `spriteforge_mouth_config.json` 仍会阻止导出，除非明确选择 `--no-mouth`。
 不会偷偷套用旧 Kurisu 专属的帧选择、口型修正或说话策略。
 
 Amadeus 继续负责语义 intent、说话状态、嘴部振幅、呈现优先级、停留和回落。
@@ -77,6 +78,25 @@ spriteforge review --workspace studio   # 打开 /production 审批、弃用和�
 
 抠图和插帧是外部命令（目录进、目录出），`tools/processors/` 提供 anime-segmentation 和
 GMFSS 的参考封装。详见 [生产管线说明](production.md)。
+
+## 口型叠加层
+
+说话循环里的嘴型就是视频本身；运行时只在"没在说话或 RMS ≤ 0.08"时，
+在嘴部椭圆遮罩里贴一张闭嘴图。RMS 只决定显不显示，不选嘴型。所以生产端只算：
+
+- **遮罩轨迹和范围**：在预期位置附近找说话时变化最大的区域定嘴，再逐帧模板跟踪（每帧最多 6px，中值平滑）；
+- **闭嘴图和图上的嘴位置**，并按这个循环的肤色调色；
+- **每帧"离闭嘴多远"**，运行时只在停帧、降帧采样时用它挑最闭嘴的一帧。
+
+`production clip set C --mouth neutral` 开启（只允许循环）。闭嘴图默认用**共用闭嘴帧**
+（基准 idle 静帧，所有表情复用），不用第 0 帧，因为从过渡进入的循环第 0 帧不一定闭嘴。
+侧面等脸型不同的姿态用 `production mouth pose side --use side` 单独指定；
+`production mouth shared POSE` 更换共用帧；单个片段可用 `--mouth-source still|frame:N|pose:ID` 覆盖。
+
+共用闭嘴帧来自别的表情，肤色会不同（脸红、调色）。渲染时会在遮罩覆盖的嘴周皮肤上比较
+循环和闭嘴图的平均 Lab，把闭嘴图的嘴部区域平移到循环的色调，结果存为
+`output/.mouth/closed.png`，导出直接编码这张；平移超过 8 L* 会在 QA 里提示。
+生产页的"模拟静音"预览按运行时同样的方式画遮罩、贴闭嘴图。
 
 代码和几何示例采用 AGPL-3.0-only，与迁入的 Amadeus 合同代码保持一致。
 用户素材的许可不因此改变。来源见 `NOTICE.md`。
