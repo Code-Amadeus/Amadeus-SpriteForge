@@ -16,12 +16,13 @@ from pathlib import Path
 import numpy as np
 
 from ..workspace import atomic_json
-from .checks import clip_report
+from .checks import clip_report, expected_anchor, worst
 from .clips import take_media_frames
 from .geometry import composite, estimate_similarity, lerp_matrix, premultiplied_blend, smoothstep, warp
 from .media import copy_durable, decode_video, find_ffmpeg, read_bgra, sorted_pngs, write_png
+from .mouth import analyze, prior
 from .records import (accepted_take, canvas_size, clip_settings, load_character, load_owner, now, output_root, owner_dir,
-                      recipe, still_path)
+                      recipe, render_stills, still_path)
 from .tools import load_tools, run_processor
 
 RENDER_FORMAT = "spriteforge.production.render.v1"
@@ -122,11 +123,18 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
                  **{key: round(tail_info[key] - head_info[key], 3) for key in ("tx", "ty", "rotationDeg")}}
         qa = clip_report(character, written, clip["kind"], start, end, drift)
         interval = round(1000 / (fps * factor * settings["speed"]))
+        stills = {"from": start_take["id"], "to": end_take["id"]}
+        mouth = _mouth_track(workspace, character, clip, written, stills, log) if clip.get("mouth") else None
+        if mouth:
+            qa["checks"] += [{"check": f"mouth.{name}", "level": level, "message": message}
+                             for name, level, message in mouth.pop("checks")]
+            qa["status"] = worst(c["level"] for c in qa["checks"])
         render = {"format": RENDER_FORMAT, "clip": clip_id, "take": take["id"],
-                  "stills": {"from": start_take["id"], "to": end_take["id"]}, "recipe": recipe(clip), "renderedAt": now(),
+                  "stills": stills, "recipe": recipe(clip), "renderedAt": now(),
                   "phase": clip["phase"], "frameCount": total, "sourceFps": fps, "interpolate": factor,
                   "frameIntervalMs": max(1, interval), "loopMode": settings["loopMode"],
-                  "registration": {"head": head_info, "tail": tail_info, "drift": drift}, "qa": qa}
+                  "registration": {"head": head_info, "tail": tail_info, "drift": drift}, "qa": qa,
+                  **({"mouth": mouth} if mouth else {})}
         atomic_json(output / "render.json", render)
         _publish(output, clip_directory / "output")
         log(f"{clip_id}: published {total} frames to {output_root(clip_id)} (QA {qa['status']}, "
@@ -135,6 +143,36 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
     finally:
         if not keep_work:
             shutil.rmtree(work, ignore_errors=True)
+
+
+def _mouth_track(workspace: Path, character: dict, clip: dict, frames: list[Path], stills: dict, log) -> dict:
+    """Silence-overlay data for a speaking loop. The closed-mouth image is, by default, the
+    shared closed mouth of the loop's pose (the base still for front poses), never frame 0:
+    a loop entered through a transition does not necessarily start closed."""
+    settings = clip["mouth"]
+    sets = character.get("mouthSets") or {}
+    if settings["set"] not in sets:
+        raise ValueError(f"Unknown mouth set {settings['set']!r}; define it with 'production mouth set'")
+    source = settings["closedSource"]
+    anchors = character.get("anchors") or {}
+    expected = expected_anchor(character, load_owner(workspace, "pose", clip["to"]))
+    offset = (expected["headCenterX"] - anchors["headCenterX"], expected["headTopY"] - anchors["headTopY"])
+    frame_index = None
+    if source["kind"] == "frame":
+        if source["index"] >= len(frames):
+            raise ValueError(f"Mouth closedSource frame {source['index']} is outside the {len(frames)} rendered frames")
+        frame_index, image = source["index"], read_bgra(frames[source["index"]])[0]
+        closed = {"kind": "frame", "index": frame_index}
+    else:
+        pose_id = render_stills(workspace, clip).get("mouth", clip["to"])
+        path, still_take = still_path(workspace, pose_id)
+        image = read_bgra(path)[0]
+        if source["kind"] != "still":
+            stills["mouth"] = still_take["id"]
+        closed = {"kind": source["kind"], "pose": pose_id, "still": still_take["id"]}
+    log(f"{clip['id']}: tracking the mouth for silence overlays")
+    track = analyze(frames, image, prior(sets[settings["set"]], offset), character["background"], source_is_frame=frame_index)
+    return {"set": settings["set"], "closedSource": closed, **track}
 
 
 def _edge_guard(frame: np.ndarray, band: int, cut_edges: list[str]) -> np.ndarray:

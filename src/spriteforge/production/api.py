@@ -58,8 +58,14 @@ class ProductionApi:
                 prompts.save_library(self.workspace, library)
             return {"block": body.get("block"), "version": version}
         if route == "clip-settings":
-            changes = {k: v for k, v in (body.get("changes") or {}).items() if k in project.CLIP_SETTINGS}
-            return {"clip": project.set_clip(self.workspace, str(body.get("clip")), **changes)}
+            raw = body.get("changes") or {}
+            changes = {k: v for k, v in raw.items() if k in project.CLIP_SETTINGS}
+            return {"clip": project.set_clip(self.workspace, str(body.get("clip")), mouth=raw.get("mouth"),
+                                             mouth_source=raw.get("mouth_source"), **changes)}
+        if route == "closed-mouth":
+            pose = body.get("pose")
+            return {"owner": project.set_closed_mouth(self.workspace, body.get("source") or None,
+                                                      pose_id=str(pose) if pose else None)}
         if route == "pose":
             return {"pose": project.add_pose(self.workspace, str(body.get("id")), str(body.get("description") or ""))}
         if route == "clip":

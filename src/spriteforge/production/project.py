@@ -8,6 +8,7 @@ or failing QA, so a character pack only ever contains reviewed renders.
 """
 from __future__ import annotations
 
+import math
 import os
 import shutil
 from pathlib import Path
@@ -15,9 +16,9 @@ from pathlib import Path
 from ..graph import validate_graph
 from ..workspace import atomic_json, read_json, resolve_asset
 from . import prompts
-from .records import (bound_clip, clip_settings, create_character, create_clip, create_pose, list_owners, list_takes,
-                      load_character, load_owner, output_root, production_dir, read_render, render_freshness,
-                      save_owner, take_status)
+from .records import (bound_clip, canvas_size, check_id, clip_settings, create_character, create_clip, create_pose,
+                      list_owners, list_takes, load_character, load_owner, load_take, output_root, production_dir,
+                      read_render, render_freshness, save_character, save_owner, take_dir, take_status)
 from .tools import default_tools, load_tools, save_tools
 
 CLIP_SETTINGS = {
@@ -61,18 +62,68 @@ def add_clip(workspace: Path, clip_id: str, source: str, target: str, phase: str
     return clip
 
 
-def set_clip(workspace: Path, clip_id: str, **changes) -> dict:
+def set_clip(workspace: Path, clip_id: str, *, mouth: str | None = None, mouth_source: str | None = None,
+             **changes) -> dict:
+    """Change clip settings. ``mouth`` names a mouth set (or 'off'); ``mouth_source`` picks the
+    closed-mouth image of the silence overlay: 'shared' (default: the pose's closed mouth),
+    'still' (the loop's own pose still), 'frame:N' or 'pose:ID'."""
     clip = load_owner(workspace, "clip", clip_id)
     for name, value in changes.items():
         if value is None:
             continue
         section, key, kind = CLIP_SETTINGS[name]
         clip[section][key] = kind(value)
+    if mouth is not None:
+        if mouth == "off":
+            clip["mouth"] = None
+        else:
+            if mouth not in (load_character(workspace).get("mouthSets") or {}):
+                raise ValueError(f"Unknown mouth set {mouth!r}; define it with 'production mouth-set'")
+            current = (clip.get("mouth") or {}).get("closedSource") or {"kind": "shared"}
+            clip["mouth"] = {"set": mouth, "closedSource": current}
+    if mouth_source is not None:
+        if not clip.get("mouth"):
+            raise ValueError("Choose a mouth set before its closed-mouth source")
+        kind, _, value = mouth_source.partition(":")
+        clip["mouth"]["closedSource"] = ({"kind": "frame", "index": int(value)} if kind == "frame" and value.isdigit()
+                                         else {"kind": "pose", "pose": value} if kind == "pose"
+                                         else {"kind": mouth_source})
     if clip["generation"]["provider"] not in {"manual", *load_tools(workspace).get("providers", {})}:
         raise ValueError(f"Unknown provider {clip['generation']['provider']!r}")
     clip_settings(clip)
     save_owner(workspace, "clip", clip)
     return clip
+
+
+def set_mouth_set(workspace: Path, name: str, **values: float | None) -> dict:
+    """Create or change a mouth set: the expected mouth ellipse (canvas-centre pixels) and curve."""
+    character = load_character(workspace)
+    sets = dict(character.get("mouthSets") or {})
+    current = dict(sets.get(check_id(name, "Mouth set")) or {})
+    current.update({k: float(v) for k, v in values.items() if v is not None})
+    if set(current) != {"cx", "cy", "width", "height", "curve"} or not all(math.isfinite(v) for v in current.values()) \
+            or current["width"] <= 0 or current["height"] <= 0:
+        raise ValueError("A mouth set needs finite cx, cy, curve and a positive width and height")
+    sets[name] = current
+    character["mouthSets"] = sets
+    save_character(workspace, character)
+    return current
+
+
+def set_closed_mouth(workspace: Path, source_pose: str | None, *, pose_id: str | None = None) -> dict:
+    """Choose whose still is the closed mouth: for the whole character (the shared default,
+    normally a front pose) or for one pose such as a side view. None restores the default."""
+    if source_pose is not None:
+        load_owner(workspace, "pose", source_pose)
+    if pose_id is None:
+        character = load_character(workspace)
+        character["closedMouth"] = source_pose
+        save_character(workspace, character)
+        return character
+    pose = load_owner(workspace, "pose", pose_id)
+    pose["closedMouth"] = source_pose
+    save_owner(workspace, "pose", pose)
+    return pose
 
 
 def _summary(owner: dict, take: dict) -> dict:
@@ -168,3 +219,36 @@ def export_gate(workspace: Path, graph: dict) -> dict:
     if problems:
         raise ValueError("Production QA blocks export: " + " | ".join(problems[:8]))
     return report
+
+
+def export_mouth(workspace: Path, graph: dict) -> dict:
+    """Runtime mouth profiles and closed-mouth images of production-bound speaking loops.
+
+    Profiles are keyed by node label and carry only runtime fields: the mask track and
+    size, the closed image's mouth anchor, and the per-frame closedness ranking."""
+    character = load_character(workspace)
+    sets = character.get("mouthSets") or {}
+    result = {"expressions": {}, "profiles": {}, "overlays": {}}
+    for node in graph["nodes"]:
+        clip_id = bound_clip(node["root"])
+        render = read_render(workspace, clip_id) if clip_id else None
+        mouth = (render or {}).get("mouth")
+        if not mouth or node["label"] in result["profiles"]:
+            continue
+        if mouth["set"] not in sets:
+            raise ValueError(f"{node['label']}: mouth set {mouth['set']!r} no longer exists")
+        result["expressions"][mouth["set"]] = sets[mouth["set"]]
+        result["profiles"][node["label"]] = {
+            "mouth_set": mouth["set"], **mouth["roi"], "closed_frame_idx": mouth["closedFrame"],
+            "openness": mouth["openness"], "anchor_track": mouth["anchorTrack"],
+            "runtime_overlay_anchor": mouth["sourceAnchor"]}
+        source = mouth["closedSource"]
+        if source["kind"] == "frame":
+            image = resolve_asset(workspace, output_root(clip_id)) / render["phase"] / f"{source['index']:06d}.png"
+        else:
+            still = load_take(workspace, "pose", source["pose"], source["still"])
+            image = take_dir(workspace, "pose", source["pose"], source["still"]) / still["media"]["still"]
+        result["overlays"][node["label"]] = image
+    if result["profiles"]:
+        result["header"] = {"version": 2, "canvas_size": list(canvas_size(character)), "profile_kind": "runtime_ktx2"}
+    return result

@@ -65,6 +65,22 @@ def add_parser(commands) -> None:
     clip_set.add_argument("--edge-guard", type=int, help="Clear alpha this many px from closed canvas edges")
     clip_set.add_argument("--speed", type=float, help="Playback speed multiplier")
     clip_set.add_argument("--loop-mode", choices=["loop", "once_then_hold"])
+    clip_set.add_argument("--mouth", help="Mouth set for silence overlays on this speaking loop, or 'off'")
+    clip_set.add_argument("--mouth-source", help="Closed-mouth image: shared (default), still, frame:N or pose:ID")
+
+    mouth = sub.add_parser("mouth", help="Mouth sets and closed-mouth sources").add_subparsers(dest="mouth_action", required=True)
+    mouth_set = mouth.add_parser("set", help="Create or change a mouth set (canvas-centre pixels)")
+    mouth_set.add_argument("--workspace", type=Path, required=True)
+    mouth_set.add_argument("name")
+    for field in ("cx", "cy", "width", "height", "curve"):
+        mouth_set.add_argument(f"--{field}", type=float)
+    shared = mouth.add_parser("shared", help="Pose whose still is the shared closed mouth (default: the base pose)")
+    shared.add_argument("--workspace", type=Path, required=True)
+    shared.add_argument("pose", help="Pose id, or 'default'")
+    per_pose = mouth.add_parser("pose", help="Closed-mouth pose for one pose's speaking loops (e.g. a side view)")
+    per_pose.add_argument("--workspace", type=Path, required=True)
+    per_pose.add_argument("pose")
+    per_pose.add_argument("--use", required=True, help="Pose whose still is the closed mouth, or 'default'")
 
     prompt = sub.add_parser("prompt", help="Versioned prompt blocks").add_subparsers(dest="prompt_action", required=True)
     show = prompt.add_parser("show")
@@ -179,8 +195,18 @@ def run(args) -> None:
             print(f"Clip {clip['id']}: {clip['from']} -> {clip['to']} ({clip['kind']}, phase {clip['phase']})")
         else:
             changes = {k: getattr(args, k) for k in project.CLIP_SETTINGS}
-            clip = project.set_clip(workspace, args.id, **changes)
-            print(json.dumps({k: clip[k] for k in ("generation", "processing", "playback")}, indent=2))
+            clip = project.set_clip(workspace, args.id, mouth=args.mouth, mouth_source=args.mouth_source, **changes)
+            print(json.dumps({k: clip.get(k) for k in ("generation", "processing", "playback", "mouth")}, indent=2))
+    elif action == "mouth":
+        if args.mouth_action == "set":
+            values = project.set_mouth_set(workspace, args.name, **{k: getattr(args, k) for k in ("cx", "cy", "width", "height", "curve")})
+            print(f"Mouth set {args.name}: {values}")
+        else:
+            shared = args.mouth_action == "shared"
+            requested = args.pose if shared else args.use
+            source = None if requested == "default" else requested
+            project.set_closed_mouth(workspace, source, pose_id=None if shared else args.pose)
+            print(f"Closed mouth for {'the character' if shared else 'pose ' + args.pose}: {source or 'default'}")
     elif action == "prompt":
         if args.prompt_action == "show":
             library = prompts.load_library(workspace)

@@ -136,7 +136,7 @@ def create_clip(workspace: Path, clip_id: str, source: str, target: str, *, phas
         raise ValueError("Clip phase must be in, loop or out")
     clip = {"format": CLIP_FORMAT, "id": clip_id, "kind": kind, "from": source, "to": target, "phase": phase,
             "prompt": {"template": kind, "subject": f"clip.{clip_id}"}, **clip_defaults(kind),
-            "acceptedTake": None, "notes": ""}
+            "mouth": None, "acceptedTake": None, "notes": ""}
     save_owner(workspace, "clip", clip)
     return clip
 
@@ -281,12 +281,42 @@ def clip_settings(clip: dict) -> dict:
     duration, scale = generation.get("durationS"), generation.get("inputScale", 1.0)
     if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1 or not 0.5 <= float(scale) <= 1.0:
         raise ValueError("generation.durationS must be a positive integer and inputScale between 0.5 and 1.0")
+    mouth = clip.get("mouth")
+    if mouth is not None:
+        source = mouth.get("closedSource") if isinstance(mouth, dict) else None
+        if clip["kind"] != "loop":
+            raise ValueError("Mouth tracks belong to speaking loops, not transitions")
+        if not isinstance(mouth.get("set"), str) or not isinstance(source, dict)                 or source.get("kind") not in {"shared", "still", "frame", "pose"}:
+            raise ValueError("mouth needs a mouth set and a closedSource of kind shared, still, frame or pose")
+        if source["kind"] == "frame" and (isinstance(source.get("index"), bool) or not isinstance(source.get("index"), int)
+                                          or source["index"] < 0):
+            raise ValueError("A frame closedSource needs a non-negative output frame index")
+        if source["kind"] == "pose":
+            check_id(source.get("pose"), "Pose")
     return {**values, "pingpong": bool(processing.get("pingpong")), "speed": float(speed), "loopMode": playback["loopMode"]}
 
 
 def recipe(clip: dict) -> dict:
-    """Clip fields that determine the rendered frames and their timing."""
-    return {"phase": clip["phase"], "processing": clip["processing"], "playback": clip["playback"]}
+    """Clip fields that determine the rendered frames, their timing and mouth track."""
+    return {"phase": clip["phase"], "processing": clip["processing"], "playback": clip["playback"],
+            **({"mouth": clip["mouth"]} if clip.get("mouth") else {})}
+
+
+def closed_mouth_pose(character: dict, pose: dict) -> str:
+    """The pose whose still is the closed mouth for this pose's speaking loops: the pose's
+    own choice, otherwise the character's shared closed mouth (the base still by default)."""
+    return pose.get("closedMouth") or character.get("closedMouth") or character["basePose"]
+
+
+def render_stills(workspace: Path, clip: dict) -> dict[str, str]:
+    """The pose stills a render depends on, by role."""
+    stills = {"from": clip["from"], "to": clip["to"]}
+    source = (clip.get("mouth") or {}).get("closedSource") or {}
+    if source.get("kind") == "pose":
+        stills["mouth"] = source["pose"]
+    elif source.get("kind") == "shared":
+        stills["mouth"] = closed_mouth_pose(load_character(workspace), load_owner(workspace, "pose", clip["to"]))
+    return stills
 
 
 def render_freshness(workspace: Path, clip: dict) -> tuple[str, list[str]]:
@@ -298,9 +328,9 @@ def render_freshness(workspace: Path, clip: dict) -> tuple[str, list[str]]:
     if render.get("take") != clip.get("acceptedTake"):
         reasons.append("the accepted take changed")
     if render.get("recipe") != recipe(clip):
-        reasons.append("processing or playback settings changed")
-    for end in ("from", "to"):
-        pose = load_owner(workspace, "pose", clip[end])
-        if (render.get("stills") or {}).get(end) != pose.get("acceptedTake"):
-            reasons.append(f"the {clip[end]} still changed")
-    return ("stale" if reasons else "current"), reasons
+        reasons.append("processing, playback or mouth settings changed")
+    for role, pose_id in render_stills(workspace, clip).items():
+        pose = load_owner(workspace, "pose", pose_id)
+        if (render.get("stills") or {}).get(role) != pose.get("acceptedTake"):
+            reasons.append(f"the {pose_id} still changed")
+    return ("stale" if reasons else "current"), sorted(set(reasons), key=reasons.index)

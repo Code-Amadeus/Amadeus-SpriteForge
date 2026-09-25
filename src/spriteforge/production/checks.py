@@ -41,6 +41,10 @@ def _check(name: str, level: str, message: str, **data) -> dict:
     return {"check": name, "level": level, "message": message, **data}
 
 
+def _values(seam_report: dict) -> dict:
+    return {k: v for k, v in seam_report.items() if k != "level"}
+
+
 def expected_anchor(character: dict, pose: dict) -> dict:
     anchors = character.get("anchors") or {}
     return {key: (pose.get("expected") or {}).get(key, anchors.get(key)) for key in ("headTopY", "headCenterX")}
@@ -137,11 +141,12 @@ def clip_report(character: dict, frames: list[Path], kind: str, start: np.ndarra
         report["tail"] = seam(character, previous, end, EDGE_L)
         for name in ("head", "tail"):
             if report[name]["level"] != "pass":
-                checks.append(_check(name, report[name]["level"], f"The {name} frame differs from its pose still", **report[name]))
+                checks.append(_check(name, report[name]["level"], f"The {name} frame differs from its pose still",
+                                     **_values(report[name])))
         if kind == "loop":
             report["wrap"] = seam(character, previous, first, WRAP_L)
             if report["wrap"]["level"] != "pass":
-                checks.append(_check("wrap", report["wrap"]["level"], "The loop seam is visible", **report["wrap"]))
+                checks.append(_check("wrap", report["wrap"]["level"], "The loop seam is visible", **_values(report["wrap"])))
             if max(report["spans"]["headTopY"], report["spans"]["headCenterX"]) > LOOP_SPAN_WATCH:
                 checks.append(_check("span", "watch", f"The head moves more than {LOOP_SPAN_WATCH}px inside the loop",
                                      **report["spans"]))

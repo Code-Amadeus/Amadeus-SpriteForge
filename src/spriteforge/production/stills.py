@@ -17,6 +17,7 @@ from .checks import still_report
 from .geometry import (composite, estimate_similarity, fit_placement, framing_placement, is_rigid, measure, placement,
                        warp)
 from .media import IMAGE_SUFFIXES, copy_durable, read_bgra, write_png
+from .mouth import default_set
 from .prompts import load_library, pose_prompt
 from .records import (canvas_size, decide, load_character, load_owner, load_take, new_take, save_character,
                       save_owner, save_take, still_path, take_dir)
@@ -111,6 +112,8 @@ def approve_still(workspace: Path, pose_id: str, take_id: str, reason: str = "")
     if pose_id == character["basePose"]:
         metrics = measure(still)
         character["anchors"] = {"take": take_id, **{k: metrics[k] for k in ("headTopY", "headCenterX", "area", "bbox")}}
+        if not character.get("mouthSets"):
+            character["mouthSets"] = {"neutral": default_set(character["anchors"], *canvas_size(character))}
         save_character(workspace, character)
     return take
 
