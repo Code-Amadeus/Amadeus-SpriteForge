@@ -1,13 +1,18 @@
-"""Pose stills: import, normalise onto the canvas, check and approve.
+"""Pose stills: import or generate, normalise onto the canvas, check and approve.
 
 The source image is kept untouched in its take; ``still.png`` is the RGBA canvas
 image that clip endpoints are registered to. The base pose is placed by explicit
 framing, and approving it measures the character anchors. Every other pose is
 registered to the approved base still, or placed explicitly when a pose change
 defeats feature registration. Approval refuses a still whose geometry fails.
+
+A generated still is an image edit of the approved base still. Its take keeps
+the exact input image, prompt and request; the provider's image is then
+normalised exactly like an imported one.
 """
 from __future__ import annotations
 
+import hashlib
 import tempfile
 from pathlib import Path
 
@@ -16,9 +21,10 @@ import numpy as np
 from .checks import still_report
 from .geometry import (composite, estimate_similarity, fit_placement, framing_placement, is_rigid, measure, placement,
                        warp)
-from .media import IMAGE_SUFFIXES, copy_durable, read_bgra, write_png
+from .media import IMAGE_SUFFIXES, copy_durable, encode_png, image_suffix, read_bgra, write_durable, write_png
 from .mouth import default_set
-from .prompts import load_library, pose_prompt
+from .prompts import load_library, pose_prompt, require_complete
+from .providers import ImageJob, get_image_provider
 from .records import (canvas_size, decide, load_character, load_owner, load_take, new_take, save_character,
                       save_owner, save_take, still_path, take_dir)
 from .tools import load_tools, run_processor
@@ -40,55 +46,111 @@ def still_prompt(workspace: Path, character: dict, pose: dict) -> dict:
     return pose_prompt(load_library(workspace), character, pose)
 
 
+def still_input(workspace: Path, character: dict) -> tuple[bytes, dict]:
+    """The approved base still flattened on the background: what an image editor starts from."""
+    path, take = still_path(workspace, character["basePose"])
+    image = encode_png(composite(read_bgra(path)[0], character["background"]))
+    return image, {"pose": character["basePose"], "still": take["id"], "sha256": hashlib.sha256(image).hexdigest()}
+
+
+def _require_base(character: dict, pose_id: str) -> None:
+    if pose_id != character["basePose"] and not character.get("anchors"):
+        raise ValueError(f"Approve a still for the base pose '{character['basePose']}' first")
+
+
 def import_still(workspace: Path, pose_id: str, source: Path, *, note: str = "",
                  place: tuple[float, float, float] | None = None) -> dict:
-    character, pose, tools = load_character(workspace), load_owner(workspace, "pose", pose_id), load_tools(workspace)
+    character, pose = load_character(workspace), load_owner(workspace, "pose", pose_id)
     source = Path(source)
     if source.suffix.lower() not in IMAGE_SUFFIXES or not source.is_file():
         raise ValueError(f"Still source must be an image file: {source}")
-    image, has_alpha = read_bgra(source)
-    is_base = pose_id == character["basePose"]
-    if not is_base and not character.get("anchors"):
-        raise ValueError(f"Approve a still for the base pose '{character['basePose']}' first")
+    _require_base(character, pose_id)
     take, directory = new_take(workspace, "pose", pose_id, {"provider": "manual", "file": source.name, "note": note})
+    name = f"source{source.suffix.lower()}"
     try:
-        copy_durable(source, directory / f"source{source.suffix.lower()}")
+        copy_durable(source, directory / name)
         take["prompt"] = still_prompt(workspace, character, pose)
-        if not has_alpha:
-            image = matte(tools, image, character["background"])
-        width, height = canvas_size(character)
-        registration = None
-        if place is not None:
-            matrix, method = placement(*place), "placement"
-        elif is_base:
-            matrix, method = framing_placement(image, width, height, character["framing"]), "framing"
-        else:
-            # A rigid match means the generator moved the whole picture: undo it. Otherwise
-            # the pose itself changed, and the generator's framing is kept for review.
-            base_file, base_take = still_path(workspace, character["basePose"])
-            take["inputs"] = {"base": {"pose": character["basePose"], "still": base_take["id"]}}
-            base = read_bgra(base_file)[0]
-            try:
-                matrix, registration = estimate_similarity(composite(image, character["background"]),
-                                                           composite(base, character["background"]))
-            except ValueError as exc:
-                matrix, registration = None, {"error": str(exc)}
-            if matrix is not None and is_rigid(registration):
-                method = "registration"
-            else:
-                matrix, method = fit_placement(image, width, height), "fit"
-        still = warp(image, matrix, width, height, (0, 0, 0, 0))
-        write_png(directory / "still.png", still)
-        normalization = {"method": method, "matrix": np.round(matrix, 6).tolist(),
-                         **({"registration": registration} if registration else {})}
-        take.update(state="ready", media={"source": f"source{source.suffix.lower()}", "still": "still.png"},
-                    normalization=normalization, qa=qa_for(character, pose, still, normalization))
+        _normalize(workspace, character, pose, take, name, place)
     except Exception as exc:
         take.update(state="failed", error=str(exc))
         raise
     finally:
         save_take(workspace, take)
     return take
+
+
+def generate_still(workspace: Path, pose_id: str, provider: str, *, dry_run: bool = False, log=print) -> dict:
+    """Edit the approved base still into a pose with an image provider, then normalise the result."""
+    character, pose, tools = load_character(workspace), load_owner(workspace, "pose", pose_id), load_tools(workspace)
+    if pose_id == character["basePose"]:
+        raise ValueError("The base pose is the reference every generated still starts from: import its still")
+    _require_base(character, pose_id)
+    adapter = get_image_provider(provider, tools)
+    snapshot = still_prompt(workspace, character, pose)
+    image, inputs = still_input(workspace, character)
+    job = ImageJob(snapshot["text"], snapshot["negative"] if adapter.negative_prompt else "", image)
+    request = adapter.preview(job)
+    if dry_run:
+        return {"provider": provider, "model": adapter.model, "request": request, "prompt": snapshot}
+    require_complete(snapshot)
+    adapter.key()  # a missing key, like a missing alpha processor, fails before a take is recorded
+    if not tools.get("alpha"):
+        raise ValueError("Provider images are opaque: configure the 'alpha' processor in production/tools.json first")
+    take, directory = new_take(workspace, "pose", pose_id, {"provider": provider, "model": adapter.model, "request": request})
+    write_durable(directory / "input.png", image)
+    take.update(prompt={**snapshot, "negativeSent": bool(job.negative)}, inputs={"base": {**inputs, "file": "input.png"}},
+                state="submitting")
+    save_take(workspace, take)
+    log(f"Sent the {character['basePose']} still to {provider} ({adapter.model}) as take {take['id']}")
+    try:
+        result = adapter.edit(job)
+        name = "source" + image_suffix(result)
+        write_durable(directory / name, result)
+        take["media"] = {"source": name}
+        _normalize(workspace, character, pose, take, name, None)
+    except Exception as exc:
+        take.update(state="failed", error=str(exc))
+        raise
+    finally:
+        save_take(workspace, take)
+    log(f"Take {take['id']}: {take['normalization']['method']}, QA {take['qa']['status']}")
+    return take
+
+
+def _normalize(workspace: Path, character: dict, pose: dict, take: dict, name: str,
+               place: tuple[float, float, float] | None) -> None:
+    """Place a take's source image on the canvas as its still and check it."""
+    directory = take_dir(workspace, "pose", pose["id"], take["id"])
+    image, has_alpha = read_bgra(directory / name)
+    if not has_alpha:
+        image = matte(load_tools(workspace), image, character["background"])
+    width, height = canvas_size(character)
+    registration = None
+    if place is not None:
+        matrix, method = placement(*place), "placement"
+    elif pose["id"] == character["basePose"]:
+        matrix, method = framing_placement(image, width, height, character["framing"]), "framing"
+    else:
+        # A rigid match means the generator moved the whole picture: undo it. Otherwise
+        # the pose itself changed, and the generator's framing is kept for review.
+        base_file, base_take = still_path(workspace, character["basePose"])
+        take["inputs"].setdefault("base", {"pose": character["basePose"], "still": base_take["id"]})
+        base = read_bgra(base_file)[0]
+        try:
+            matrix, registration = estimate_similarity(composite(image, character["background"]),
+                                                       composite(base, character["background"]))
+        except ValueError as exc:
+            matrix, registration = None, {"error": str(exc)}
+        if matrix is not None and is_rigid(registration):
+            method = "registration"
+        else:
+            matrix, method = fit_placement(image, width, height), "fit"
+    still = warp(image, matrix, width, height, (0, 0, 0, 0))
+    write_png(directory / "still.png", still)
+    normalization = {"method": method, "matrix": np.round(matrix, 6).tolist(),
+                     **({"registration": registration} if registration else {})}
+    take.update(state="ready", media={"source": name, "still": "still.png"},
+                normalization=normalization, qa=qa_for(character, pose, still, normalization))
 
 
 def qa_for(character: dict, pose: dict, still: np.ndarray, normalization: dict | None) -> dict:

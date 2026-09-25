@@ -55,6 +55,17 @@ def write_png(path: Path, image: np.ndarray) -> None:
     write_durable(path, encode_png(image))
 
 
+def image_suffix(data: bytes) -> str:
+    """The file suffix of encoded image bytes, from their signature."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    raise ValueError("Expected PNG, JPEG or WebP image data")
+
+
 def read_bgra(path: Path) -> tuple[np.ndarray, bool]:
     """Return a BGRA image and whether the file carried a meaningful alpha channel."""
     data = np.frombuffer(Path(path).read_bytes(), np.uint8)

@@ -22,7 +22,7 @@ from .prompts import require_complete
 from .providers import VideoJob, download, get_provider
 from .records import (canvas_size, clip_settings, load_character, load_owner, load_take, new_take, save_take,
                       still_path, take_dir)
-from .stills import still_prompt
+from .stills import still_input, still_prompt
 from .tools import load_tools
 
 
@@ -75,8 +75,7 @@ def prepare(workspace: Path, kind: str, owner_id: str, target: Path) -> list[Pat
     else:
         pose = load_owner(workspace, "pose", owner_id)
         snapshot = still_prompt(workspace, character, pose)
-        base, _ = still_path(workspace, character["basePose"])
-        files["base.png"] = upload_image(character, read_bgra(base)[0])
+        files["base.png"], _ = still_input(workspace, character)
     files["prompt.txt"] = snapshot["text"].encode()
     files["negative.txt"] = snapshot["negative"].encode()
     written = []

@@ -1,31 +1,40 @@
+import base64
+import hashlib
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from synthetic import provider_frames, still, write_video  # noqa: E402
+import numpy as np  # noqa: E402
+from synthetic import CANVAS, flatten, mouth_centre, provider_frames, still, write_video  # noqa: E402
 
 from spriteforge.production import prompts  # noqa: E402
+from spriteforge.production.api import ProductionApi  # noqa: E402
 from spriteforge.production.clips import generate_clip_take, resume_clip_take  # noqa: E402
-from spriteforge.production.project import add_clip, set_clip  # noqa: E402
+from spriteforge.production.project import add_clip, add_pose, set_clip  # noqa: E402
 from spriteforge.production.records import list_takes, load_take, take_dir  # noqa: E402
+from spriteforge.production.stills import approve_still, generate_still  # noqa: E402
 from spriteforge.production.tools import load_tools, save_tools  # noqa: E402
+
+IMAGE_PATHS = ("/api/v1/services/aigc/multimodal-generation/generation", "/api/v3/images/generations")
 
 
 class FakeProviders:
-    """Local stand-in for the Wan (DashScope) and Seedance (Ark) task APIs."""
+    """Local stand-in for the DashScope (Wan, Qwen image edit) and Ark (Seedance, Seedream) APIs."""
 
     def __init__(self, video: bytes):
         self.video, self.requests, self.polls, self.fail = video, [], 0, False
+        self.edited, self.image_error = b"", None
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
-            def reply(self, value: dict) -> None:
+            def reply(self, value: dict, status: int = 200) -> None:
                 body = json.dumps(value).encode()
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -34,16 +43,25 @@ class FakeProviders:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append(("POST", self.path, {k.lower(): v for k, v in self.headers.items()}, body))
-                self.reply({"output": {"task_id": "wan-1", "task_status": "PENDING"}} if "video-synthesis" in self.path
-                           else {"id": "cgt-1"})
+                if self.path in IMAGE_PATHS and fake.image_error:
+                    self.reply({"code": "DataInspectionFailed", "message": fake.image_error}, 400)
+                elif self.path == IMAGE_PATHS[0]:
+                    url = f"http://127.0.0.1:{fake.port}/edit.png"
+                    self.reply({"output": {"choices": [{"message": {"role": "assistant", "content": [{"image": url}]}}]}})
+                elif self.path == IMAGE_PATHS[1]:
+                    self.reply({"data": [{"b64_json": base64.b64encode(fake.edited).decode()}]})
+                else:
+                    self.reply({"output": {"task_id": "wan-1", "task_status": "PENDING"}} if "video-synthesis" in self.path
+                               else {"id": "cgt-1"})
 
             def do_GET(self):
                 fake.requests.append(("GET", self.path, {k.lower(): v for k, v in self.headers.items()}, None))
-                if self.path == "/result.mp4":
+                if self.path in ("/result.mp4", "/edit.png"):
+                    data = fake.video if self.path == "/result.mp4" else fake.edited
                     self.send_response(200)
-                    self.send_header("Content-Length", str(len(fake.video)))
+                    self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
-                    self.wfile.write(fake.video)
+                    self.wfile.write(data)
                     return
                 fake.polls += 1
                 done = fake.polls >= 2
@@ -70,7 +88,7 @@ def providers(studio, monkeypatch):
     frames = provider_frames(still(studio, "idle"), still(studio, "smile"), 24)
     fake = FakeProviders(write_video(studio.tmp / "result.mp4", frames).read_bytes())
     tools = load_tools(studio.root)
-    for name, path in (("wan", "/api/v1"), ("seedance", "/api/v3")):
+    for name, path in (("wan", "/api/v1"), ("seedance", "/api/v3"), ("qwen-image", "/api/v1"), ("seedream", "/api/v3")):
         tools["providers"][name].update(baseUrl=f"http://127.0.0.1:{fake.port}{path}", pollSeconds=0.01)
     save_tools(studio.root, tools)
     add_clip(studio.root, "smile_in", "idle", "smile")
@@ -143,3 +161,114 @@ def test_resume_after_submission_and_missing_key(studio, providers, monkeypatch)
     with pytest.raises(ValueError, match="DASHSCOPE_API_KEY"):
         generate_clip_take(studio.root, "smile_in")
     assert len(list_takes(studio.root, "clip", "smile_in")) == 1
+
+
+def edited_still(studio, encoding: str = ".png") -> bytes:
+    """What an image editor returns: the base still with a new mouth, opaque, at twice the size and nudged."""
+    image = still(studio, "idle").copy()
+    mx, my = mouth_centre(studio)
+    cv2.rectangle(image, (mx - 8, my - 2), (mx + 8, my + 5), (40, 40, 150, 255), -1)
+    flat = cv2.resize(flatten(image), None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    moved = cv2.warpAffine(flat, np.float32([[1, 0, 6], [0, 1, -4]]), flat.shape[1::-1], borderValue=(255, 255, 255))
+    return cv2.imencode(encoding, moved)[1].tobytes()
+
+
+def quiet(*_):
+    pass
+
+
+def test_qwen_image_edit_becomes_a_normalised_still(studio, providers):
+    add_pose(studio.root, "grin", "wide grin")
+    write_prompts(studio)
+    providers.edited = edited_still(studio)
+    take = generate_still(studio.root, "grin", "qwen-image", log=quiet)
+    method, path, headers, body = providers.requests[0]
+    assert (method, path) == ("POST", IMAGE_PATHS[0]) and headers["authorization"] == "Bearer wan-secret"
+    image, text = body["input"]["messages"][0]["content"]
+    assert text == {"text": take["prompt"]["text"]} and take["prompt"]["text"].startswith("character: Demo")
+    assert body["model"] == "qwen-image-edit-plus"
+    assert body["parameters"] == {"n": 1, "watermark": False, "prompt_extend": False, "negative_prompt": "still.negative text"}
+    directory = take_dir(studio.root, "pose", "grin", take["id"])
+    sent = (directory / "input.png").read_bytes()
+    assert base64.b64decode(image["image"].split(",", 1)[1]) == sent and providers.requests[1][:2] == ("GET", "/edit.png")
+    assert {p.name for p in directory.iterdir()} == {"take.json", "input.png", "source.png", "still.png"}
+    assert (take["state"], take["source"]["provider"], take["prompt"]["negativeSent"]) == ("ready", "qwen-image", True)
+    assert take["inputs"]["base"] == {"pose": "idle", "still": load_take_id(studio, "idle"), "file": "input.png",
+                                      "sha256": hashlib.sha256(sent).hexdigest()}
+    assert take["normalization"]["method"] == "registration" and take["qa"]["status"] == "pass", take["qa"]
+    assert "wan-secret" not in (directory / "take.json").read_text(encoding="utf-8")
+    assert approve_still(studio.root, "grin", take["id"])["id"] == take["id"]
+
+
+def load_take_id(studio, pose: str) -> str:
+    from spriteforge.production.records import load_owner
+    return load_owner(studio.root, "pose", pose)["acceptedTake"]
+
+
+def test_seedream_matches_the_canvas_aspect_and_sends_no_negative(studio, providers):
+    add_pose(studio.root, "grin", "wide grin")
+    write_prompts(studio)
+    providers.edited = edited_still(studio, ".jpg")
+    take = generate_still(studio.root, "grin", "seedream", log=quiet)
+    _, path, headers, body = providers.requests[0]
+    assert path == IMAGE_PATHS[1] and headers["authorization"] == "Bearer ark-secret"
+    assert set(body) == {"model", "prompt", "image", "response_format", "watermark", "sequential_image_generation", "size"}
+    width, height = CANVAS
+    assert body["size"] == f"{round(width * 2048 / height)}x2048" and body["image"].startswith("data:image/png;base64,")
+    assert (body["model"], body["response_format"], body["watermark"]) == ("doubao-seedream-4-0-250828", "b64_json", False)
+    assert (take["state"], take["media"]["source"], take["prompt"]["negativeSent"]) == ("ready", "source.jpg", False)
+    assert take["qa"]["status"] == "pass", take["qa"]
+
+
+def test_still_generation_fails_before_a_paid_request(studio, providers, monkeypatch):
+    add_pose(studio.root, "grin", "wide grin")
+    with pytest.raises(ValueError, match="placeholder"):
+        generate_still(studio.root, "grin", "qwen-image")
+    preview = generate_still(studio.root, "grin", "qwen-image", dry_run=True)
+    assert preview["request"]["input"]["messages"][0]["content"][0]["image"].startswith("<input.png sha256=")
+    with pytest.raises(ValueError, match="base pose"):
+        generate_still(studio.root, "idle", "qwen-image")
+    with pytest.raises(ValueError, match="Unknown image provider"):
+        generate_still(studio.root, "grin", "wan")
+    write_prompts(studio)
+    monkeypatch.delenv("DASHSCOPE_API_KEY")
+    with pytest.raises(ValueError, match="DASHSCOPE_API_KEY"):
+        generate_still(studio.root, "grin", "qwen-image")
+    tools = load_tools(studio.root)
+    tools["alpha"] = None
+    save_tools(studio.root, tools)
+    with pytest.raises(ValueError, match="alpha"):
+        generate_still(studio.root, "grin", "seedream")
+    assert providers.requests == [] and list_takes(studio.root, "pose", "grin") == []
+    with pytest.raises(ValueError, match="Unknown video provider"):
+        set_clip(studio.root, "smile_in", provider="seedream")
+
+
+def test_refused_image_edit_is_kept_as_a_failed_take(studio, providers):
+    add_pose(studio.root, "grin", "wide grin")
+    write_prompts(studio)
+    providers.image_error = "content check"
+    with pytest.raises(ValueError, match="content check"):
+        generate_still(studio.root, "grin", "qwen-image", log=quiet)
+    [take] = list_takes(studio.root, "pose", "grin")
+    assert take["state"] == "failed" and "HTTP 400" in take["error"]
+    assert (take_dir(studio.root, "pose", "grin", take["id"]) / "input.png").is_file()
+
+
+def test_page_job_generates_a_pose_still(studio, providers):
+    add_pose(studio.root, "grin", "wide grin")
+    write_prompts(studio)
+    providers.edited = edited_still(studio)
+    api = ProductionApi(studio.root)
+    job = api.post("jobs", {"action": "generate", "pose": "grin", "provider": "qwen-image"})["job"]
+    assert (job["kind"], job["owner"]) == ("pose", "grin")
+    deadline = time.monotonic() + 60
+    while api.job_list()[0]["status"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.05)
+    done = api.job_list()[0]
+    assert done["status"] == "succeeded" and done["result"].endswith("QA pass"), done
+    assert done["log"][0].startswith("Sent the idle still to qwen-image")
+    with pytest.raises(ValueError, match="only generate"):
+        api.post("jobs", {"action": "render", "pose": "grin"})
+    kinds = {name: p["kind"] for name, p in api.overview()["tools"]["providers"].items()}
+    assert kinds == {"wan": "video", "seedance": "video", "qwen-image": "image", "seedream": "image"}

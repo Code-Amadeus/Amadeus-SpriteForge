@@ -140,13 +140,42 @@ function renderPoseDetail(pose) {
     h("div", { class: "row" }, h("h2", {}, pose.id), pose.description ? h("span", { class: "muted" }, pose.description) : null,
       Object.keys(expected).length ? badge("intended offset " + JSON.stringify(expected), "watch") : null,
       pose.needsRecheck ? badge("base anchors changed: approve again", "watch") : null),
-    h("div", { class: "row", style: "margin:8px 0" }, h("label", { class: "tiny" }, "Import a generated still ", upload),
-      closedMouthControl(pose)),
+    h("div", { class: "row", style: "margin:8px 0" }, stillGenerateControl(pose),
+      h("label", { class: "tiny" }, "Import a generated still ", upload), closedMouthControl(pose)),
     current ? comparePanel(pose, current) : h("p", { class: "muted" }, "No normalised still yet. Import a generated or edited image."),
     h("h3", {}, "Takes"),
     h("div", { class: "grid" }, pose.takes.slice().reverse().map((t) => poseTakeCard(pose, t, t.id === selection.poseTake))),
     h("h3", {}, pose.id === state.character.basePose ? "Prompt" : "Prompt for the still editor (input: the base still)"),
     promptView(pose.promptPreview));
+}
+
+function stillGenerateHint(pose, name) {
+  const provider = state.tools.providers[name];
+  if (!acceptedStill(state.character.basePose)) return `Approve the ${state.character.basePose} still first`;
+  if (!pose.promptPreview.complete) return "Write the prompt placeholders first";
+  if (!state.tools.alpha) return "Configure the alpha processor: provider images are opaque";
+  if (!provider.keySet) return `Set the API key environment variable for ${name}`;
+  return "";
+}
+
+function stillGenerateControl(pose) {
+  const names = Object.keys(state.tools.providers).filter((name) => state.tools.providers[name].kind === "image");
+  if (pose.id === state.character.basePose || !names.length) return null;
+  const select = h("select", { id: "stillProvider" }, names.map((name) => h("option", { value: name }, name)));
+  const button = h("button", { class: "primary", id: "generateStillBtn" }, "Generate still");
+  const update = () => {
+    const hint = stillGenerateHint(pose, select.value);
+    button.disabled = Boolean(hint);
+    button.title = hint || `Edit the approved ${state.character.basePose} still with ${select.value}`;
+  };
+  select.onchange = update;
+  button.onclick = () => {
+    const model = state.tools.providers[select.value].model;
+    if (window.confirm(`Submit a paid image edit of the ${state.character.basePose} still into ${pose.id} ` +
+      `to ${select.value} (${model})?`)) startJob("generate", { pose: pose.id }, { provider: select.value });
+  };
+  update();
+  return h("span", { class: "row" }, h("label", { class: "tiny" }, "Image editor ", select), button);
 }
 
 function closedMouthControl(pose) {
@@ -234,7 +263,8 @@ function poseTakeCard(pose, take, selected) {
       onclick: () => { selection.poseTake = take.id; renderPoses(); } }) : null,
     h("div", { class: "row" }, badge(take.status), take.qa ? badge("QA " + take.qa.status, take.qa.status) : null,
       h("span", { class: "tiny" }, take.id)),
-    h("div", { class: "tiny" }, [take.source && take.source.note, take.normalization && take.normalization.method].filter(Boolean).join(" · ")),
+    h("div", { class: "tiny" }, [take.source && (take.source.provider === "manual" ? take.source.note : `${take.source.provider} ${take.source.model}`),
+      take.normalization && take.normalization.method].filter(Boolean).join(" · ")),
     take.error ? h("div", { class: "tiny", style: "color:var(--bad)" }, take.error) : null,
     take.rejected ? h("div", { class: "tiny" }, "Rejected: " + (take.rejected.reason || "no reason given")) : null,
     h("div", { class: "row actions" }, decisionButtons("pose", pose.id, take)));
@@ -298,7 +328,7 @@ function renderClipDetail(clip) {
       h("button", { class: "primary", id: "generateBtn", disabled: Boolean(hint), title: hint, onclick: () => generate(clip) },
         clip.generation.provider === "manual" ? "Manual provider" : `Generate with ${clip.generation.provider}`),
       h("label", { class: "tiny" }, "Import a take ", upload),
-      h("button", { id: "renderBtn", disabled: !clip.acceptedTake, onclick: () => startJob("render", clip.id) }, "Render accepted take")),
+      h("button", { id: "renderBtn", disabled: !clip.acceptedTake, onclick: () => startJob("render", { clip: clip.id }) }, "Render accepted take")),
     hint ? h("div", { class: "tiny" }, hint) : null,
     h("h3", {}, "Takes"),
     active.length ? h("div", { class: "grid" }, active.map((t) => clipTakeCard(clip, t))) : h("p", { class: "muted" }, "No takes yet."),
@@ -315,7 +345,8 @@ function endpoint(poseId, label) {
 
 function settingsForm(clip) {
   const fields = [
-    ["provider", "Provider", "select", clip.generation.provider, ["manual", ...Object.keys(state.tools.providers)]],
+    ["provider", "Provider", "select", clip.generation.provider,
+      ["manual", ...Object.keys(state.tools.providers).filter((name) => state.tools.providers[name].kind === "video")]],
     ["duration", "Duration (s)", "number", clip.generation.durationS],
     ["resolution", "Resolution", "text", clip.generation.resolution],
     ["seed", "Seed", "number", clip.generation.seed ?? ""],
@@ -378,7 +409,7 @@ function clipTakeCard(clip, take) {
       h("summary", {}, "First / last frame inputs" + (take.inputs.assumed ? " (handed to an external tool)" : "")),
       h("div", { class: "inputs" }, h("img", { src: media(takeFile(clip, take, take.inputs.first.file)) }),
         h("img", { src: media(takeFile(clip, take, take.inputs.last.file)) }))) : null,
-    take.state === "submitted" ? h("button", { onclick: () => startJob("resume", clip.id, { take: take.id }) }, "Resume download") : null,
+    take.state === "submitted" ? h("button", { onclick: () => startJob("resume", { clip: clip.id }, { take: take.id }) }, "Resume download") : null,
     h("div", { class: "row actions" }, decisionButtons("clip", clip.id, take)));
 }
 
@@ -479,7 +510,7 @@ async function generate(clip) {
   const provider = state.tools.providers[clip.generation.provider];
   const ok = window.confirm(`Submit a paid generation of ${clip.id} to ${clip.generation.provider} (${provider.model}), ` +
     `${clip.generation.durationS}s at ${clip.generation.resolution}?`);
-  if (ok) await startJob("generate", clip.id);
+  if (ok) await startJob("generate", { clip: clip.id });
 }
 
 // ── Prompts ────────────────────────────────────────────────────────────
@@ -548,8 +579,8 @@ function blockCard(id, block, usage) {
 }
 
 // ── Jobs, uploads and planning ─────────────────────────────────────────
-async function startJob(action, clip, extra = {}) {
-  await run(() => api("/api/production/jobs", { action, clip, ...extra }), `${action} started for ${clip}`);
+async function startJob(action, owner, extra = {}) {
+  await run(() => api("/api/production/jobs", { action, ...owner, ...extra }), `${action} started for ${owner.pose || owner.clip}`);
   pollJobs();
 }
 
@@ -572,7 +603,7 @@ function renderJobs() {
   $("jobBadge").hidden = !running;
   $("jobBadge").textContent = String(running);
   fill($("jobList"), h("h2", {}, "Jobs"), jobs.length ? jobs.map((j) => h("div", { class: "card", style: "margin-top:10px" },
-    h("div", { class: "row" }, h("strong", {}, `${j.action} ${j.clip}`),
+    h("div", { class: "row" }, h("strong", {}, `${j.action} ${j.kind} ${j.owner}`),
       badge(j.status, j.status === "succeeded" ? "pass" : j.status === "failed" ? "fail" : "pending"),
       h("span", { class: "tiny" }, j.startedAt), j.result ? h("span", { class: "tiny" }, "result: " + j.result) : null),
     j.error ? h("pre", {}, j.error) : null,

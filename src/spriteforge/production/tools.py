@@ -29,7 +29,11 @@ def default_tools() -> dict:
                         "apiKeyEnv": "DASHSCOPE_API_KEY", "pollSeconds": 10, "timeoutSeconds": 1800},
                 "seedance": {"baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
                              "model": "doubao-seedance-1-5-pro-251215", "apiKeyEnv": "ARK_API_KEY",
-                             "pollSeconds": 5, "timeoutSeconds": 1800}}}
+                             "pollSeconds": 5, "timeoutSeconds": 1800},
+                "qwen-image": {"baseUrl": "https://dashscope.aliyuncs.com/api/v1", "model": "qwen-image-edit-plus",
+                               "apiKeyEnv": "DASHSCOPE_API_KEY", "requestSeconds": 300},
+                "seedream": {"baseUrl": "https://ark.cn-beijing.volces.com/api/v3", "model": "doubao-seedream-4-0-250828",
+                             "apiKeyEnv": "ARK_API_KEY", "requestSeconds": 300, "size": "match"}}}
 
 
 def load_tools(workspace: Path) -> dict:
@@ -37,6 +41,8 @@ def load_tools(workspace: Path) -> dict:
     tools = read_json(path) if path.is_file() else default_tools()
     if tools.get("format") != TOOLS_FORMAT:
         raise ValueError("Unsupported production/tools.json format")
+    # Adapters added later appear with their defaults; entries in the file always win.
+    tools["providers"] = {**default_tools()["providers"], **(tools.get("providers") or {})}
     for name in ("alpha", "interpolate"):
         spec = tools.get(name)
         if spec is not None and (not isinstance(spec, dict) or not isinstance(spec.get("command"), list)

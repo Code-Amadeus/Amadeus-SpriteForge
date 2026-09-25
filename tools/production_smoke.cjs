@@ -42,6 +42,9 @@ const { spawn, spawnSync } = require("node:child_process");
       return false;
     });
     await page.locator("#poseDetail table").filter({ hasText: "head top" }).waitFor();
+    const generateStill = page.locator("#generateStillBtn");
+    assert.equal(await generateStill.isDisabled(), true);
+    assert.match(await generateStill.getAttribute("title"), /placeholders/);
     await page.screenshot({ path: "test-results/production-stills.png", fullPage: true });
 
     await page.locator("#tabs button[data-tab='clips']").click();

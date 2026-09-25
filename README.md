@@ -136,8 +136,9 @@ inputs and provider task; you accept one take per clip and rejected takes stay
 archived with a reason. Rendering registers both ends of the accepted take to the
 pose stills, runs your alpha and interpolation tools, locks the ends and publishes a
 graph-bindable folder with explicit timing. Prompts are versioned blocks with
-placeholders that never reach a paid provider; Wan 2.7 and Seedance adapters read
-keys from environment variables. See [the production guide](docs/production.md).
+placeholders that never reach a paid provider. Pose stills can be generated as
+image edits of the base still (Qwen image edit, Seedream) and video takes with Wan 2.7
+or Seedance; adapters read keys from environment variables. See [the production guide](docs/production.md).
 
 ## Amadeus export
 

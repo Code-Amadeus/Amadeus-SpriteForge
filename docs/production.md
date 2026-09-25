@@ -30,9 +30,9 @@ need the `qa` extra (OpenCV, NumPy) and FFmpeg for video takes.
    registered, and optionally locked, to the still of its pose, so two clips meeting
    at a pose share endpoint geometry by construction. This replaces chains such as
    "align the loop to the processed tail of the transition" and per-clip calibration.
-2. **Takes are immutable and never deleted.** A take keeps its media, the exact first
-   and last frame images, the rendered prompt with block versions, and the provider
-   task. Decisions only change which take a pose or clip accepts, or mark a take
+2. **Takes are immutable and never deleted.** A take keeps its media, the exact input
+   images (a clip's first and last frames, a generated still's base image), the
+   rendered prompt with block versions, and the provider request or task. Decisions only change which take a pose or clip accepts, or mark a take
    rejected with a reason; rejected takes remain in the archive.
 3. **Prompts are versioned data.** Editing a block adds a version. A prompt that still
    contains `{{PLACEHOLDER: ...}}` never reaches a paid provider.
@@ -51,7 +51,7 @@ production/
   prompts.json        versioned prompt blocks and templates
   tools.json          ffmpeg, alpha/interpolate commands, provider endpoints (no keys)
   poses/<pose>/pose.json                       accepted take, intended head offset
-  poses/<pose>/takes/<take>/source.*, still.png, take.json
+  poses/<pose>/takes/<take>/source.*, still.png, take.json (+ input.png when generated)
   clips/<clip>/clip.json                       from, to, phase, generation, processing, playback
   clips/<clip>/takes/<take>/media.mp4 | frames/, first.png, last.png, take.json
   clips/<clip>/output/<phase>/*.png, render.json   stable graph root of the clip
@@ -101,8 +101,23 @@ A pose whose head legitimately moves records an intended offset:
 serious pose (head centre ≈ 393), thinking (≈ 392, top 23) and side (top 37, centre ≈ 375).
 Approval re-runs QA and refuses a still that fails.
 
-`production prepare --pose P --output DIR` writes the flattened base still and the
-rendered prompt for an external image editor.
+### Generating a still
+
+`production generate --pose P --provider qwen-image|seedream [--dry-run]` (or
+**Generate still** on the page) edits the approved base still into pose P with an
+image-edit provider. The take keeps `input.png`, the flattened base still exactly as
+sent, with its take id and sha256, the prompt snapshot and the request with images
+replaced by hashes. The provider's image becomes `source.*` and is matted, normalised
+and checked exactly like an import, so approval applies the same geometry QA.
+
+The base pose is always imported: it is the reference every generated still starts
+from. Generation stops before recording a take when the prompt has placeholders, the
+provider's key is missing, or no alpha processor is configured (provider images are
+opaque). A refused request stays in the archive as a failed take with the provider's
+message. `--dry-run` prints the request without sending it.
+
+For an image editor without an adapter, `production prepare --pose P --output DIR`
+writes the same `base.png` and the rendered prompt; import the result as above.
 
 ## Clips and takes
 
@@ -276,6 +291,15 @@ its own per-label mask adjustments.
 | --- | --- | --- | --- |
 | `wan` | `https://dashscope.aliyuncs.com/api/v1`, model `wan2.7-i2v-2026-04-25` | `DASHSCOPE_API_KEY` | `media` = `first_frame` + `last_frame` data URLs, `duration`, `resolution`, `prompt_extend: false`, optional `seed` and `negative_prompt`; `X-DashScope-Async: enable` |
 | `seedance` | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedance-1-5-pro-251215` | `ARK_API_KEY` | `content` = text + `first_frame` + `last_frame`, `ratio: adaptive`, `duration`, `resolution`; no negative prompt (takes record it was not sent) |
+| `qwen-image` (stills) | `https://dashscope.aliyuncs.com/api/v1`, model `qwen-image-edit-plus` | `DASHSCOPE_API_KEY` | one user message with the base still data URL and the prompt; `n: 1`, `prompt_extend: false`, `watermark: false`, optional `negative_prompt` and `size` (`W*H`); synchronous, the result URL is fetched at once |
+| `seedream` (stills) | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedream-4-0-250828` | `ARK_API_KEY` | `prompt`, `image` = base still data URL, `size`, `response_format: b64_json`, `sequential_image_generation: disabled`, `watermark: false`; no negative prompt |
+
+An image provider's `size` in tools.json is omitted (the provider's default; Qwen keeps
+the input's aspect ratio), `match` (the canvas aspect ratio at a 2048 px long side; the
+Seedream default, because a 764×1028 canvas is below its minimum pixel count) or an
+explicit size in the provider's own format. `requestSeconds` bounds one HTTP request
+(120 s by default, 300 s for the image editors). Providers added to SpriteForge later
+appear in an existing tools.json with their defaults; entries in the file win.
 
 Keys are read only from the named environment variables and never written to disk.
 Workspace-specific DashScope hosts go in `baseUrl`. Provider errors are raised with the
@@ -301,8 +325,7 @@ Inputs are flattened onto the character background because Wan does not accept a
 | `*_notuse.mp4`, `*_new.mp4`, `replacement2.mp4` | take decisions with reasons |
 | label tables in Amadeus `package_spriteforge_character.py` | clip fields → `render.json` → `graph-sync` → export |
 
-Not migrated yet: mouth overlay export (the Kurisu pack has 16 mouth profiles), an
-importer for the existing Kurisu workspace, an image-edit provider for stills (stills
-are imported), and clip-specific effects such as the front-to-side ghost trail. The
+Not migrated yet: an importer for the existing Kurisu workspace and clip-specific
+effects such as the front-to-side ghost trail. The
 earlier scripts write into a workspace path that no longer exists and extract with the
 removed FFmpeg option `-vsync`, silently falling back to OpenCV's colour conversion.

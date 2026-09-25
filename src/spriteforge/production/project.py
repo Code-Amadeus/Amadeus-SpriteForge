@@ -20,6 +20,7 @@ from .records import (bound_clip, canvas_size, check_id, clip_settings, create_c
                       list_owners, list_takes, load_character, load_owner, output_root, production_dir, read_render,
                       render_freshness, save_character, save_owner, take_status)
 from .mouth import default_set
+from .providers import IMAGE_PROVIDERS, PROVIDERS
 from .tools import default_tools, load_tools, save_tools
 
 CLIP_SETTINGS = {
@@ -89,8 +90,8 @@ def set_clip(workspace: Path, clip_id: str, *, mouth: str | None = None, mouth_s
         clip["mouth"]["closedSource"] = ({"kind": "frame", "index": int(value)} if kind == "frame" and value.isdigit()
                                          else {"kind": "pose", "pose": value} if kind == "pose"
                                          else {"kind": mouth_source})
-    if clip["generation"]["provider"] not in {"manual", *load_tools(workspace).get("providers", {})}:
-        raise ValueError(f"Unknown provider {clip['generation']['provider']!r}")
+    if clip["generation"]["provider"] not in {"manual", *PROVIDERS}:
+        raise ValueError(f"Unknown video provider {clip['generation']['provider']!r}; available: manual, {', '.join(PROVIDERS)}")
     clip_settings(clip)
     save_owner(workspace, "clip", clip)
     return clip
@@ -165,7 +166,8 @@ def overview(workspace: Path) -> dict:
                       "promptPreview": _preview(prompts.clip_prompt, library, character, clip), "output": output_root(clip["id"]),
                       "render": {"state": state, "reasons": reasons, **({k: render.get(k) for k in (
                           "take", "frameCount", "frameIntervalMs", "loopMode", "phase", "renderedAt", "qa", "mouth")} if render else {})}})
-    providers = {name: {"model": config.get("model"), "keySet": bool(os.environ.get(str(config.get("apiKeyEnv") or "")))}
+    providers = {name: {"kind": "video" if name in PROVIDERS else "image" if name in IMAGE_PROVIDERS else None,
+                        "model": config.get("model"), "keySet": bool(os.environ.get(str(config.get("apiKeyEnv") or "")))}
                  for name, config in (tools.get("providers") or {}).items()}
     return {"character": character, "prompts": library, "poses": poses, "clips": clips,
             "tools": {"ffmpeg": bool(shutil.which(tools.get("ffmpeg") or "ffmpeg")), "alpha": bool(tools.get("alpha")),

@@ -73,8 +73,10 @@ spriteforge review --workspace studio   # 打开 /production 审批、弃用和�
 - **QA**：静帧几何、断帧、闪烁、首尾配准漂移、首尾接缝、循环接缝、图边接缝；
   阈值沿用接缝色差文档（循环 1.0/1.5/2.2 L*，图边 1.2/1.8/2.5 L*）。
   导出时绑定了生产片段的节点若过期、未同步或 QA 失败，导出会被拒绝。
-- **服务商**：Wan 2.7（`DASHSCOPE_API_KEY`）和 Seedance（`ARK_API_KEY`），key 只从环境变量读。
-  也可以在网页或 ComfyUI 里手动生成，再导入视频。
+- **服务商**：静帧用图像编辑接口，以批准的基准静帧为输入生成新姿态——Qwen 图像编辑
+  （`DASHSCOPE_API_KEY`）或 Seedream（`ARK_API_KEY`）；take 保存发送的 `input.png`
+  及其 sha256，结果照常抠图、归一化和 QA。视频用 Wan 2.7（`DASHSCOPE_API_KEY`）或
+  Seedance（`ARK_API_KEY`）。key 只从环境变量读；也可以在网页或 ComfyUI 里手动生成再导入。
 
 抠图和插帧是外部命令（目录进、目录出），`tools/processors/` 提供 anime-segmentation 和
 GMFSS 的参考封装。详见 [生产管线说明](production.md)。

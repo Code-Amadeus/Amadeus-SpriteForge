@@ -1,9 +1,9 @@
 """HTTP operations behind the production page of the local editor.
 
 Reads return the production overview and take media. Writes are decisions,
-prompt versions, clip settings, uploads and background jobs (render, generate).
-Only one job may run for a clip at a time; paid generation is requested only by
-an explicit user action in the page.
+prompt versions, clip settings, uploads and background jobs (still generation;
+clip generation, resume and render). Only one job may run for a pose or clip at
+a time; paid generation is requested only by an explicit user action in the page.
 """
 from __future__ import annotations
 
@@ -74,33 +74,42 @@ class ProductionApi:
         if route == "graph-sync":
             return project.graph_sync(self.workspace, add_missing=bool(body.get("addMissing")))
         if route == "jobs":
-            return {"job": self.start(str(body.get("action")), str(body.get("clip")), body.get("provider"), body.get("take"))}
+            kind = "pose" if body.get("pose") else "clip"
+            return {"job": self.start(str(body.get("action")), kind, str(body.get(kind)), body.get("provider"), body.get("take"))}
         raise KeyError(route)
 
-    def start(self, action: str, clip_id: str, provider: str | None = None, take_id: str | None = None) -> dict:
+    def start(self, action: str, kind: str, owner: str, provider: str | None = None, take_id: str | None = None) -> dict:
         from .records import load_owner
-        load_owner(self.workspace, "clip", clip_id)
-        if action == "render":
+        load_owner(self.workspace, kind, owner)
+        if kind == "pose":
+            if action != "generate":
+                raise ValueError("A pose job can only generate a still")
+            from .stills import generate_still
+
+            def work(log):
+                take = generate_still(self.workspace, owner, str(provider or ""), log=log)
+                return f"{take['id']} QA {take['qa']['status']}"
+        elif action == "render":
             from .render import render_clip
 
             def work(log):
-                return render_clip(self.workspace, clip_id, log=log)["qa"]["status"]
+                return render_clip(self.workspace, owner, log=log)["qa"]["status"]
         elif action == "generate":
             from .clips import generate_clip_take
 
             def work(log):
-                return generate_clip_take(self.workspace, clip_id, provider=provider or None, log=log)["id"]
+                return generate_clip_take(self.workspace, owner, provider=provider or None, log=log)["id"]
         elif action == "resume":
             from .clips import resume_clip_take
 
             def work(log):
-                return resume_clip_take(self.workspace, clip_id, str(take_id), log=log)["state"]
+                return resume_clip_take(self.workspace, owner, str(take_id), log=log)["state"]
         else:
             raise ValueError("Job action must be render, generate or resume")
         with self.lock:
-            if any(j["clip"] == clip_id and j["status"] == "running" for j in self.jobs.values()):
-                raise ValueError(f"A job for {clip_id} is already running")
-            job = {"id": uuid.uuid4().hex[:12], "action": action, "clip": clip_id, "status": "running", "log": [],
+            if any((j["kind"], j["owner"]) == (kind, owner) and j["status"] == "running" for j in self.jobs.values()):
+                raise ValueError(f"A job for {kind} {owner} is already running")
+            job = {"id": uuid.uuid4().hex[:12], "action": action, "kind": kind, "owner": owner, "status": "running", "log": [],
                    "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "result": None, "error": None}
             self.jobs[job["id"]] = job
 
@@ -115,7 +124,7 @@ class ProductionApi:
             except Exception as exc:  # the job reports every failure to the page
                 with self.lock:
                     job.update(status="failed", error=str(exc))
-        threading.Thread(target=run, daemon=True, name=f"spriteforge-{action}-{clip_id}").start()
+        threading.Thread(target=run, daemon=True, name=f"spriteforge-{action}-{kind}-{owner}").start()
         return dict(job)
 
     def job_list(self) -> list[dict]:

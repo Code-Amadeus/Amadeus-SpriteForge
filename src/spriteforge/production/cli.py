@@ -120,11 +120,11 @@ def add_parser(commands) -> None:
     _owner(resume, clip_only=True)
     resume.add_argument("take")
 
-    generate = command("generate", "Submit a clip to its image-to-video provider")
-    _owner(generate, clip_only=True)
-    generate.add_argument("--provider")
+    generate = command("generate", "Edit the base still into a pose, or submit a clip to its image-to-video provider")
+    _owner(generate)
+    generate.add_argument("--provider", help="Image-edit provider for a pose (required); overrides a clip's video provider")
     generate.add_argument("--dry-run", action="store_true", help="Print the request without sending it")
-    generate.add_argument("--no-wait", action="store_true", help="Return after submission; resume later")
+    generate.add_argument("--no-wait", action="store_true", help="Clips: return after submission; resume later")
     render = command("render", "Render accepted takes into graph-bindable frames")
     target = render.add_mutually_exclusive_group(required=True)
     target.add_argument("--clip")
@@ -231,6 +231,16 @@ def run(args) -> None:
             print(path)
     elif action == "take":
         _run_take(workspace, args)
+    elif action == "generate" and args.pose:
+        from .providers import IMAGE_PROVIDERS
+        from .stills import generate_still
+        if not args.provider:
+            raise ValueError(f"Choose an image-edit provider with --provider: {', '.join(IMAGE_PROVIDERS)}")
+        result = generate_still(workspace, args.pose, args.provider, dry_run=args.dry_run)
+        if args.dry_run:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            _print_still_qa(result)
     elif action == "generate":
         from .clips import generate_clip_take
         result = generate_clip_take(workspace, args.clip, provider=args.provider, wait=not args.no_wait, dry_run=args.dry_run)
@@ -278,6 +288,12 @@ def _render_for(workspace: Path, args) -> dict:
     return clip_prompt(workspace, character, load_owner(workspace, "clip", args.clip))
 
 
+def _print_still_qa(take: dict) -> None:
+    print(f"Still take {take['id']}: {take['normalization']['method']}, QA {take['qa']['status']}")
+    for check in take["qa"]["checks"]:
+        print(f"  {check['level']}: {check['message']}")
+
+
 def _run_take(workspace: Path, args) -> None:
     from .records import decide
     kind, owner = ("pose", args.pose) if getattr(args, "pose", None) else ("clip", args.clip)
@@ -287,10 +303,7 @@ def _run_take(workspace: Path, args) -> None:
             place = tuple(float(v) for v in args.place.split(",")) if args.place else None
             if place is not None and len(place) != 3:
                 raise ValueError("--place needs SCALE,DX,DY")
-            take = import_still(workspace, owner, args.path, note=args.note, place=place)
-            print(f"Still take {take['id']}: QA {take['qa']['status']}")
-            for check in take["qa"]["checks"]:
-                print(f"  {check['level']}: {check['message']}")
+            _print_still_qa(import_still(workspace, owner, args.path, note=args.note, place=place))
         else:
             from .clips import import_clip_take
             take = import_clip_take(workspace, owner, args.path, fps=args.fps, note=args.note)
