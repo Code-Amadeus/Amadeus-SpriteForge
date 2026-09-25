@@ -423,6 +423,7 @@ function highlighted(text) {
 }
 
 function promptView(p, compact = false) {
+  if (p.error) return h("div", { class: "prompt" }, badge("template error", "fail"), " ", p.error);
   return h("div", { class: "prompt-view" },
     h("div", { class: "row" }, badge(p.complete ? "complete" : `${p.placeholders.length} placeholder(s)`, p.complete ? "pass" : "watch"),
       h("span", { class: "tiny" }, blockVersions(p.blocks)),

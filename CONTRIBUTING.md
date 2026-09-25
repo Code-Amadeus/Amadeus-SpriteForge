@@ -43,9 +43,21 @@ use temporary authoring workspaces and the checked-in geometric KTX2 example.
 - Existing projects and export destinations are not overwritten. Invalid graph saves
   preserve the previous file; incomplete exports are not published as valid packages.
 - Runtime packages remain independent of Amadeus services, source PNGs and editor paths.
+- Production: approved pose stills are the only geometric authority for clip endpoints;
+  takes are never deleted or rewritten, only accepted, rejected with a reason or
+  restored; prompt block versions are append-only and a prompt with placeholders never
+  reaches a paid provider; clip timing comes from recorded clip fields, not label names.
+- Provider adapters send one documented request shape and surface provider errors;
+  no silent retries, parameter downgrades or fallbacks. Keys come only from the
+  environment and never appear in workspace files. Real paid calls are never part of
+  automated tests; use the local fake API in `tests/test_providers.py`.
+- External processors are checked (frame count, names, size, alpha) before their
+  output is used; SpriteForge does not bundle model weights.
 
 Use tests for observable behavior and both sides of these boundaries. Image layout
 changes also need a real browser check; passing Python tests alone is insufficient.
+`tools/production_smoke.cjs` builds a synthetic production workspace
+(`tests/production_demo.py`) and checks the production page.
 
 ## Dependency and packaging changes
 

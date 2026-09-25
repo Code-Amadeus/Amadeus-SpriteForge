@@ -1,13 +1,21 @@
 # Management and runtime boundary
 
 ```text
+Idle reference -> production: approved pose stills -> clip takes (import or provider)
+  -> accepted take -> render (register to stills, alpha, interpolate, lock) -> clip output
 Existing PNG frames -> workspace import/discovery -> preview and optional QA
   -> graph editor -> authoring validator -> shared node frame selection
        -> exact clip preview
+       -> production export gate (bound clip outputs are current, synced and pass QA)
        -> KTX2 encoding -> staging -> v1 validation -> local export
 
 Exported package -> Amadeus SpriteForgeAnimator -> frontend SpriteForgeRuntime
 ```
+
+Production owns pose stills, takes, prompts and renders under `production/`; its
+invariants and QA are described in [production.md](production.md). A clip output is
+an ordinary frame root to the graph: the graph editor, frame resolver and exporter
+treat it like any imported folder, and only the export gate knows about renders.
 
 The workspace owns frame roots, selected variants and layout. The editor and CLI
 use the same authoring validator. The v1 validator owns topology and package

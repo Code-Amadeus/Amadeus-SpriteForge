@@ -1,7 +1,8 @@
-# SpriteForge 资产管理与图编辑工具
+# SpriteForge 资产生产、管理与图编辑工具
 
-这一版分离本地管理工具、生成服务与 Amadeus 主 runtime。
-组织仓库为 `Code-Amadeus/Amadeus-SpriteForge`。
+从一张 idle 参考图生产角色动画：姿态静帧、图生视频片段、take 审阅、QA、行为图，
+最后导出 Amadeus 可用的 KTX2 角色包。图生视频服务是可选适配器，Amadeus 主 runtime
+保持独立。组织仓库为 `Code-Amadeus/Amadeus-SpriteForge`。
 
 ![KTX2 角色预览与原始行为图](images/reviewer-ktx2-graph.png)
 
@@ -39,8 +40,43 @@ Graph 的 `Preview selected clip` 与导出共用帧选择、时间和循环配�
 不会偷偷套用旧 Kurisu 专属的帧选择、口型修正或说话策略。
 
 Amadeus 继续负责语义 intent、说话状态、嘴部振幅、呈现优先级、停留和回落。
-单段预览不等于完整 TTS 表演模拟。生成服务、角色素材、场景图编辑器和完整
-renderer 不在本次迁移内；场景图后续按独立契约整理。
+单段预览不等于完整 TTS 表演模拟。角色素材、prompt 正文、API key、模型权重、
+场景图编辑器和完整 renderer 不在仓库内；场景图后续按独立契约整理。
+
+## 生产管线
+
+```powershell
+spriteforge init studio
+spriteforge production init --workspace studio --id kurisu --display-name Kurisu --canvas 764x1028
+spriteforge production take import --workspace studio --pose idle master.png
+spriteforge production take accept --workspace studio --pose idle TAKE
+spriteforge production pose add --workspace studio shy
+spriteforge production take import --workspace studio --pose shy shy.png
+spriteforge production clip add --workspace studio shy_in --from idle --to shy
+spriteforge production prepare --workspace studio --clip shy_in --output handoff/shy_in
+spriteforge production take import --workspace studio --clip shy_in shy_in.mp4
+spriteforge review --workspace studio   # 打开 /production 审批、弃用和渲染
+```
+
+- **静帧是唯一的几何标准**：基准姿态按取景放到画布上，批准后测出头顶和头部中心。
+  其他姿态的静帧如果是底图的刚性拷贝（纯表情编辑，≥50% 特征匹配一致）就配准回去；
+  姿态变了就保留生成器的构图，要求人工叠加确认。头顶、中心超出容差不能批准，
+  确实要动的姿态（侧身、思考）用 `production pose expect` 记录有意偏移。
+- **Take 不可变、不删除**：每次生成或导入都是一个 take，保存 prompt 快照、首尾帧输入、
+  服务商任务号。每个片段只采用一个 take，弃用的 take 带原因留档，可恢复。
+- **Prompt 是带版本的数据**：character / 固定约束 / 动作 / 姿态主题分块，保存即新增版本，
+  take 记录用到的版本。仍含 `{{PLACEHOLDER: ...}}` 的 prompt 不会提交到付费服务。
+- **渲染**：解码（显式 BT.709）→ 首尾分别配准到两端静帧 → pingpong → 插帧处理器 →
+  抠图处理器 → 边缘保护 → 首尾锁定到静帧 → QA → 整体发布到
+  `production/clips/<id>/output`，帧间隔等时序写进 `render.json`，`graph-sync` 同步到节点。
+- **QA**：静帧几何、断帧、闪烁、首尾配准漂移、首尾接缝、循环接缝、图边接缝；
+  阈值沿用接缝色差文档（循环 1.0/1.5/2.2 L*，图边 1.2/1.8/2.5 L*）。
+  导出时绑定了生产片段的节点若过期、未同步或 QA 失败，导出会被拒绝。
+- **服务商**：Wan 2.7（`DASHSCOPE_API_KEY`）和 Seedance（`ARK_API_KEY`），key 只从环境变量读。
+  也可以在网页或 ComfyUI 里手动生成，再导入视频。
+
+抠图和插帧是外部命令（目录进、目录出），`tools/processors/` 提供 anime-segmentation 和
+GMFSS 的参考封装。详见 [生产管线说明](production.md)。
 
 代码和几何示例采用 AGPL-3.0-only，与迁入的 Amadeus 合同代码保持一致。
 用户素材的许可不因此改变。来源见 `NOTICE.md`。

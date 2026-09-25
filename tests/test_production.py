@@ -113,9 +113,11 @@ def test_prompt_versions_placeholders_and_snapshots(studio):
     assert rendered["complete"] and rendered["negative"] == ""
     assert rendered["text"].startswith("Demo, Demo\n\nvideo.invariants for idle -> smile")
     assert [v["version"] for v in library["blocks"]["character"]["versions"]] == [1, 2]
-    prompts.set_block(library, "custom", "uses ${unknown}")
+    with pytest.raises(ValueError, match="Unknown prompt variable"):
+        prompts.set_block(library, "custom", "uses ${unknown}")
+    prompts.set_block(library, "custom", "a pose block using ${from}")
     with pytest.raises(ValueError, match="unknown variable"):
-        prompts.render(library, "transition", "custom", {"character": "Demo", "from": "a", "to": "b", "duration": 1})
+        prompts.render(library, "still", "custom", {"character": "Demo", "pose": "p", "description": ""})
     library["templates"]["broken"] = {"blocks": ["missing"], "negative": []}
     with pytest.raises(ValueError, match="unknown block"):
         prompts.validate_library(library)

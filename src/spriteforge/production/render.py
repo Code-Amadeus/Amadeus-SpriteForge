@@ -64,6 +64,12 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
             raise ValueError("A clip needs at least two frames")
         fps = float(take["media"]["fps"])
         log(f"{clip_id}: {len(source)} frames at {fps:g} fps from take {take['id']}")
+        factor, wrap = settings["interpolate"], clip["kind"] == "loop"
+        sequence = 2 * len(source) - 2 if settings["pingpong"] else len(source)
+        total = sequence * factor if wrap else (sequence - 1) * factor + 1
+        if settings["lockHeadFrames"] + settings["lockTailFrames"] > total:
+            raise ValueError(f"Locking {settings['lockHeadFrames']}+{settings['lockTailFrames']} frames needs a longer "
+                             f"clip than {total} frames")
 
         first, native_alpha = read_bgra(source[0])
         head_matrix, head_info = estimate_similarity(composite(first, background), composite(start, background))
@@ -83,22 +89,20 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
                 copy_durable(path, work / "registered" / f"{index:06d}.png")
             registered = sorted_pngs(work / "registered")
 
-        frames, factor = registered, settings["interpolate"]
+        frames = registered
         if factor > 1:
-            wrap = clip["kind"] == "loop"
+            log(f"{clip_id}: interpolating {len(frames)} frames x{factor}")
             run_processor(tools, "interpolate", work / "registered", work / "interpolated", factor=factor, wrap=int(wrap))
-            count = len(frames) * factor if wrap else (len(frames) - 1) * factor + 1
-            frames = _checked(work / "interpolated", count, "interpolate")
+            frames = _checked(work / "interpolated", total, "interpolate")
         if needs_alpha:
+            log(f"{clip_id}: matting {len(frames)} frames")
             run_processor(tools, "alpha", frames[0].parent, work / "alpha")
             matted = _checked(work / "alpha", len(frames), "alpha")
             if [p.name for p in matted] != [p.name for p in frames]:
                 raise ValueError("The alpha processor must keep the input file names")
             frames = matted
 
-        total, head_n, tail_n = len(frames), settings["lockHeadFrames"], settings["lockTailFrames"]
-        if head_n + tail_n > total:
-            raise ValueError(f"Locking {head_n}+{tail_n} frames needs a longer clip than {total} frames")
+        head_n, tail_n = settings["lockHeadFrames"], settings["lockTailFrames"]
         output = work / "output"
         written = []
         for index, path in enumerate(frames):

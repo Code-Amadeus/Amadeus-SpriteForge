@@ -1,11 +1,12 @@
 # Amadeus-SpriteForge
 
-Local asset review and behavior graph editing for sprite animation. Import existing
-PNG frames, inspect clips and seams, edit a graph, and export a runtime-only
+Local production, review and behavior graph editing for sprite animation. Turn one
+idle reference into approved pose stills and image-to-video clips, review every
+generated take, inspect clips and seams, edit a graph, and export a runtime-only
 character pack for [Amadeus](https://github.com/Code-Amadeus/Amadeus).
 
-**Status: source alpha, 0.1.0.** Generation services and the Amadeus application
-runtime are separate. [中文说明](docs/README.zh-CN.md)
+**Status: source alpha, 0.1.0.** Image-to-video providers are optional adapters; the
+Amadeus application runtime is separate. [中文说明](docs/README.zh-CN.md)
 
 ## Reviewer screenshots
 
@@ -112,6 +113,32 @@ One root is required. Positive edge weights are normalized during traversal; zer
 is manual. Save validates topology and selected frames before atomically replacing
 the graph. An empty new workspace is an unfinished draft until valid nodes are added.
 
+## Production pipeline
+
+Produce clips from an idle reference instead of importing finished frames:
+
+```powershell
+spriteforge init studio
+spriteforge production init --workspace studio --id kurisu --display-name Kurisu --canvas 764x1028
+spriteforge production take import --workspace studio --pose idle master.png
+spriteforge production take accept --workspace studio --pose idle TAKE
+spriteforge production pose add --workspace studio shy
+spriteforge production take import --workspace studio --pose shy shy.png
+spriteforge production clip add --workspace studio shy_in --from idle --to shy
+spriteforge production prepare --workspace studio --clip shy_in --output handoff/shy_in
+spriteforge production take import --workspace studio --clip shy_in shy_in.mp4
+spriteforge review --workspace studio   # open /production to approve, reject and render
+```
+
+Pose stills are normalised onto one canvas and must match the base still's head top
+and head centre, so every pose overlaps. Each video take keeps its prompt snapshot,
+inputs and provider task; you accept one take per clip and rejected takes stay
+archived with a reason. Rendering registers both ends of the accepted take to the
+pose stills, runs your alpha and interpolation tools, locks the ends and publishes a
+graph-bindable folder with explicit timing. Prompts are versioned blocks with
+placeholders that never reach a paid provider; Wan 2.7 and Seedance adapters read
+keys from environment variables. See [the production guide](docs/production.md).
+
 ## Amadeus export
 
 Install [KTX-Software](https://github.com/KhronosGroup/KTX-Software) separately.
@@ -154,18 +181,23 @@ Contributors should install the development extra first; see [CONTRIBUTING.md](C
 python -m pip install -e ".[qa,dev]"
 python -m pytest
 node --check src/spriteforge/web/review.js
+node --check src/spriteforge/web/production.js
 ```
 
 Tests cover topology, path containment, rejected saves, HTTP endpoints, preview
-bindings, import and export consistency. Encoder unit tests use a stub; actual
-encoding is checked separately. `tools/browser_smoke.cjs` exercises a running
+bindings, import and export consistency, and the production pipeline on generated
+geometric media (stills, takes, prompts, rendering, providers against a local fake
+API). Encoder unit tests use a stub; actual encoding is checked separately.
+`tools/browser_smoke.cjs` and `tools/production_smoke.cjs` exercise a running
 editor with Playwright. See [validation evidence](docs/validation.md).
 
 ## Scope and license
 
-This foundation excludes generation services, private artwork, model weights,
-personal configurations, the wallpaper scenario editor and the full Amadeus
-renderer. Scenario graphs use a separate contract and need a separate migration.
+The repository contains no private artwork, prompts, API keys, model weights or
+personal configuration. Matting and interpolation models are external tools; the
+`tools/processors/` wrappers only load them from a path you provide. The wallpaper
+scenario editor and the full Amadeus renderer are out of scope; scenario graphs use a
+separate contract and need a separate migration.
 
 Project code and generated demo: **AGPL-3.0-only**, consistent with the adapted
 Amadeus code. Bundled browser dependencies retain their MIT/Apache licenses; see

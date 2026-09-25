@@ -15,9 +15,9 @@ import cv2
 import numpy as np
 
 from ..workspace import atomic_json
+from . import prompts
 from .geometry import composite
 from .media import VIDEO_SUFFIXES, copy_durable, encode_png, read_bgra, sorted_pngs, video_info, write_durable
-from . import prompts
 from .prompts import require_complete
 from .providers import VideoJob, download, get_provider
 from .records import (canvas_size, clip_settings, load_character, load_owner, load_take, new_take, save_take,
@@ -159,6 +159,9 @@ def generate_clip_take(workspace: Path, clip_id: str, *, provider: str | None = 
 
 def finish_take(workspace: Path, take: dict, *, log=print) -> dict:
     """Poll a submitted take until its video is downloaded or the provider reports failure."""
+    if take.get("state") == "submitting":
+        raise ValueError(f"Take {take['id']} was interrupted before the provider returned a task id; "
+                         "check the provider's task list before generating again")
     if take.get("state") != "submitted":
         raise ValueError(f"Take {take['id']} is {take.get('state')}, not waiting for a provider")
     adapter = get_provider(take["source"]["provider"], load_tools(workspace))

@@ -70,3 +70,44 @@ never substitutes a three-column or automatic layout for the creator's saved wir
 
 The workflow records current Windows/Ubuntu results remotely. Consult the run for
 the revision being evaluated; these local checks do not substitute for a remote run.
+
+## Production pipeline (2026-09-25)
+
+Local: Windows, Python 3.12, FFmpeg 9.0.2, KTX-Software 4.4.2, Edge (Playwright).
+
+- Python suite: 51 passed, 1 Windows symlink-capability skip. Production tests use
+  generated geometric figures, a white-key alpha processor and a linear interpolation
+  processor (`tests/processors/`), and cover still framing and geometry gates, rigid
+  registration versus kept framing, take decisions and archive, prompt versions and
+  placeholders, prepare hand-off, render registration/locks/timing/pingpong, camera
+  drift, FFmpeg decode, graph-sync, the export gate and the HTTP API.
+- Providers were exercised only against a local fake of the Wan 2.7 (DashScope) and
+  Seedance (Ark) task APIs: request shape, headers, polling, immediate download,
+  recorded failures, resume and missing keys. No paid request was sent.
+- `tools/production_smoke.cjs`: still overlay, take decision, stale render, render
+  job and prompt version in the production page.
+- A synthetic production-bound graph exported with the real encoder passed this
+  repository's validator and Amadeus `tools/validate_character_pack.py`.
+
+Read-only check on the shipped Kurisu sources (copies in a scratch workspace):
+
+- Base still: the idle default frame placed 1:1 gives head top 20 and head centre
+  387.8. The shy expression still registered rigidly (1118/1200 matches) and passed.
+  Serious, thinking and side stills are pose changes (245, 109 and 36/1200 matches):
+  kept framing measured head centre 393.7, 392.7 and 374.6 (side head top 37), which
+  were recorded as intended offsets.
+- Real Wan takes (818×1124, 30 fps) register to the stills at scale 0.896 with head
+  and tail agreeing within 0.3% for shy, thinking, side and the shy loop. The
+  `speaking_trans` source disagrees by 3%: the clip that previously needed a manual
+  affine calibration.
+- `kurisu_shy_trans.mp4` rendered end to end with `tools/processors/anime_seg_alpha.py`
+  on CPU (60 frames, 96 s): drift 0.1%, QA pass, alpha masks within IoU 0.989–0.999
+  of the historical production frames.
+- The idle pingpong source (24 fps) rendered with QA fail: matting leaked into the
+  source's dark border on 12 frames, so the character touched closed canvas edges,
+  and the export gate refused the graph. This is the defect the earlier
+  `repair_alpha_edge_leaks.py` treated. `edgeGuardPx 16` (the earlier repair width)
+  passed QA; the two-clip graph (120 frames, idle 42 ms loop, shy entry 8 ms at 4×
+  speed) exported with the real encoder and passed Amadeus
+  `tools/validate_character_pack.py`.
+- `gmfss_interpolate.py` was not run (it needs CUDA and the GMFSS weights).

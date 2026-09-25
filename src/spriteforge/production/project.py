@@ -81,6 +81,14 @@ def _summary(owner: dict, take: dict) -> dict:
     return {**{k: take.get(k) for k in keep}, "status": take_status(owner, take)}
 
 
+def _preview(render, library: dict, character: dict, owner: dict) -> dict:
+    """A prompt preview that reports a template error instead of failing the whole overview."""
+    try:
+        return render(library, character, owner)
+    except ValueError as exc:
+        return {"text": "", "negative": "", "blocks": {}, "placeholders": [], "complete": False, "error": str(exc)}
+
+
 def overview(workspace: Path) -> dict:
     character = load_character(workspace)
     tools = load_tools(workspace)
@@ -93,13 +101,13 @@ def overview(workspace: Path) -> dict:
         recheck = bool(accepted and pose["id"] != character["basePose"]
                        and (accepted.get("qa") or {}).get("anchorsTake") != anchors_take)
         poses.append({**pose, "takes": takes, "needsRecheck": recheck,
-                      "promptPreview": prompts.pose_prompt(library, character, pose)})
+                      "promptPreview": _preview(prompts.pose_prompt, library, character, pose)})
     clips = []
     for clip in list_owners(workspace, "clip"):
         state, reasons = render_freshness(workspace, clip)
         render = read_render(workspace, clip["id"])
         clips.append({**clip, "takes": [_summary(clip, t) for t in list_takes(workspace, "clip", clip["id"])],
-                      "promptPreview": prompts.clip_prompt(library, character, clip), "output": output_root(clip["id"]),
+                      "promptPreview": _preview(prompts.clip_prompt, library, character, clip), "output": output_root(clip["id"]),
                       "render": {"state": state, "reasons": reasons, **({k: render.get(k) for k in (
                           "take", "frameCount", "frameIntervalMs", "loopMode", "phase", "renderedAt", "qa")} if render else {})}})
     providers = {name: {"model": config.get("model"), "keySet": bool(os.environ.get(str(config.get("apiKeyEnv") or "")))}

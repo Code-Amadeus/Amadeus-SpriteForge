@@ -19,6 +19,7 @@ PROMPTS_FORMAT = "spriteforge.production.prompts.v1"
 SUBJECT = "@subject"
 PLACEHOLDER = re.compile(r"\{\{\s*PLACEHOLDER\s*:\s*(.*?)\s*\}\}", re.S)
 VARIABLE = re.compile(r"\$\{([a-zA-Z_]+)\}")
+VARIABLES = {"character", "pose", "description", "from", "to", "duration"}
 BLOCK_ID = re.compile(r"[a-z0-9][a-z0-9_.-]{0,95}")
 
 DEFAULT_BLOCKS = {
@@ -97,6 +98,9 @@ def set_block(library: dict, block_id: str, text: str, description: str | None =
     """Append a version when the text changes; returns the current version number."""
     if not BLOCK_ID.fullmatch(block_id) or not isinstance(text, str):
         raise ValueError("A prompt block needs a valid id and text")
+    unknown = sorted(set(VARIABLE.findall(text)) - VARIABLES)
+    if unknown:
+        raise ValueError(f"Unknown prompt variable(s) {', '.join(unknown)}; use {', '.join(sorted(VARIABLES))}")
     block = library["blocks"].setdefault(block_id, {"description": description or "", "versions": []})
     if description is not None:
         block["description"] = description
