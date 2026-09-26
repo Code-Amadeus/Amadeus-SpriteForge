@@ -138,7 +138,10 @@ pose stills, runs your alpha and interpolation tools, locks the ends and publish
 graph-bindable folder with explicit timing. Prompts are versioned blocks with
 placeholders that never reach a paid provider. Pose stills can be generated as
 image edits of the base still (Qwen image edit, Seedream) and video takes with Wan 2.7
-or Seedance; adapters read keys from environment variables. See [the production guide](docs/production.md).
+or Seedance; adapters read keys from environment variables. A character made with the
+earlier tools is imported from its legacy workspace and shipped pack with
+`production import-legacy plan` and `apply`: poses, clips, mouths and the graph are
+rebuilt around the shipped frames, which stay unchanged. See [the production guide](docs/production.md).
 
 ## Amadeus export
 

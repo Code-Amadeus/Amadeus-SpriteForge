@@ -319,6 +319,36 @@ provider's message; there are no silent retries, duration downgrades or single-f
 fallbacks. Wan result URLs expire after 24 hours, which is why takes download at once.
 Inputs are flattened onto the character background because Wan does not accept alpha.
 
+## Importing an existing character
+
+A character made with the earlier tools, a SpriteForge workspace of frame folders and
+the pack that was exported from it, becomes a production character without generating
+anything:
+
+```powershell
+spriteforge init kurisu-studio
+spriteforge production import-legacy plan --legacy D:\old\SpriteForge\workspace `
+    --pack D:\Amadeus\assets\spriteforge\runtime\kurisu --output kurisu-plan.json
+spriteforge production import-legacy apply --workspace kurisu-studio kurisu-plan.json
+```
+
+The pack is the record of what shipped; the legacy workspace supplies the PNG sources.
+Neither is written to. `plan` writes a JSON plan to review and, where needed, edit (a
+clip's `source`, a pose name) before `apply` builds the character. `apply` skips the
+steps that are already done, so after an interruption it is simply run again.
+
+| Decision | Rule |
+| --- | --- |
+| Clip source | the legacy folder that holds all the clip's frame names and whose KTX2 sidecar folder exists, within the legacy graph node's project; when several qualify, a sidecar that still holds the first texture is compared with the pack's, then the variant the node names decides |
+| Poses | endpoints that meet: a loop's two ends and each graph edge's tail and head, when their head anchors agree within the tolerances; a clip outside the graph joins the pose with the most similar face |
+| Pose still | the pose's most typical endpoint (median head position, smallest face difference to the others), approved as it is; a pose whose head sits beyond the tolerances records that as its intended offset |
+| Frames | kept pixel for pixel: shorter frames are padded at the top, wider ones keep their width as `marginPx`; clips render with `register` off, without locks or interpolation, at the shipped frame interval |
+| Mouths | the shipped mouth set and closed mouth: one of the loop's own frames (`frame:N`) or the still of the pose whose endpoint the pack used (`shared` for the base pose) |
+| Graph | the pack's nodes and edges with the legacy positions, bound to the clip outputs and synced; clips outside the graph become runtime clips |
+
+An edge whose ends disagree is kept and reported: graph QA fails its seam, and export
+stays blocked until it is resolved with a transition clip or by removing the edge.
+
 ## Migrating from the earlier local tools
 
 | Earlier tool | Production step |
@@ -337,7 +367,7 @@ Inputs are flattened onto the character background because Wan does not accept a
 | `*_notuse.mp4`, `*_new.mp4`, `replacement2.mp4` | take decisions with reasons |
 | label tables in Amadeus `package_spriteforge_character.py` | clip fields → `render.json` → `graph-sync` → export |
 
-Not migrated yet: an importer for the existing Kurisu workspace and clip-specific
-effects such as the front-to-side ghost trail. The
+Not migrated: clip-specific effects such as the front-to-side ghost trail (imported
+clips keep the frames that already have it). The
 earlier scripts write into a workspace path that no longer exists and extract with the
 removed FFmpeg option `-vsync`, silently falling back to OpenCV's colour conversion.

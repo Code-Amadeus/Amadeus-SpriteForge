@@ -138,6 +138,15 @@ def add_parser(commands) -> None:
     runtime = command("runtime-clips", "Clips exported by label without a graph node (show, set or clear)")
     runtime.add_argument("clips", nargs="*")
     runtime.add_argument("--clear", action="store_true")
+    legacy = sub.add_parser("import-legacy", help="Import a character made with the earlier tools")
+    steps = legacy.add_subparsers(dest="import_action", required=True)
+    plan = steps.add_parser("plan", help="Read a legacy workspace and the pack it shipped; write a plan to review")
+    plan.add_argument("--legacy", type=Path, required=True, help="Legacy SpriteForge workspace (read only)")
+    plan.add_argument("--pack", type=Path, required=True, help="Shipped character pack (read only)")
+    plan.add_argument("--output", type=Path, required=True, help="Plan file to write")
+    apply = steps.add_parser("apply", help="Build the production character from a plan; safe to run again")
+    apply.add_argument("--workspace", type=Path, required=True)
+    apply.add_argument("plan", type=Path)
     sync = command("graph-sync", "Copy render timing onto bound graph nodes")
     sync.add_argument("--add-missing", action="store_true", help="Add a node for each rendered clip not in the graph")
 
@@ -171,8 +180,11 @@ def _print_status(state: dict) -> None:
 def run(args) -> None:
     from . import project, prompts
     from .records import load_character
-    workspace = args.workspace.resolve()
     action = args.action
+    if action == "import-legacy":
+        _run_import(args)
+        return
+    workspace = args.workspace.resolve()
     if action == "init":
         width, height = (int(v) for v in args.canvas.lower().split("x"))
         character = project.init_production(
@@ -286,6 +298,36 @@ def run(args) -> None:
             print(f"not rendered: {clip_id}")
         if not any(result.values()):
             print("Graph already matches the rendered clips")
+
+
+def _run_import(args) -> None:
+    from ..workspace import atomic_json, read_json
+    from .legacy import apply_import, plan_import
+    if args.import_action == "plan":
+        plan = plan_import(args.legacy, args.pack)
+        atomic_json(args.output, plan)
+        for pose_id, pose in plan["poses"].items():
+            print(f"pose {pose_id:16s} still {pose['still']['clip']}:{pose['still']['end']} "
+                  f"head {pose['anchors']['headTopY']},{pose['anchors']['headCenterX']} ({len(pose['members'])} endpoints)")
+        for label, clip in plan["clips"].items():
+            extra = [f"pad top {clip['padTop']}" if clip.get("padTop") else "", f"margin {clip['marginPx']}" if clip.get("marginPx") else "",
+                     f"mouth {clip['mouth']['set']} {clip['mouth']['closedSource']}" if clip.get("mouth") else ""]
+            print(f"clip {label:24s} {clip.get('from', '?')} -> {clip.get('to', '?')} {clip['frames']} frames "
+                  f"@ {clip['frameIntervalMs']} ms {' '.join(e for e in extra if e)}")
+        for note in plan["notes"]:
+            print("NOTE: " + note)
+        print(f"Plan written to {args.output}; review it, then run 'production import-legacy apply'")
+        return
+    report = apply_import(args.workspace.resolve(), read_json(args.plan))
+    for node in report["nodes"]:
+        if node["issues"]:
+            print(f"node {node['label']}: {'; '.join(node['issues'])}")
+    labels = {node["node"]: node["label"] for node in report["nodes"]}
+    for edge in report["edges"]:
+        if edge["level"] != "pass":
+            print(f"edge {labels.get(edge['from'], edge['from'])} -> {labels.get(edge['to'], edge['to'])}: {edge['level']} "
+                  f"faceL={edge['faceL']} dHeadTop={edge['dHeadTop']} dHeadCenter={edge['dHeadCenter']}")
+    print(f"Imported; graph QA {report['status']}")
 
 
 def _render_for(workspace: Path, args) -> dict:
