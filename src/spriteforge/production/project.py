@@ -26,7 +26,8 @@ from .tools import default_tools, load_tools, save_tools
 CLIP_SETTINGS = {
     "provider": ("generation", "provider", str), "duration": ("generation", "durationS", int),
     "resolution": ("generation", "resolution", str), "seed": ("generation", "seed", int),
-    "input_scale": ("generation", "inputScale", float), "interpolate": ("processing", "interpolate", int),
+    "input_scale": ("generation", "inputScale", float), "register": ("processing", "register", bool),
+    "interpolate": ("processing", "interpolate", int), "margin": ("processing", "marginPx", int),
     "pingpong": ("processing", "pingpong", bool), "lock_head": ("processing", "lockHeadFrames", int),
     "lock_tail": ("processing", "lockTailFrames", int), "edge_guard": ("processing", "edgeGuardPx", int),
     "speed": ("playback", "speed", float), "loop_mode": ("playback", "loopMode", str),
@@ -213,6 +214,31 @@ def graph_sync(workspace: Path, *, add_missing: bool = False) -> dict:
         graph = validate_graph(workspace, graph)
         atomic_json(path, graph)
     return {"changes": changes, "added": added, "notRendered": missing}
+
+
+def set_runtime_clips(workspace: Path, clip_ids: list[str]) -> list[str]:
+    """Clips exported by label without a graph node; Amadeus plays 'smile' and 'sad' after speech."""
+    character = load_character(workspace)
+    for clip_id in clip_ids:
+        load_owner(workspace, "clip", clip_id)
+    character["runtimeClips"] = list(dict.fromkeys(clip_ids))
+    save_character(workspace, character)
+    return character["runtimeClips"]
+
+
+def export_nodes(workspace: Path, graph: dict) -> list[dict]:
+    """The graph's nodes plus the runtime clips as unconnected nodes bound to their renders."""
+    labels = {node["label"] for node in graph["nodes"]}
+    nodes = list(graph["nodes"])
+    for clip_id in load_character(workspace).get("runtimeClips") or []:
+        render = read_render(workspace, clip_id)
+        if clip_id in labels:
+            raise ValueError(f"Runtime clip {clip_id} is also a graph node label")
+        if render is None:
+            raise ValueError(f"Runtime clip {clip_id} has no render")
+        nodes.append({"id": f"runtime:{clip_id}", "label": clip_id, "root": output_root(clip_id),
+                      **{key: render[key] for key in ("phase", "frameIntervalMs", "loopMode")}})
+    return nodes
 
 
 def export_gate(workspace: Path, graph: dict) -> dict:

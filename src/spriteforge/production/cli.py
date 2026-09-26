@@ -58,6 +58,9 @@ def add_parser(commands) -> None:
     clip_set.add_argument("--resolution")
     clip_set.add_argument("--seed", type=int)
     clip_set.add_argument("--input-scale", type=float, help="Shrink the subject inside provider inputs (0.5-1)")
+    clip_set.add_argument("--register", action=argparse.BooleanOptionalAction,
+                          help="Register both ends to the pose stills (off: frames are already on the canvas)")
+    clip_set.add_argument("--margin", type=int, help="Transparent columns added on each side of the canvas")
     clip_set.add_argument("--interpolate", type=int, help="Frame multiplier from the interpolate processor")
     clip_set.add_argument("--pingpong", action=argparse.BooleanOptionalAction)
     clip_set.add_argument("--lock-head", type=int, help="Frames blended into the start still")
@@ -132,6 +135,9 @@ def add_parser(commands) -> None:
     render.add_argument("--keep-work", action="store_true")
     qa = command("qa", "Check graph seams and production-bound nodes")
     qa.add_argument("--output", type=Path)
+    runtime = command("runtime-clips", "Clips exported by label without a graph node (show, set or clear)")
+    runtime.add_argument("clips", nargs="*")
+    runtime.add_argument("--clear", action="store_true")
     sync = command("graph-sync", "Copy render timing onto bound graph nodes")
     sync.add_argument("--add-missing", action="store_true", help="Add a node for each rendered clip not in the graph")
 
@@ -266,6 +272,10 @@ def run(args) -> None:
             print(f"edge {edge['from']} -> {edge['to']}: {edge['level']} faceL={edge['faceL']} "
                   f"dHeadTop={edge['dHeadTop']} dHeadCenter={edge['dHeadCenter']}")
         print(f"QA: {report['status']}")
+    elif action == "runtime-clips":
+        if args.clips or args.clear:
+            project.set_runtime_clips(workspace, [] if args.clear else args.clips)
+        print("Runtime clips: " + (", ".join(load_character(workspace).get("runtimeClips") or []) or "none"))
     elif action == "graph-sync":
         result = project.graph_sync(workspace, add_missing=args.add_missing)
         for line in result["changes"]:

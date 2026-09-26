@@ -12,14 +12,15 @@ from synthetic import CANVAS, clip_with_take, figure, frame_folder, provider_fra
 from spriteforge.character_pack import load_character_pack  # noqa: E402
 from spriteforge.exporter import export_pack  # noqa: E402
 from spriteforge.production import prompts  # noqa: E402
-from spriteforge.production.checks import clip_report  # noqa: E402
+from spriteforge.production.checks import clip_report, graph_report  # noqa: E402
 from spriteforge.production.clips import import_clip_take, prepare  # noqa: E402
 from spriteforge.production.geometry import measure  # noqa: E402
 from spriteforge.production.media import read_bgra, sorted_pngs  # noqa: E402
-from spriteforge.production.project import add_clip, add_pose, graph_sync, overview, set_clip  # noqa: E402
-from spriteforge.production.records import (decide, load_character, load_owner, load_take, read_render,  # noqa: E402
-                                            render_freshness)
-from spriteforge.production.render import render_clip  # noqa: E402
+from spriteforge.production.project import (add_clip, add_pose, graph_sync, overview, set_clip,  # noqa: E402
+                                            set_runtime_clips)
+from spriteforge.production.records import (decide, load_character, load_owner, load_take, output_root,  # noqa: E402
+                                            read_render, render_freshness)
+from spriteforge.production.render import render_clip, widen  # noqa: E402
 from spriteforge.production.stills import approve_still, import_still, set_expected  # noqa: E402
 from spriteforge.workspace import atomic_json, discover, read_json  # noqa: E402
 
@@ -192,6 +193,75 @@ def test_graph_sync_and_export_only_accept_current_reviewed_renders(studio, monk
     with pytest.raises(ValueError, match="accepted take changed"):
         export_pack(studio.root, studio.tmp / "pack2", pack_id="demo", display_name="Demo", version="1")
     assert not (studio.tmp / "pack2").exists()
+
+
+def placed_frames(studio, name: str, pose: str, count: int, margin: int) -> Path:
+    """Frames already placed on a canvas widened by the margin, with hair crossing the canvas edge."""
+    folder = studio.tmp / name
+    for index in range(count):
+        frame = widen(still(studio, pose), margin)
+        x = CANVAS[0] + margin - 4
+        frame[60 + index:70 + index, x:x + margin - 2] = (30, 90, 160, 255)
+        save(folder / f"{index:04d}.png", frame)
+    return folder
+
+
+def test_prepositioned_frames_keep_their_pixels_on_a_widened_canvas(studio):
+    add_clip(studio.root, "smile_wind", "smile", "smile")
+    set_clip(studio.root, "smile_wind", register=False, margin=12)
+    folder = placed_frames(studio, "smile_wind", "smile", 8, 12)
+    take = import_clip_take(studio.root, "smile_wind", folder, fps=50)
+    decide(studio.root, "clip", "smile_wind", take["id"], "accept")
+    render = render_clip(studio.root, "smile_wind", log=lambda *_: None)
+    frames = sorted_pngs(studio.root / "production/clips/smile_wind/output/loop")
+    assert all(np.array_equal(read_bgra(a)[0], read_bgra(b)[0]) for a, b in zip(sorted_pngs(folder), frames))
+    assert (render["registration"], render["frameIntervalMs"], render["qa"]["status"]) == (None, 20, "pass"), render["qa"]
+    clip_with_take(studio, "smile_in", "idle", "smile", 20)
+    render_clip(studio.root, "smile_in", log=lambda *_: None)
+    nodes = [{"id": clip_id, "label": clip_id, "root": output_root(clip_id),
+              **{k: read_render(studio.root, clip_id)[k] for k in ("phase", "frameIntervalMs", "loopMode")}}
+             for clip_id in ("smile_in", "smile_wind")]
+    report = graph_report(studio.root, {"nodes": nodes, "edges": [{"id": "e", "from": "smile_in", "to": "smile_wind"}]},
+                          load_character(studio.root))
+    assert report["edges"][0]["level"] == "pass" and abs(report["edges"][0]["dHeadCenter"]) <= 1, report
+    set_clip(studio.root, "smile_wind", margin=0)
+    with pytest.raises(ValueError, match="marginPx"):
+        render_clip(studio.root, "smile_wind", log=lambda *_: None)
+
+
+def test_registered_clips_render_onto_a_widened_canvas(studio):
+    clip_with_take(studio, "smile_in", "idle", "smile", 20, margin=10)
+    render = render_clip(studio.root, "smile_in", log=lambda *_: None)
+    frames = sorted_pngs(studio.root / "production/clips/smile_in/output/in")
+    head, tail = read_bgra(frames[0])[0], read_bgra(frames[-1])[0]
+    assert head.shape[:2] == (CANVAS[1], CANVAS[0] + 20)
+    assert np.array_equal(head[:, :, 3], widen(still(studio, "idle"), 10)[:, :, 3])
+    assert np.array_equal(tail[:, :, 3], widen(still(studio, "smile"), 10)[:, :, 3])
+    assert render["qa"]["status"] in {"pass", "watch"}, render["qa"]["checks"]
+
+
+def test_runtime_clips_export_by_label_without_a_graph_node(studio, monkeypatch):
+    clip_with_take(studio, "idle_loop", "idle", "idle", 8)
+    clip_with_take(studio, "smile_hold", "smile", "smile", 6)
+    for clip_id in ("idle_loop", "smile_hold"):
+        render_clip(studio.root, clip_id, log=lambda *_: None)
+    atomic_json(studio.root / "graph_config.json", {"nodes": [{"id": "n1", "label": "idle_loop", "isRoot": True,
+                                                               "root": output_root("idle_loop")}], "edges": []})
+    graph_sync(studio.root)
+    assert set_runtime_clips(studio.root, ["smile_hold", "smile_hold"]) == ["smile_hold"]
+    encoded = fake_encoder(monkeypatch)
+    export_pack(studio.root, studio.tmp / "pack", pack_id="demo", display_name="Demo", version="1")
+    pack = load_character_pack(studio.tmp / "pack")
+    assert set(pack.manifest["clips"]) == {"idle_loop", "smile_hold"} and len(encoded) == 14
+    assert [n["label"] for n in pack.graph["nodes"]] == ["idle_loop"]
+    assert pack.manifest["clips"]["smile_hold"]["loopMode"] == "loop"
+    other = import_clip_take(studio.root, "smile_hold", studio.tmp / "smile_hold", fps=24)
+    decide(studio.root, "clip", "smile_hold", other["id"], "accept")
+    with pytest.raises(ValueError, match="smile_hold: the accepted take changed"):
+        export_pack(studio.root, studio.tmp / "pack2", pack_id="demo", display_name="Demo", version="1")
+    set_runtime_clips(studio.root, ["idle_loop"])
+    with pytest.raises(ValueError, match="also a graph node"):
+        export_pack(studio.root, studio.tmp / "pack3", pack_id="demo", display_name="Demo", version="1")
 
 
 def test_video_takes_decode_with_explicit_colour_conversion(studio):

@@ -118,8 +118,8 @@ def clip_defaults(kind: str) -> dict:
     return {
         "generation": {"provider": "manual", "durationS": 2 if transition else 4, "resolution": "720P",
                        "seed": None, "inputScale": 1.0},
-        "processing": {"interpolate": 1, "pingpong": False, "lockHeadFrames": 6 if transition else 0,
-                       "lockTailFrames": 12 if transition else 0, "edgeGuardPx": 0},
+        "processing": {"register": True, "interpolate": 1, "pingpong": False, "lockHeadFrames": 6 if transition else 0,
+                       "lockTailFrames": 12 if transition else 0, "edgeGuardPx": 0, "marginPx": 0},
         "playback": {"speed": 1.0, "loopMode": "once_then_hold" if transition else "loop"},
     }
 
@@ -268,9 +268,13 @@ def read_render(workspace: Path, clip_id: str) -> dict | None:
 def clip_settings(clip: dict) -> dict:
     """Validated processing and playback settings of a clip."""
     processing, playback, generation = clip["processing"], clip["playback"], clip["generation"]
-    values = {key: processing.get(key, 0) for key in ("interpolate", "lockHeadFrames", "lockTailFrames", "edgeGuardPx")}
+    values = {key: processing.get(key, 0)
+              for key in ("interpolate", "lockHeadFrames", "lockTailFrames", "edgeGuardPx", "marginPx")}
     if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in values.values()) or values["interpolate"] < 1:
-        raise ValueError("processing.interpolate must be >= 1 and lock/edge values non-negative integers")
+        raise ValueError("processing.interpolate must be >= 1 and lock, edge and margin values non-negative integers")
+    register = processing.get("register", True)
+    if not isinstance(register, bool):
+        raise ValueError("processing.register must be true or false")
     speed = playback.get("speed", 1.0)
     if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.1 <= speed <= 16:
         raise ValueError("playback.speed must be between 0.1 and 16")
@@ -293,7 +297,8 @@ def clip_settings(clip: dict) -> dict:
             raise ValueError("A frame closedSource needs a non-negative output frame index")
         if source["kind"] == "pose":
             check_id(source.get("pose"), "Pose")
-    return {**values, "pingpong": bool(processing.get("pingpong")), "speed": float(speed), "loopMode": playback["loopMode"]}
+    return {**values, "register": register, "pingpong": bool(processing.get("pingpong")), "speed": float(speed),
+            "loopMode": playback["loopMode"]}
 
 
 def recipe(clip: dict) -> dict:

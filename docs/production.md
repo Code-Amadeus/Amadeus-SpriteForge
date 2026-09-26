@@ -129,6 +129,8 @@ transition. Phase defaults to `loop`, `out` (ending on the base pose) or `in`.
 | `generation.provider` | `manual` | `manual`, `wan`, `seedance` |
 | `generation.durationS` | 2 / 4 | seconds requested |
 | `generation.inputScale` | 1.0 | shrink the subject inside provider inputs to leave a safety margin |
+| `processing.register` | on | register both ends of the take to the pose stills; off takes frames that are already placed on the canvas as they are |
+| `processing.marginPx` | 0 | transparent columns added on each side of the canvas for motion past its edges (hair in the wind) |
 | `processing.interpolate` | 1 | frame multiplier from the interpolate processor |
 | `processing.pingpong` | off | loops only: play forward then backward |
 | `processing.lockHeadFrames` | 6 / 0 | frames blended into the start still (first frame exact) |
@@ -136,6 +138,11 @@ transition. Phase defaults to `loop`, `out` (ending on the base pose) or `in`.
 | `processing.edgeGuardPx` | 0 | clear alpha near closed canvas edges |
 | `playback.speed` | 1.0 | playback multiplier |
 | `playback.loopMode` | `once_then_hold` / `loop` | runtime loop mode |
+
+The runtime centres every frame horizontally and aligns it to the bottom, so a clip
+with a margin keeps its character where the canvas has it: its frames are the canvas
+widened on both sides, the pose stills are widened the same way for locks and QA, and
+graph seams compare the canvas part only.
 
 `frameIntervalMs = round(1000 / (source fps × interpolate × speed))`. The Kurisu pack
 used 30 fps × 2 → 17 ms loops, 24 fps × 2 → 21 ms idle, and transitions at 2–4× speed
@@ -239,6 +246,11 @@ Bind a node to a clip with root `production/clips/<clip>/output` and the clip's 
 onto bound nodes; `--add-missing` also adds a node for each rendered clip that is not
 in the graph (the base loop becomes root if the graph has none). Edges and weights stay
 the author's decision in the graph editor. Export also writes the mouth overlays below.
+
+Some clips are played by label outside the graph: Amadeus lands on `smile` or `sad`
+after speech and then returns to the root. `production runtime-clips CLIP ...` lists
+them on the character (`--clear` empties the list); export adds each one to the pack
+manifest under its clip id, not to the runtime graph, and gates it like a bound node.
 
 ## Mouth overlays for speaking loops
 

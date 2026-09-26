@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .character_pack import CHARACTER_PACK_FORMAT, load_character_pack
 from .graph import layout_coordinates, runtime_graph, validate_graph
-from .production.records import bound_clip
+from .production.records import bound_clip, production_dir
 from .workspace import atomic_json, clip_frames, read_json, resolve_asset
 
 
@@ -23,11 +23,15 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
         raise ValueError("Pack id, display name and version are required")
     graph = validate_graph(workspace, read_json(resolve_asset(workspace, "graph_config.json")))
     speaking = {"expressions": {}, "profiles": {}, "overlays": {}}
-    if any(bound_clip(node["root"]) for node in graph["nodes"]):
-        from .production.project import export_gate, export_mouth
-        export_gate(workspace, graph)
+    nodes = graph["nodes"]
+    if (production_dir(workspace) / "character.json").is_file():
+        from .production.project import export_gate, export_mouth, export_nodes
+        nodes = export_nodes(workspace, graph)
+    if any(bound_clip(node["root"]) for node in nodes):
+        scope = {"nodes": nodes, "edges": graph["edges"]}
+        export_gate(workspace, scope)
         if not no_mouth:
-            speaking = export_mouth(workspace, graph)
+            speaking = export_mouth(workspace, scope)
     layout = None
     if all("x" in node and "y" in node for node in graph["nodes"]):
         coordinates = layout_coordinates(graph, graph)
@@ -46,7 +50,7 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
         raise ValueError("toktx not found; install KTX-Software and pass --toktx PATH")
     # Resolve the complete selected frame list before starting any encoding.
     selected = {}
-    for node in graph["nodes"]:
+    for node in nodes:
         selected.setdefault(node["label"], (node, clip_frames(workspace, node)))
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))

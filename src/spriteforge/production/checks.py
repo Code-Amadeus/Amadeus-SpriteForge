@@ -94,6 +94,7 @@ def seam(character: dict, tail: np.ndarray, head: np.ndarray, bounds: tuple[floa
 
 def clip_report(character: dict, frames: list[Path], kind: str, start: np.ndarray, end: np.ndarray,
                 drift: dict | None = None) -> dict:
+    """QA of rendered frames against the pose stills, which are on the clip's (possibly widened) canvas."""
     width, height = canvas_size(character)
     checks, tops, centers = [], [], []
     if drift:
@@ -106,7 +107,7 @@ def clip_report(character: dict, frames: list[Path], kind: str, start: np.ndarra
     first = previous = previous_metrics = None
     for index, path in enumerate(frames):
         image, _ = read_bgra(path)
-        if image.shape[1] != width or image.shape[0] != height:
+        if image.shape[:2] != start.shape[:2]:
             bad_size.append(index)
             previous = None
             continue
@@ -174,8 +175,10 @@ def graph_report(workspace: Path, graph: dict, character: dict) -> dict:
             if render["qa"]["status"] == "fail":
                 issues.append("clip QA failed")
             frames = sorted_pngs(resolve_asset(workspace, output_root(clip_id)) / render["phase"])
-            if frames:
-                ends[node["id"]] = (read_bgra(frames[0])[0], read_bgra(frames[-1])[0])
+            margin = render["recipe"]["processing"].get("marginPx", 0)
+            if frames:  # seams compare the canvas itself, without a widened clip's margins
+                ends[node["id"]] = tuple(image[:, margin:image.shape[1] - margin]
+                                         for image in (read_bgra(frames[0])[0], read_bgra(frames[-1])[0]))
         nodes.append({"node": node["id"], "label": node.get("label"), "clip": clip_id, "issues": issues,
                       "level": "fail" if issues else "pass"})
     for edge in graph.get("edges", []):
