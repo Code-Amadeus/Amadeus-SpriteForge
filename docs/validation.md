@@ -127,3 +127,63 @@ Mouth overlays (2026-09-26), on the same scratch copies:
   on that pack with a probe engine, loaded the `shy_speaking1` profile as a
   `silence_close` config with the overlay KTX2, its source anchor and 90-frame anchor
   and openness tracks.
+
+## Legacy Kurisu import (2026-09-26)
+
+Read-only inputs: the legacy SpriteForge workspace and the shipped Amadeus pack
+(version 2026.08.29: 39 clips, 7552 frames, 16 mouth overlays). The import ran into
+a scratch workspace; one interrupted session was resumed by running `apply` again.
+
+- Python suite: 68 passed, 1 Windows symlink-capability skip. The importer tests build
+  a small legacy workspace and pack. They cover:
+  - an unencoded decoy variant, and an encoded one whose leftover texture differs;
+  - wide and short clips;
+  - expression and offset poses;
+  - shared and own-frame closed mouths;
+  - a runtime-only clip and a jump edge;
+  - resuming;
+  - the export gate.
+- `plan` resolved all 39 clips. Two closed-eye speaking loops had two encoded
+  variants; the leftover `refbottom_trans_blend` sidecar texture differs from the
+  shipped one, which settled them on `frames_alpha_2x_gmfss`. The resolved variants
+  match the Amadeus packager's label tables:
+  - the aligned `idle_closed_eye`;
+  - `frames_alpha` for the fast emotion entries;
+  - the tail-fixed ghost-trail `trans_standby`;
+  - the smile/sad post-speech roots.
+- Poses: 11 (idle, standby, smile, serious, sad, thinking, key_point, shy, surprise,
+  angry, closed_eye). One edge was reported: `key_point_speaking -> thinking_speaking1`
+  moves the head top −4 px, beyond the ±3 px tolerance.
+- All 7552 rendered frames are pixel-identical to their legacy sources: idle2,
+  trans_smile and smile are padded at the top by 2/1/1 rows, and idle_closed_eye keeps
+  its 960 px width as a 98 px margin. All 39 clips keep the shipped phase, frame
+  interval, loop mode and frame count.
+- Clip QA: 26 pass, 11 watch, 2 fix, none fail.
+  - Watch: head seams to the pose still (1.2–1.8 L*), the idle2 span, and a flash in
+    the ghost-trail transition.
+  - Fix: shy_trans and closed_eye_trans start 1.9–2.0 L* away from the idle still.
+- Graph QA over 64 edges: 50 pass, 9 watch, 4 fix, 1 fail.
+  - Fix: idle into trans_smile, shy_trans, surprise_trans and closed_eye_trans, at
+    1.8–2.2 L*.
+  - Fail: the key_point jump (3.8 L*, −4 px). Export stays blocked until it is
+    resolved.
+- Mouths: 12 speaking loops keep an own closed frame (key_point_speaking frame 154)
+  and 4 use the shared idle still, as shipped.
+  - The first pass fell back to the expected position on four loops, because moving
+    hair at the sides of the search window outweighed the mouth. On the thinking pose
+    that position sits 23 px below the mouth. Detection now lets only mouth-plausible
+    regions compete, and all 16 loops track by motion.
+  - Where the shipped profile was tuned (speaking_loop1, thinking_speaking1,
+    shy_speaking1, surprise_speaking), detection agrees within 1 px.
+  - Three shipped profiles kept the untuned default (4, −196) and are off the mouth in
+    the motion map: speaking_loop2, thinking_speaking2 and key_point_speaking. The
+    import places them on it.
+- Real export of a subset (idle, shy_trans and shy_speaking1 with the shared closed
+  mouth, plus the runtime clips smile and sad): 5 clips, 600 frames and one mouth
+  overlay, encoded with KTX-Software 4.4.2 in 204 s.
+  - The pack passed this repository's validator and Amadeus
+    `tools/validate_character_pack.py`.
+  - Amadeus's `SpriteForgeAnimator`, started on the pack with a probe engine, loaded
+    `shy_speaking1` as a `silence_close` config (overlay KTX2, 180-frame anchor track).
+  - It added smile and sad to its graph as runtime post-speech nodes from the
+    manifest.

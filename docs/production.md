@@ -261,9 +261,14 @@ closed-mouth image inside an ellipse around the mouth, shifted so that image's m
 lands on the current frame's mouth. Audio never selects a mouth shape. Production
 therefore computes, per speaking loop:
 
-- **mask track and size**: the mouth is found where the loop changes most near the
-  expected position (the mouth set, moved with the pose's head offset), then tracked
-  per frame by template matching (at most 6 px per frame, median-smoothed);
+- **mask track and size**: the mouth is the largest region that changes over the loop
+  and lies within a mouth's plausible distance of the expected position (the mouth
+  set, moved with the pose's head offset). Hair moving at the sides of the search
+  window is therefore never taken for the mouth, and the lip edges of an open mouth
+  count as one region. The mouth is then tracked per frame by template matching (at
+  most 6 px per frame, median-smoothed). The head offset alone does not place the
+  mouth of a tilted pose (Kurisu's thinking mouth sits 23 px above it); detection
+  finds it, and QA reports a loop where it falls back to the expected position;
 - **closed-mouth image and its mouth anchor**, tone-matched to the loop;
 - **closedness per frame**: difference from the closed mouth, which Amadeus uses only
   to pick the most closed frame when it holds or samples frames.
