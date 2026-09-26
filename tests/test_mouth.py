@@ -10,6 +10,7 @@ from synthetic import CANVAS, OPENING, mouth_centre, talking_clip  # noqa: E402
 
 from spriteforge.character_pack import load_character_pack  # noqa: E402
 from spriteforge.exporter import export_pack  # noqa: E402
+from spriteforge.production.mouth import detect  # noqa: E402
 from spriteforge.production.project import add_clip, set_clip, set_closed_mouth, set_mouth_set  # noqa: E402
 from spriteforge.production.records import load_character, load_owner, render_freshness, still_path  # noqa: E402
 from spriteforge.production.render import render_clip  # noqa: E402
@@ -45,6 +46,22 @@ def test_render_tracks_the_mask_and_ranks_closed_frames(studio):
     assert mouth["closedSource"] == {"kind": "shared", "pose": "idle", "still": idle}
     assert render["stills"]["mouth"] == idle and not [c for c in render["qa"]["checks"] if c["check"].startswith("mouth")]
     assert (studio.root / "production/clips/smile_talk/output" / mouth["overlay"]).is_file() and len(mouth["toneShift"]) == 3
+
+
+def test_detection_ignores_moving_hair_and_joins_the_lips_of_an_open_mouth():
+    """A strand flicking at the side of the search window changes more pixels than the mouth,
+    and an open mouth only changes at its lip edges; the mouth must still be found whole."""
+    frames = []
+    for index in range(6):
+        frame = np.full((320, 240, 4), (180, 200, 230, 255), np.uint8)
+        frame[96:104, 108:132] = (40, 30, 90, 255)            # open mouth interior, constant
+        if index % 2:
+            frame[92:96, 108:132] = (60, 60, 160, 255)        # upper lip edge moves
+            frame[104:108, 108:132] = (60, 60, 160, 255)      # lower lip edge moves
+            frame[60:140, 166:174] = (20, 40, 90, 255)        # hair strand at the window's edge
+        frames.append(frame)
+    roi, method = detect(frames, {"cx": 3.0, "cy": -56.0, "width": 24.0, "height": 16.0}, 240, 320)
+    assert method == "motion" and abs(roi["cx"]) <= 1 and abs(roi["cy"] + 60) <= 1 and roi["height"] >= 16, roi
 
 
 def test_closed_mouth_tone_follows_the_loop(studio):

@@ -58,7 +58,11 @@ def _box(cx: float, cy: float, bw: int, bh: int, width: int, height: int) -> tup
 
 
 def detect(frames: list[np.ndarray], guess: dict, width: int, height: int) -> tuple[dict, str]:
-    """Mouth centre and size from where the loop changes most near the prior."""
+    """Mouth centre and size: the largest region that changes over the loop and is centred
+    within a mouth's plausible distance of the prior. Moving hair at the sides of the search
+    window changes as much as the mouth, so distance decides eligibility, size decides among
+    the eligible; gaps up to half a mouth tall are closed so both lips of an open mouth count
+    as one region."""
     gx, gy = guess["cx"] + width / 2, guess["cy"] + height / 2
     x0, y0, x1, y1 = _box(gx, gy, round(guess["width"] * SEARCH * 2), round(guess["height"] * SEARCH * 2), width, height)
     reference = frames[0][y0:y1, x0:x1, :3].astype(np.float32)
@@ -66,18 +70,21 @@ def detect(frames: list[np.ndarray], guess: dict, width: int, height: int) -> tu
     if not isinstance(change, np.ndarray) or change.max() <= 1e-6:
         return {k: guess[k] for k in ("cx", "cy", "width", "height")}, "prior"
     binary = ((change / change.max()) > 0.22).astype(np.uint8) * 255
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    binary = cv2.morphologyEx(cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel), cv2.MORPH_OPEN, kernel)
-    contours = [c for c in cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-                if cv2.contourArea(c) >= 12]
-    if not contours:
+    gap = max(5, round(guess["height"] / 2) | 1)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (gap, gap)))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+    regions = []
+    for contour in cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+        bx, by, bw, bh = cv2.boundingRect(contour)
+        cx, cy = x0 + bx + bw / 2 - width / 2, y0 + by + bh / 2 - height / 2
+        if cv2.contourArea(contour) >= 12 and abs(cx - guess["cx"]) <= guess["width"] * 1.55 \
+                and abs(cy - guess["cy"]) <= guess["height"] * 2.25:
+            regions.append((cv2.contourArea(contour), cx, cy, bw, bh))
+    if not regions:
         return {k: guess[k] for k in ("cx", "cy", "width", "height")}, "prior"
-    bx, by, bw, bh = cv2.boundingRect(max(contours, key=cv2.contourArea))
-    cx, cy = x0 + bx + bw / 2 - width / 2, y0 + by + bh / 2 - height / 2
+    _, cx, cy, bw, bh = max(regions)
     size = {"width": min(max(bw, guess["width"]), guess["width"] * 1.75),
             "height": min(max(bh, guess["height"]), guess["height"] * 1.75)}
-    if abs(cx - guess["cx"]) > guess["width"] * 1.55 or abs(cy - guess["cy"]) > guess["height"] * 2.25:
-        return {k: guess[k] for k in ("cx", "cy", "width", "height")}, "prior"
     return {"cx": round(cx, 2), "cy": round(cy, 2), **{k: round(v, 2) for k, v in size.items()}}, "motion"
 
 
