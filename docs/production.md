@@ -139,10 +139,13 @@ transition. Phase defaults to `loop`, `out` (ending on the base pose) or `in`.
 | `playback.speed` | 1.0 | playback multiplier |
 | `playback.loopMode` | `once_then_hold` / `loop` | runtime loop mode |
 
-The runtime centres every frame horizontally and aligns it to the bottom, so a clip
-with a margin keeps its character where the canvas has it: its frames are the canvas
-widened on both sides, the pose stills are widened the same way for locks and QA, and
-graph seams compare the canvas part only.
+A clip with a margin renders the canvas widened on both sides. The pose stills are
+widened the same way for locks and QA, and graph seams compare the canvas part only.
+Amadeus anchors every frame at its bottom centre. It keeps such a clip at the
+character's size only when it fits the character by the pack's `canvas_size`
+(Code-Amadeus/Amadeus#138). Earlier runtimes fit each frame by its own texture, so in
+a width-limited view, such as the wallpaper CRT on screens narrower than 16:9, a wider
+frame draws the character smaller. Export writes `canvas_size` with the mouth profiles.
 
 `frameIntervalMs = round(1000 / (source fps × interpolate × speed))`. The Kurisu pack
 used 30 fps × 2 → 17 ms loops, 24 fps × 2 → 21 ms idle, and transitions at 2–4× speed
