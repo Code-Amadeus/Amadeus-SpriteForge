@@ -64,6 +64,45 @@ workspace and writes 1440×900 English/Chinese screenshots to `test-results/`.
 Set `SPRITEFORGE_PYTHON` to a Python environment with the QA extras and, on Windows,
 `BROWSER_CHANNEL=msedge` to use an installed Edge browser.
 
+### Clip Studio
+
+`#/clips/<clip>` places sibling variants, immutable take versions, a synchronized
+comparison and the clip's settings in one view. Variants share endpoints and type
+(a speaking loop has a mouth set); creating one copies current settings and subject
+text, with no takes, accepted decision or render. Existing clip IDs are retained.
+
+The version number includes failed and rejected takes. A new take can name a
+`basedOn` take from the same clip, while its input stills and settings come from the
+current clip. The generation dialog starts with that version's subject text;
+editing it adds a prompt block version. A take's saved prompt, inputs and source
+remain unchanged. Its separate annotation can be edited without making a render
+stale. Rejecting a clip version requires a reason; rejected media is retained.
+
+```text
+spriteforge production clip variant --workspace W idle_loop idle_loop2
+spriteforge production generate --workspace W --clip idle_loop --based-on TAKE --note "Less head movement"
+spriteforge production take note --workspace W --clip idle_loop TAKE --note "Compare the loop seam"
+```
+
+A/B defaults to the selected raw takes. The explicit Render preview uses published
+output only when it belongs to that selected take; QA and mouth frame markers refer
+to that output, whose timing can differ from the raw take after interpolation or
+ping-pong processing. Changing the accepted version makes its render stale.
+Generation, Processing, Playback and Mouth edit the current clip settings; the
+Prompt view shows the selected version's recorded snapshot.
+
+Video uploads and imports from a workspace PNG folder are supported; the latter
+requires an explicit FPS. Preparing first/last input images, adopting a take frame
+as a pose candidate, resuming a submitted download, syncing graph timing and
+rendering the accepted version remain available. J/K select versions, A accepts,
+X requests a rejection reason, C changes comparison mode, Space plays and L toggles
+looping; editing fields keep their normal keys.
+
+Credit estimates use the median of at most five recent complete balance deltas
+with the same provider, duration and resolution. Unknown history and balance
+increases do not become a cost estimate. Every generation remains an explicit
+action with its cost type shown, and failed requests are not silently retried.
+
 ## Invariants
 
 1. **Approved pose stills are the only geometric authority.** Each clip endpoint is

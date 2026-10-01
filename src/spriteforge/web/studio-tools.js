@@ -480,6 +480,8 @@
   translations["zh-CN"]["production.wireFrame"] = "第 {index} 帧";
   translations.en["production.qaStatus"] = "QA {status}";
   translations["zh-CN"]["production.qaStatus"] = "QA {status}";
+  translations.en["production.configured"] = "Configured";
+  translations["zh-CN"]["production.configured"] = "已配置";
   for (const [language, entries] of Object.entries(translations)) {
     const guide = window.SFProductionGuide[language === "zh-CN" ? "zh" : "en"];
     for (const key of ["title", "intro", "wires", "note", "close", "other"]) entries[`production.guide.${key}`] = guide[key];
@@ -549,7 +551,8 @@
     const tr = (key) => t(`production.${key}`);
     const tools = state.tools;
     const providers = tools.providers;
-    const status = (ready) => h("span", { class: `badge ${ready ? "pass" : "fail"}` }, tr(ready ? "ready" : "notReady"));
+    const status = (ready, kind = "ready") => h("span", { class: `badge ${ready ? "pass" : "fail"}` },
+      tr(ready ? kind : kind === "configured" ? "notConfigured" : "notReady"));
     const defaults = tools.defaults || {};
     const names = Object.keys(providers).filter((name) => providers[name].kind === "image");
     const providerSelect = (key) => {
@@ -578,7 +581,7 @@
         h("div", { class: "row" }, h("strong", {}, name), status(provider.keySet)),
         provider.model ? h("div", { class: "tiny mono" }, provider.model) : null)),
       h("h3", {}, tr("processors")),
-      h("div", { class: "card row" }, ...["ffmpeg", "alpha", "interpolate"].map((name) => h("span", { class: "row" }, h("strong", {}, name), status(tools[name])))),
+      h("div", { class: "card row" }, ...["ffmpeg", "alpha", "interpolate"].map((name) => h("span", { class: "row" }, h("strong", {}, name), status(tools[name], name === "ffmpeg" ? "ready" : "configured")))),
       h("h3", {}, tr("defaults")),
       h("div", { class: "form" }, h("label", {}, tr("defaultConcept"), concept), h("label", {}, tr("defaultStill"), still),
         h("label", {}, tr("batchThreshold"), threshold)),

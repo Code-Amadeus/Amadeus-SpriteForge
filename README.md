@@ -12,8 +12,8 @@ providers are optional adapters; the Amadeus application runtime is separate.
 ## Studio preview
 
 The new `/studio` shell follows the dark green production design, with a live
-Overview and native Canvas, Prompts, Jobs and Settings tools. English and Chinese
-are available without reloading. Other stages are being added incrementally;
+Overview, Clip Studio and native Canvas, Prompts, Jobs and Settings tools. English
+and Chinese are available without reloading. Other stages are being added incrementally;
 the existing production and review pages remain available during the rollout.
 
 ![Studio Overview using the synthetic production workspace](docs/images/studio-overview-en.png)

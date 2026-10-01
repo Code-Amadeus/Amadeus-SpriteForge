@@ -85,6 +85,8 @@ def test_incomplete_usage_records_are_unknown_rather_than_estimated():
     empty = usage_summary([], [], at=at)
     assert empty["wan"] == {"usedCredits": None, "balance": None}
     assert empty["local"] == {"durationS": None, "renders": 0, "unknownDurations": 0}
+    clips[0]["takes"][0]["source"]["balanceAfter"] = {"credits": 100}
+    assert usage_summary([], clips, at=at)["wan"] == {"usedCredits": None, "balance": 100}
 
 
 def test_issue_summary_preserves_qa_levels_metrics_and_export_scope():

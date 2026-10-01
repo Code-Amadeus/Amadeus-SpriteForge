@@ -17,6 +17,8 @@ WEB_ROOT = Path(__file__).parent / "web"
 STATIC = {"review.js": "text/javascript", "review.css": "text/css", "preview-media.js": "text/javascript",
           "production.js": "text/javascript", "production-canvas.js": "text/javascript", "production.css": "text/css",
           "studio.js": "text/javascript", "studio-tools.js": "text/javascript", "studio.css": "text/css",
+          "studio-clips.js": "text/javascript", "studio-clips.css": "text/css",
+          "studio-compare.js": "text/javascript", "studio-compare.css": "text/css",
           "i18n/en.js": "text/javascript", "i18n/zh-CN.js": "text/javascript"}
 
 

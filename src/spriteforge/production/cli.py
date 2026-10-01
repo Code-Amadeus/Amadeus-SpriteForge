@@ -54,6 +54,10 @@ def add_parser(commands) -> None:
     clip_add.add_argument("--from", dest="source", required=True)
     clip_add.add_argument("--to", dest="target", required=True)
     clip_add.add_argument("--phase", choices=["in", "loop", "out"])
+    variant = clip.add_parser("variant", help="Create a sibling clip with copied settings and a new subject block")
+    variant.add_argument("--workspace", type=Path, required=True)
+    variant.add_argument("source")
+    variant.add_argument("id")
     clip_set = clip.add_parser("set", help="Change generation, processing or playback settings")
     clip_set.add_argument("--workspace", type=Path, required=True)
     clip_set.add_argument("id")
@@ -131,6 +135,11 @@ def add_parser(commands) -> None:
     imp.add_argument("--fps", type=float, help="Frame rate of a frame-folder clip import")
     imp.add_argument("--note", default="")
     imp.add_argument("--place", help="SCALE,DX,DY placing a still on the canvas instead of automatic placement")
+    note = take.add_parser("note", help="Change an annotation without changing a take's source or snapshots")
+    note.add_argument("--workspace", type=Path, required=True)
+    _owner(note)
+    note.add_argument("take")
+    note.add_argument("--note", required=True)
     for name in ("accept", "reject", "restore"):
         decision = take.add_parser(name)
         decision.add_argument("--workspace", type=Path, required=True)
@@ -154,6 +163,8 @@ def add_parser(commands) -> None:
     generate.add_argument("--provider", help="Image-edit provider for a pose (required); overrides a clip's video provider")
     generate.add_argument("--dry-run", action="store_true", help="Print the request without sending it")
     generate.add_argument("--no-wait", action="store_true", help="Clips: return after submission; resume later")
+    generate.add_argument("--based-on", help="Clip take whose version this generation is based on")
+    generate.add_argument("--note", default="", help="Clip version annotation")
     render = command("render", "Render accepted takes into graph-bindable frames")
     target = render.add_mutually_exclusive_group(required=True)
     target.add_argument("--clip")
@@ -244,6 +255,9 @@ def run(args) -> None:
         if args.clip_action == "add":
             clip = project.add_clip(workspace, args.id, args.source, args.target, args.phase)
             print(f"Clip {clip['id']}: {clip['from']} -> {clip['to']} ({clip['kind']}, phase {clip['phase']})")
+        elif args.clip_action == "variant":
+            clip = project.add_variant(workspace, args.source, args.id)
+            print(f"Variant {clip['id']} created from {args.source}; no takes copied")
         else:
             changes = {k: getattr(args, k) for k in project.CLIP_SETTINGS}
             clip = project.set_clip(workspace, args.id, mouth=args.mouth, mouth_source=args.mouth_source, **changes)
@@ -304,6 +318,8 @@ def run(args) -> None:
     elif action == "generate" and args.pose:
         from .providers import IMAGE_PROVIDERS
         from .stills import generate_still
+        if args.based_on is not None or args.note:
+            raise ValueError("--based-on and --note only apply to clip generation")
         if not args.provider:
             raise ValueError(f"Choose an image-edit provider with --provider: {', '.join(IMAGE_PROVIDERS)}")
         result = generate_still(workspace, args.pose, args.provider, dry_run=args.dry_run)
@@ -313,7 +329,8 @@ def run(args) -> None:
             _print_still_qa(result)
     elif action == "generate":
         from .clips import generate_clip_take
-        result = generate_clip_take(workspace, args.clip, provider=args.provider, wait=not args.no_wait, dry_run=args.dry_run)
+        result = generate_clip_take(workspace, args.clip, provider=args.provider, wait=not args.no_wait,
+                                    dry_run=args.dry_run, based_on=args.based_on, note=args.note)
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.dry_run else f"Take {result['id']}: {result['state']}")
     elif action == "render":
         from .records import list_owners, render_freshness
@@ -428,6 +445,10 @@ def _run_take(workspace: Path, args) -> None:
         from .clips import resume_clip_take
         take = resume_clip_take(workspace, owner, args.take)
         print(f"Take {take['id']}: {take['state']}")
+    elif args.take_action == "note":
+        from .records import set_take_note
+        set_take_note(workspace, kind, owner, args.take, args.note)
+        print(f"Updated note for {kind} take {args.take}")
     elif args.take_action == "accept" and kind == "pose":
         from .stills import approve_still
         approve_still(workspace, owner, args.take, args.reason)
