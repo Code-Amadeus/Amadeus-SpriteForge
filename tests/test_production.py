@@ -163,6 +163,19 @@ def test_sentence_templates_travel_between_workspaces_as_presets(studio):
         prompts.import_preset(other, {"templates": {}})
 
 
+def test_the_example_prompt_preset_imports_and_renders(studio):
+    preset = read_json(Path(__file__).resolve().parents[1] / "examples/prompt-presets/live2d-idle.zh-CN.json")
+    library = prompts.load_library(studio.root)
+    prompts.import_preset(library, preset)
+    prompts.save_library(studio.root, library)
+    add_clip(studio.root, "idle_talk", "idle", "idle")
+    library = prompts.load_library(studio.root)
+    prompts.set_block(library, "clip.idle_talk", "角色一直开口讲话，同时眼神有一次自然变化（幅度自然）")
+    rendered = prompts.clip_prompt(library, load_character(studio.root), load_owner(studio.root, "clip", "idle_talk"))
+    assert rendered["complete"] and rendered["text"] == ("生成一个自然的live2d风格idle片段，角色一直开口讲话，同时眼神有一次自然变化（幅度自然），"
+                                                         "只做最自然的过渡，其他一切保持不变，禁止任何夸张的动作变化，不要有明度变化")
+
+
 def test_prepare_writes_exact_provider_inputs(studio):
     add_clip(studio.root, "smile_in", "idle", "smile")
     set_clip(studio.root, "smile_in", input_scale=0.9)

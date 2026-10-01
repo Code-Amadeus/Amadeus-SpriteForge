@@ -264,7 +264,9 @@ clause joiner each block's closing punctuation is dropped, so a subject may end 
 the current text of the blocks they use, never pose or clip subjects.
 `production prompt import FILE` adds those texts to another workspace as new block
 versions and installs the templates, so a house style is set once per character.
-Prompt texts belong to the user: SpriteForge ships placeholders only.
+New workspaces start from placeholders. `examples/prompt-presets/` holds an optional
+example preset, one-sentence Live2D-style idle prompts that worked with Wan, to start
+from or ignore; prompts are yours to explore.
 
 ## Rendering
 

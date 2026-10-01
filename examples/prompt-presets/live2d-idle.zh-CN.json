@@ -1,0 +1,33 @@
+{
+  "format": "spriteforge.production.prompt-preset.v1",
+  "templates": {
+    "transition": {
+      "blocks": [
+        "live2d.style",
+        "@subject",
+        "live2d.constraints"
+      ],
+      "negative": [],
+      "join": "，"
+    },
+    "loop": {
+      "blocks": [
+        "live2d.style",
+        "@subject",
+        "live2d.constraints"
+      ],
+      "negative": [],
+      "join": "，"
+    }
+  },
+  "blocks": {
+    "live2d.constraints": {
+      "description": "Constraints shared by every video",
+      "text": "只做最自然的过渡，其他一切保持不变，禁止任何夸张的动作变化，不要有明度变化"
+    },
+    "live2d.style": {
+      "description": "Opening of every video prompt: style and clip type",
+      "text": "生成一个自然的live2d风格idle片段"
+    }
+  }
+}

@@ -41,8 +41,10 @@ Graph 的 `Preview selected clip` 与导出共用帧选择、时间和循环配�
 不会偷偷套用旧 Kurisu 专属的帧选择、口型修正或说话策略。
 
 Amadeus 继续负责语义 intent、说话状态、嘴部振幅、呈现优先级、停留和回落。
-单段预览不等于完整 TTS 表演模拟。角色素材、prompt 正文、API key、模型权重、
+单段预览不等于完整 TTS 表演模拟。角色素材、API key、模型权重、
 场景图编辑器和完整 renderer 不在仓库内；场景图后续按独立契约整理。
+新工作区的 prompt 都是占位符；`examples/prompt-presets/` 里有一份可选的示例预设
+（一句话写法的 live2d 风格 idle prompt，在 Wan 上用过），可以参考，也可以完全按自己的方式写。
 
 ## 生产管线
 
