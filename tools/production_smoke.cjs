@@ -205,6 +205,20 @@ const { spawn, spawnSync } = require("node:child_process");
       .locator("summary").filter({ hasText: "History (2 versions)" }).waitFor();
     await page.screenshot({ path: "test-results/production-prompts.png", fullPage: true });
 
+    // A job can finish before the first GET observes it running. Its completion
+    // must still refresh the view; no generation or processing is dispatched here.
+    const snapshot = await (await page.request.get(url + "/api/production")).json();
+    let completed = false;
+    const quickJob = {id:"instant-fixture",action:"render",kind:"clip",owner:"smile_in",startedAt:new Date().toISOString(),log:[],result:null,error:null};
+    await page.route("**/api/production/jobs", route => {
+      if(route.request().method() === "POST") return route.fulfill({json:{ok:true,job:{...quickJob,status:"running"}}});
+      completed = true;return route.fulfill({json:{ok:true,jobs:[{...quickJob,status:"succeeded"}]}});
+    });
+    await page.route("**/api/production", route => route.fulfill({json:{...snapshot,character:{...snapshot.character,displayName:completed?"Fast job completed":snapshot.character.displayName}}}));
+    await page.locator("#tabs button[data-tab='clips']").click();
+    await page.locator("[data-clip='smile_in']").click();
+    await page.locator("#renderBtn").click();
+    await page.getByText("Fast job completed production",{exact:false}).first().waitFor();
     assert.deepEqual(errors, []);
     assert.equal(await page.locator("body").evaluate((b) => /(^|\n)(null|\[object)/.test(b.innerText)), false);
     console.log("PASS: canvas cards, wires, guide, card prompt version, saved card position, a pose drawn from a still "
@@ -212,6 +226,8 @@ const { spawn, spawnSync } = require("node:child_process");
       + "wide-frame pixels, aligned silence mask, stale margin preview, prompt version");
   } catch (error) {
     if (page) {
+      console.error("Production fixture jobs:", await page.request.get(new URL("/api/production/jobs", page.url()).href, {timeout:2000})
+        .then(response=>response.json()).catch(failure=>({error:failure.message})));
       fs.mkdirSync("test-results", { recursive: true });
       await page.screenshot({ path: "test-results/production-failure.png", fullPage: true });
     }
