@@ -23,6 +23,11 @@ python -m venv .venv
 基本编辑、预览和校验仅需 Python 标准库；QA 的可选依赖为 OpenCV 和 NumPy。
 示例是自行生成的几何图形，不含现有角色素材。
 
+要体验真实人物生产流程，使用仓库附带的
+[四张 Kurisu 参考图与完整上手指南](../examples/references/kurisu/)。
+指南从 idle/微笑静帧导入开始，覆盖四段视频、take 采用、渲染、连图、QA、导出。
+参考图导入和生成器输入准备不需要模型或付费账号；后续视频生成、抠图和导出需配置对应工具。
+
 ## 功能与边界
 
 - 导入 PNG 目录，发现具体帧文件夹及处理版本。
@@ -42,7 +47,7 @@ Graph 的 `Preview selected clip` 与导出共用帧选择、时间和循环配�
 不会偷偷套用旧 Kurisu 专属的帧选择、口型修正或说话策略。
 
 Amadeus 继续负责语义 intent、说话状态、嘴部振幅、呈现优先级、停留和回落。
-单段预览不等于完整 TTS 表演模拟。角色素材、API key、模型权重、
+单段预览不等于完整 TTS 表演模拟。仓库包含精选角色参考静帧；完整角色包、API key、模型权重、
 场景图编辑器和完整 renderer 不在仓库内；场景图后续按独立契约整理。
 新工作区的 prompt 都是占位符；`examples/prompt-presets/` 里有一份可选的示例预设
 （一句话写法的 live2d 风格 idle prompt，在 Wan 上用过），可以参考，也可以完全按自己的方式写。
@@ -62,6 +67,7 @@ spriteforge production take import --workspace studio --pose idle master.png
 spriteforge production take accept --workspace studio --pose idle TAKE
 spriteforge production pose add --workspace studio shy
 spriteforge production take import --workspace studio --pose shy shy.png
+spriteforge production take accept --workspace studio --pose shy SHY_TAKE
 spriteforge production clip add --workspace studio shy_in --from idle --to shy
 spriteforge production prepare --workspace studio --clip shy_in --output handoff/shy_in
 spriteforge production take import --workspace studio --clip shy_in shy_in.mp4
