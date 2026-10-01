@@ -133,9 +133,66 @@ const { spawn, spawnSync } = require("node:child_process");
 
     await page.locator("[data-clip='smile_talk']").click();
     await page.locator("#clipDetail").filter({ hasText: "closed mouth from idle still (shared)" }).waitFor();
+    await page.waitForFunction(() => document.querySelector("#renderPreview")?.dataset.frame !== undefined);
+    const widePreview = await page.evaluate(async () => {
+      // Read published media and metadata from the API, independently of the page's
+      // current clip settings, to verify the complete frame and mask coordinates.
+      const overview = await (await fetch("/api/production")).json();
+      const clip = overview.clips.find((item) => item.id === "smile_talk");
+      const frameList = await (await fetch("/api/clips?root=" + encodeURIComponent(clip.output))).json();
+      const urls = Object.values(frameList.clips)[0].frames;
+      const images = await Promise.all(urls.map(async (url) => {
+        const image = new Image(); image.src = "/frame?path=" + encodeURIComponent(url); await image.decode(); return image;
+      }));
+      const canvas = document.querySelector("#renderPreview");
+      const index = Number(canvas.dataset.frame);
+      const frame = images[index];
+      const reference = document.createElement("canvas");
+      reference.width = frame.naturalWidth; reference.height = frame.naturalHeight;
+      const ctx = reference.getContext("2d"); ctx.drawImage(frame, 0, 0);
+      const expected = ctx.getImageData(0, 0, reference.width, reference.height).data;
+      const actual = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+      return {size: [canvas.width, canvas.height], sourceSize: [reference.width, reference.height],
+        characterWidth: overview.character.canvas.width, margin: clip.processing.marginPx,
+        equal: actual.length === expected.length && actual.every((value, i) => value === expected[i])};
+    });
+    assert.equal(widePreview.margin, 40);
+    assert.equal(widePreview.sourceSize[0], widePreview.characterWidth + 80);
+    assert.deepEqual(widePreview.size, widePreview.sourceSize);
+    assert.ok(widePreview.equal, "wide preview must contain every published pixel without shifting or cropping");
     await page.locator("#silencePreview").check();
     await page.waitForFunction(() => document.querySelector("#renderPreview").dataset.silence === "1");
+    const mask = await page.evaluate(async () => {
+      const overview = await (await fetch("/api/production")).json();
+      const clip = overview.clips.find((item) => item.id === "smile_talk");
+      const canvas = document.querySelector("#renderPreview");
+      const frameIndex = Number(canvas.dataset.frame);
+      const anchor = clip.render.mouth.anchorTrack[frameIndex];
+      const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+      const xs = [], ys = [];
+      for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+        const i = (y * canvas.width + x) * 4;
+        if (pixels[i] > 245 && pixels[i + 1] > 210 && pixels[i + 1] < 235 && pixels[i + 2] < 130 && pixels[i + 3] > 200) {
+          xs.push(x); ys.push(y);
+        }
+      }
+      return {count: xs.length, centre: [(Math.min(...xs) + Math.max(...xs) + 1) / 2,
+          (Math.min(...ys) + Math.max(...ys) + 1) / 2],
+        expected: [anchor.cx + (overview.character.canvas.width + 2 * clip.processing.marginPx) / 2,
+          anchor.cy + overview.character.canvas.height / 2]};
+    });
+    assert.ok(mask.count >= 4 && Math.abs(mask.centre[0] - mask.expected[0]) < 2 && Math.abs(mask.centre[1] - mask.expected[1]) < 2,
+      `wide preview silence mask is misplaced: ${JSON.stringify(mask)}`);
     await page.screenshot({ path: "test-results/production-mouth.png", fullPage: true });
+
+    // Editing the margin without rendering must not resize the published preview.
+    await page.evaluate(() => fetch("/api/production/clip-settings", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clip: "smile_talk", changes: { margin: 60 } }) }));
+    await page.reload();
+    await page.locator("#tabs button[data-tab='clips']").click();
+    await page.locator("[data-clip='smile_talk']").click();
+    await page.waitForFunction(() => document.querySelector("#renderPreview")?.dataset.frame !== undefined);
+    assert.deepEqual(await page.locator("#renderPreview").evaluate((canvas) => [canvas.width, canvas.height]), widePreview.sourceSize);
 
     await page.locator("#tabs button[data-tab='prompts']").click();
     const block = page.locator("textarea[data-block='video.loop']");
@@ -149,7 +206,7 @@ const { spawn, spawnSync } = require("node:child_process");
     assert.equal(await page.locator("body").evaluate((b) => /(^|\n)(null|\[object)/.test(b.innerText)), false);
     console.log("PASS: canvas cards, wires, guide, card prompt version, saved card position, a pose drawn from a still "
       + "and given a take's last frame, still overlay, take decision, stale render, render job, clip frame adopted as a still, "
-      + "silence overlay preview, prompt version");
+      + "wide-frame pixels, aligned silence mask, stale margin preview, prompt version");
   } catch (error) {
     if (page) {
       fs.mkdirSync("test-results", { recursive: true });

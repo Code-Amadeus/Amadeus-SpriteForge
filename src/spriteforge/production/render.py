@@ -21,10 +21,10 @@ from pathlib import Path
 import numpy as np
 
 from ..workspace import atomic_json
-from .checks import clip_report, expected_anchor, worst
+from .checks import clip_report, worst
 from .geometry import composite, estimate_similarity, lerp_matrix, premultiplied_blend, smoothstep, warp
 from .media import copy_durable, media_frames, read_bgra, sorted_pngs, write_png
-from .mouth import TONE_WATCH, analyze, harmonize, prior
+from .mouth import TONE_WATCH, analyze, harmonize
 from .records import (accepted_take, canvas_size, clip_settings, load_character, load_owner, now, output_root, owner_dir,
                       recipe, render_stills, still_path, take_media_frames)
 from .tools import load_tools, run_processor
@@ -59,6 +59,7 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
     character, tools = load_character(workspace), load_tools(workspace)
     clip = load_owner(workspace, "clip", clip_id)
     settings = clip_settings(clip)
+    render_recipe = recipe(workspace, clip, character=character)
     take = accepted_take(workspace, "clip", clip_id)
     (start_path, start_take), (end_path, end_take) = still_path(workspace, clip["from"]), still_path(workspace, clip["to"])
     start, end = read_bgra(start_path)[0], read_bgra(end_path)[0]
@@ -147,13 +148,14 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
         qa = clip_report(character, written, clip["kind"], wide_start, wide_end, drift)
         interval = round(1000 / (fps * factor * settings["speed"]))
         stills = {"from": start_take["id"], "to": end_take["id"]}
-        mouth = _mouth_track(workspace, character, clip, written, stills, output, margin, log) if clip.get("mouth") else None
+        mouth = (_mouth_track(workspace, character, clip, written, stills, output, margin,
+                              render_recipe["mouthPrior"], log) if clip.get("mouth") else None)
         if mouth:
             qa["checks"] += [{"check": f"mouth.{name}", "level": level, "message": message}
                              for name, level, message in mouth.pop("checks")]
             qa["status"] = worst(c["level"] for c in qa["checks"])
         render = {"format": RENDER_FORMAT, "clip": clip_id, "take": take["id"],
-                  "stills": stills, "recipe": recipe(clip), "renderedAt": now(),
+                  "stills": stills, "recipe": render_recipe, "renderedAt": now(),
                   "phase": clip["phase"], "frameCount": total, "sourceFps": fps, "interpolate": factor,
                   "frameIntervalMs": max(1, interval), "loopMode": settings["loopMode"],
                   "registration": registration, "qa": qa,
@@ -169,19 +171,13 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
 
 
 def _mouth_track(workspace: Path, character: dict, clip: dict, frames: list[Path], stills: dict, output: Path,
-                 margin: int, log) -> dict:
+                 margin: int, guess: dict, log) -> dict:
     """Silence-overlay data for a speaking loop. The closed-mouth image is, by default, the
     shared closed mouth of the loop's pose (the base still for front poses), never frame 0:
     a loop entered through a transition does not necessarily start closed. The image is
     tone-matched to the loop and stored with the render, which is what export encodes."""
     settings = clip["mouth"]
-    sets = character.get("mouthSets") or {}
-    if settings["set"] not in sets:
-        raise ValueError(f"Unknown mouth set {settings['set']!r}; define it with 'production mouth set'")
     source = settings["closedSource"]
-    anchors = character.get("anchors") or {}
-    expected = expected_anchor(character, load_owner(workspace, "pose", clip["to"]))
-    offset = (expected["headCenterX"] - anchors["headCenterX"], expected["headTopY"] - anchors["headTopY"])
     frame_index = None
     if source["kind"] == "frame":
         if source["index"] >= len(frames):
@@ -196,7 +192,7 @@ def _mouth_track(workspace: Path, character: dict, clip: dict, frames: list[Path
             stills["mouth"] = still_take["id"]
         closed = {"kind": source["kind"], "pose": pose_id, "still": still_take["id"]}
     log(f"{clip['id']}: tracking the mouth for silence overlays")
-    track = analyze(frames, image, prior(sets[settings["set"]], offset), character["background"], source_is_frame=frame_index)
+    track = analyze(frames, image, guess, character["background"], source_is_frame=frame_index)
     overlay, shift = harmonize(image, frames, track["anchorTrack"], track["sourceAnchor"])
     write_png(output / MOUTH_OVERLAY, overlay)
     if abs(shift[0]) > TONE_WATCH:

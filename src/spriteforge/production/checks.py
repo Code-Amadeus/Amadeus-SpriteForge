@@ -14,7 +14,7 @@ import numpy as np
 from ..workspace import resolve_asset
 from .geometry import face_lightness, face_roi, measure
 from .media import read_bgra, sorted_pngs
-from .records import bound_clip, canvas_size, load_owner, output_root, read_render, render_freshness
+from .records import bound_clip, canvas_size, expected_anchor, load_owner, output_root, read_render, render_freshness
 
 LEVELS = ("pass", "watch", "fix", "fail")
 WRAP_L = (1.0, 1.5, 2.2)
@@ -43,11 +43,6 @@ def _check(name: str, level: str, message: str, **data) -> dict:
 
 def _values(seam_report: dict) -> dict:
     return {k: v for k, v in seam_report.items() if k != "level"}
-
-
-def expected_anchor(character: dict, pose: dict) -> dict:
-    anchors = character.get("anchors") or {}
-    return {key: (pose.get("expected") or {}).get(key, anchors.get(key)) for key in ("headTopY", "headCenterX")}
 
 
 def still_report(character: dict, pose: dict, image: np.ndarray, normalization: dict | None = None) -> dict:

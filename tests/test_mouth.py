@@ -11,10 +11,12 @@ from synthetic import CANVAS, OPENING, mouth_centre, talking_clip  # noqa: E402
 from spriteforge.character_pack import load_character_pack  # noqa: E402
 from spriteforge.exporter import export_pack  # noqa: E402
 from spriteforge.production.mouth import detect  # noqa: E402
-from spriteforge.production.project import add_clip, set_clip, set_closed_mouth, set_mouth_set  # noqa: E402
-from spriteforge.production.records import load_character, load_owner, render_freshness, still_path  # noqa: E402
+from spriteforge.production.project import (add_clip, export_gate, graph_sync, set_clip, set_closed_mouth,  # noqa: E402
+                                            set_mouth_set)
+from spriteforge.production.records import decide, load_character, load_owner, read_render, render_freshness, still_path  # noqa: E402
 from spriteforge.production.render import render_clip  # noqa: E402
-from spriteforge.workspace import atomic_json  # noqa: E402
+from spriteforge.production.stills import set_expected  # noqa: E402
+from spriteforge.workspace import atomic_json, discover, read_json  # noqa: E402
 
 def test_base_approval_defines_a_neutral_mouth_set_and_loops_default_to_the_shared_closed_mouth(studio):
     shape = load_character(studio.root)["mouthSets"]["neutral"]
@@ -115,7 +117,83 @@ def test_export_writes_runtime_profiles_and_closed_mouth_overlays(studio, monkey
     assert len(pack.mouth_overlay_paths["smile_speaking"]) == 1
     assert Path(calls[-1][-1]) == studio.root / "production/clips/smile_talk/output/.mouth/closed.png"
     export_pack(studio.root, studio.tmp / "bodies", pack_id="demo", display_name="Demo", version="1", no_mouth=True)
-    assert load_character_pack(studio.tmp / "bodies").mouth_config == {"expressions": {}, "profiles": {}}
+    body_pack = load_character_pack(studio.tmp / "bodies")
+    assert body_pack.mouth_config == {"version": 2, "canvas_size": list(CANVAS), "profile_kind": "runtime_ktx2",
+                                     "expressions": {}, "profiles": {}}
+    assert body_pack.manifest["mouthOverlays"] == {}
+
+
+def bind_talking_clip(studio, render, root="production/clips/smile_talk/output", phase="loop"):
+    graph = {"nodes": [{"id": "talk", "label": "smile_speaking", "root": root, "phase": phase,
+                        "frameIntervalMs": render["frameIntervalMs"], "loopMode": "loop", "isRoot": True}], "edges": []}
+    atomic_json(studio.root / "graph_config.json", graph)
+    return graph
+
+
+def test_discovered_production_folder_cannot_bypass_gates_or_drop_the_mouth(studio, monkeypatch):
+    talking_clip(studio)
+    render = render_clip(studio.root, "smile_talk", log=lambda *_: None)
+    [folder] = [s for group in discover(studio.root) for project in group["projects"] for s in project["states"]]
+    graph = bind_talking_clip(studio, render, folder["root"], "flat")
+    with monkeypatch.context() as scoped:
+        calls = fake_encoder(scoped)
+        with pytest.raises(ValueError, match="run graph-sync"):
+            export_pack(studio.root, studio.tmp / "unsynced", pack_id="demo", display_name="Demo", version="1")
+        assert not calls and not (studio.tmp / "unsynced").exists()
+        assert graph_sync(studio.root)["changes"]
+        synced = read_json(studio.root / "graph_config.json")["nodes"][0]
+        assert (synced["root"], synced["phase"]) == ("production/clips/smile_talk/output", "loop")
+        export_pack(studio.root, studio.tmp / "pack", pack_id="demo", display_name="Demo", version="1")
+        pack = load_character_pack(studio.tmp / "pack")
+        assert "smile_speaking" in pack.mouth_config["profiles"] and len(pack.mouth_overlay_paths["smile_speaking"]) == 1
+
+    # Rebinding the leaf folder must not hide a changed take or a failed clip QA.
+    atomic_json(studio.root / "graph_config.json", graph)
+    take_id = load_owner(studio.root, "clip", "smile_talk")["acceptedTake"]
+    decide(studio.root, "clip", "smile_talk", take_id, "reject", "review probe")
+    with pytest.raises(ValueError, match="accepted take changed"):
+        export_gate(studio.root, graph)
+    decide(studio.root, "clip", "smile_talk", take_id, "accept")
+    render["qa"]["status"] = "fail"
+    atomic_json(studio.root / "production/clips/smile_talk/output/render.json", render)
+    with pytest.raises(ValueError, match="clip QA failed"):
+        export_gate(studio.root, graph)
+
+
+def test_mouth_set_and_pose_offsets_invalidate_tracks_and_old_renders(studio, monkeypatch):
+    talking_clip(studio)
+    render = render_clip(studio.root, "smile_talk", log=lambda *_: None)
+    graph = bind_talking_clip(studio, render)
+    clip = load_owner(studio.root, "clip", "smile_talk")
+    original = load_character(studio.root)["mouthSets"]["neutral"]
+    for key in ("cx", "cy", "width", "height", "curve"):
+        set_mouth_set(studio.root, "neutral", **{key: original[key] + 1})
+        assert render_freshness(studio.root, clip)[0] == "stale", key
+        with pytest.raises(ValueError, match="mouth settings changed"):
+            export_gate(studio.root, graph)
+        set_mouth_set(studio.root, "neutral", **original)
+        assert render_freshness(studio.root, clip)[0] == "current", key
+    set_mouth_set(studio.root, "unrelated", **original)
+    assert render_freshness(studio.root, clip)[0] == "current"
+    anchors = load_character(studio.root)["anchors"]
+    set_expected(studio.root, "smile", anchors["headTopY"] + 2, anchors["headCenterX"] + 2)
+    assert render_freshness(studio.root, clip)[0] == "stale"
+    set_expected(studio.root, "smile", None, None)
+
+    # Existing experimental renders have no snapshot of shared mouth settings.
+    render["recipe"].pop("mouthSet")
+    render["recipe"].pop("mouthPrior")
+    atomic_json(studio.root / "production/clips/smile_talk/output/render.json", render)
+    assert render_freshness(studio.root, clip)[0] == "stale"
+    changed = set_mouth_set(studio.root, "neutral", cx=original["cx"] + 2, width=original["width"] * 1.5)
+    render_clip(studio.root, "smile_talk", log=lambda *_: None)
+    assert render_freshness(studio.root, clip)[0] == "current"
+    fake_encoder(monkeypatch)
+    export_pack(studio.root, studio.tmp / "pack", pack_id="demo", display_name="Demo", version="1")
+    pack = load_character_pack(studio.tmp / "pack")
+    assert pack.mouth_config["expressions"]["neutral"] == changed
+    updated = read_render(studio.root, "smile_talk")
+    assert pack.mouth_config["profiles"]["smile_speaking"]["anchor_track"] == updated["mouth"]["anchorTrack"]
 
 
 def fake_encoder(monkeypatch):

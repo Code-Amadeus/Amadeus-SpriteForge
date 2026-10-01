@@ -518,6 +518,10 @@ async function playOutput(clip, canvas, render, silence) {
     let shown = 0;
     let hold = 0;
     frame.onload = () => {
+      // Use the published frame's canvas, including margins. Clip settings may already
+      // have changed while this older render is still being reviewed.
+      if (canvas.width !== frame.naturalWidth) canvas.width = frame.naturalWidth;
+      if (canvas.height !== frame.naturalHeight) canvas.height = frame.naturalHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(frame, 0, 0);
       canvas.dataset.frame = String(shown);

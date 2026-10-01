@@ -20,7 +20,7 @@ from spriteforge.production.media import read_bgra, sorted_pngs  # noqa: E402
 from spriteforge.production.project import (add_clip, add_pose, graph_sync, overview, set_clip,  # noqa: E402
                                             set_runtime_clips)
 from spriteforge.production.api import ProductionApi  # noqa: E402
-from spriteforge.production.records import (decide, load_character, load_owner, load_take, output_root,  # noqa: E402
+from spriteforge.production.records import (bound_clip, decide, load_character, load_owner, load_take, output_root,  # noqa: E402
                                             read_render, render_freshness, take_dir)
 from spriteforge.production.render import render_clip, widen  # noqa: E402
 from spriteforge.production.stills import adopt_frame, approve_still, import_still, set_expected  # noqa: E402
@@ -406,6 +406,35 @@ def test_discovery_offers_outputs_not_take_media(studio):
     render_clip(studio.root, "idle_loop", log=lambda *_: None)
     roots = [s["root"] for p in discover(studio.root)[0]["projects"] for s in p["states"]]
     assert roots == ["production/clips/idle_loop/output/loop"]
+
+
+@pytest.mark.parametrize("suffix,expected", [
+    ("", "idle_loop"), ("/in", "idle_loop"), ("/loop", "idle_loop"), ("/out", "idle_loop"),
+    ("/flat", None), ("/.mouth", None), ("/loop/extra", None), ("/../takes", None),
+])
+def test_production_bindings_recognize_only_output_and_phase_folders(suffix, expected):
+    assert bound_clip("production/clips/idle_loop/output" + suffix) == expected
+    assert bound_clip(("production/clips/idle_loop/output" + suffix).replace("/", "\\")) == expected
+    assert bound_clip("projects/clips/idle_loop/output" + suffix) is None
+
+
+@pytest.mark.parametrize("no_mouth", [False, True])
+def test_wide_body_only_exports_keep_the_character_canvas(studio, monkeypatch, no_mouth):
+    add_clip(studio.root, "smile_wind", "smile", "smile")
+    set_clip(studio.root, "smile_wind", register=False, margin=12)
+    folder = placed_frames(studio, "smile_wind", "smile", 4, 12)
+    take = import_clip_take(studio.root, "smile_wind", folder, fps=30)
+    decide(studio.root, "clip", "smile_wind", take["id"], "accept")
+    render_clip(studio.root, "smile_wind", log=quiet)
+    atomic_json(studio.root / "graph_config.json", {"nodes": [
+        {"id": "wind", "label": "smile_wind", "isRoot": True, "root": output_root("smile_wind")}], "edges": []})
+    graph_sync(studio.root)
+    fake_encoder(monkeypatch)
+    export_pack(studio.root, studio.tmp / "pack", pack_id="demo", display_name="Demo", version="1", no_mouth=no_mouth)
+    pack = load_character_pack(studio.tmp / "pack")
+    assert pack.mouth_config == {"version": 2, "canvas_size": list(CANVAS), "profile_kind": "runtime_ktx2",
+                                "expressions": {}, "profiles": {}}
+    assert pack.manifest["mouthOverlays"] == {} and pack.manifest["frameCount"] == 4
 
 
 def fake_encoder(monkeypatch):

@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from synthetic import build_studio, clip_with_take, frame_folder, provider_frames, still, talking_clip, write_video  # noqa: E402
 
 from spriteforge.production.clips import import_clip_take  # noqa: E402
-from spriteforge.production.project import graph_sync  # noqa: E402
+from spriteforge.production.project import graph_sync, set_clip  # noqa: E402
 from spriteforge.production.records import decide  # noqa: E402
 from spriteforge.production.render import render_clip  # noqa: E402
 
@@ -23,6 +23,7 @@ def main(target: Path) -> None:
     rejected = import_clip_take(studio.root, "smile_in", frame_folder(studio, "first", "idle", "smile", 20), fps=30)
     decide(studio.root, "clip", "smile_in", rejected["id"], "reject", "hair jitters")
     talking_clip(studio)
+    set_clip(studio.root, "smile_talk", margin=40)
     for clip_id in ("idle_loop", "smile_in", "smile_talk"):
         render_clip(studio.root, clip_id, log=lambda *_: None)
     graph_sync(studio.root, add_missing=True)

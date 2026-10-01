@@ -272,3 +272,34 @@ asking for "only slight breathing", then returns to its first frame.
 - A real level-4 export of the demo workspace passed this repository's validator and
   Amadeus `tools/validate_character_pack.py`. All 9 of its textures record the new
   settings.
+
+## Production binding, mouth freshness and wide-frame regression checks (2026-10-01)
+
+- Local Python suite: **89 passed, 1 skipped** (Windows symlink permission).
+  Discovered `output/<phase>` bindings now hit the production export gate, require
+  graph-sync, retain mouth overlays after sync, and reject changed takes or failing
+  clip QA. Unknown suffixes and take/overlay folders are not production bindings.
+- Mouth renders snapshot the selected set and its pose-adjusted prior. Tests cover
+  changes to each set parameter, intended head offsets, unrelated sets, re-render
+  recovery and older experimental renders without the snapshot.
+- Edge browser smoke passes for Review and Production. A 240x320 synthetic canvas
+  with 40 px margins produces 320x320 frames; the preview matches every frame pixel,
+  the silence mask is centred on the recorded anchor, and changing the margin before
+  re-rendering leaves the published preview's size intact.
+- Real toktx 4.4.2 exports (UASTC level 4, zstd 18), using generated synthetic media:
+
+  | Export | Frames | Textures | Mouth profiles | Recorded canvas |
+  | --- | ---: | ---: | ---: | --- |
+  | Speaking loop with margins | 25 | 26 | 1 | 240x320 |
+  | Same loop with `--no-mouth` | 25 | 25 | 0 | 240x320 |
+  | Body-only loop with margins | 25 | 25 | 0 | 240x320 |
+
+  All three pass SpriteForge and Amadeus `load_character_pack`. Amadeus's
+  `SpriteForgeAnimator` registers their frames with a probe engine and forwards
+  `canvasWidth=240`, `canvasHeight=320`; only the speaking export loads a mouth
+  profile. These are real encoder/loader checks, not the test suite's encoder stubs.
+- The wheel and source archive build successfully. A fresh environment installed
+  the wheel with `--no-deps`; the packaged KTX2 browser smoke passes against the
+  checked-in runtime example.
+- No new provider calls, GPU interpolation or full Kurisu re-export were performed
+  for these fixes. Earlier experimental mouth renders need a re-render before export.

@@ -217,11 +217,11 @@ def graph_sync(workspace: Path, *, add_missing: bool = False) -> dict:
         if render is None:
             missing.append(clip_id)
             continue
-        node["root"] = output_root(clip_id)
-        for key in ("phase", "frameIntervalMs", "loopMode"):
-            if node.get(key) != render[key]:
-                changes.append(f"{node['id']}.{key}: {node.get(key)!r} -> {render[key]!r}")
-                node[key] = render[key]
+        values = {"root": output_root(clip_id), **{key: render[key] for key in ("phase", "frameIntervalMs", "loopMode")}}
+        for key, value in values.items():
+            if node.get(key) != value:
+                changes.append(f"{node['id']}.{key}: {node.get(key)!r} -> {value!r}")
+                node[key] = value
     if add_missing:
         character = load_character(workspace)
         labels = {n["label"] for n in graph["nodes"]}
@@ -281,7 +281,7 @@ def export_gate(workspace: Path, graph: dict) -> dict:
     return report
 
 
-def export_mouth(workspace: Path, graph: dict) -> dict:
+def export_mouth(workspace: Path, graph: dict, *, no_mouth: bool = False) -> dict:
     """Runtime mouth profiles and closed-mouth images of production-bound speaking loops.
 
     Profiles are keyed by node label and carry only runtime fields: the mask track and
@@ -289,7 +289,10 @@ def export_mouth(workspace: Path, graph: dict) -> dict:
     overlay is the tone-matched closed mouth stored with the render."""
     character = load_character(workspace)
     sets = character.get("mouthSets") or {}
-    result = {"expressions": {}, "profiles": {}, "overlays": {}}
+    result = {"header": {"version": 2, "canvas_size": list(canvas_size(character)), "profile_kind": "runtime_ktx2"},
+              "expressions": {}, "profiles": {}, "overlays": {}}
+    if no_mouth:
+        return result
     for node in graph["nodes"]:
         clip_id = bound_clip(node["root"])
         render = read_render(workspace, clip_id) if clip_id else None
@@ -298,12 +301,10 @@ def export_mouth(workspace: Path, graph: dict) -> dict:
             continue
         if mouth["set"] not in sets:
             raise ValueError(f"{node['label']}: mouth set {mouth['set']!r} no longer exists")
-        result["expressions"][mouth["set"]] = sets[mouth["set"]]
+        result["expressions"][mouth["set"]] = render["recipe"]["mouthSet"]
         result["profiles"][node["label"]] = {
             "mouth_set": mouth["set"], **mouth["roi"], "closed_frame_idx": mouth["closedFrame"],
             "openness": mouth["openness"], "anchor_track": mouth["anchorTrack"],
             "runtime_overlay_anchor": mouth["sourceAnchor"]}
         result["overlays"][node["label"]] = resolve_asset(workspace, output_root(clip_id)) / mouth["overlay"]
-    if result["profiles"]:
-        result["header"] = {"version": 2, "canvas_size": list(canvas_size(character)), "profile_kind": "runtime_ktx2"}
     return result

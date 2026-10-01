@@ -22,6 +22,7 @@ CLIP_FORMAT = "spriteforge.production.clip.v1"
 TAKE_FORMAT = "spriteforge.production.take.v1"
 EDGES = ("left", "right", "top", "bottom")
 OWNERS = {"pose": "poses", "clip": "clips"}
+PHASES = ("in", "loop", "out")
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 TAKE_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
 # Reference framing measured on the shipped Kurisu pack: visible width is 71% of the
@@ -132,7 +133,7 @@ def create_clip(workspace: Path, clip_id: str, source: str, target: str, *, phas
         load_owner(workspace, "pose", pose_id)
     kind = "loop" if source == target else "transition"
     phase = phase or ("loop" if kind == "loop" else "out" if target == character["basePose"] else "in")
-    if phase not in {"in", "loop", "out"}:
+    if phase not in PHASES:
         raise ValueError("Clip phase must be in, loop or out")
     clip = {"format": CLIP_FORMAT, "id": clip_id, "kind": kind, "from": source, "to": target, "phase": phase,
             "prompt": {"template": kind, "subject": f"clip.{clip_id}"}, **clip_defaults(kind),
@@ -265,8 +266,11 @@ def output_root(clip_id: str) -> str:
 
 
 def bound_clip(root: object) -> str | None:
+    """The production clip a graph root shows: its output folder, or the phase folder inside it
+    that frame-folder discovery offers. Export gating, mouth export and graph-sync rely on this."""
     parts = str(root or "").replace("\\", "/").strip("/").split("/")
-    if len(parts) == 4 and parts[:2] == [ROOT, OWNERS["clip"]] and parts[3] == "output" and IDENTIFIER.fullmatch(parts[2]):
+    if len(parts) in (4, 5) and parts[:2] == [ROOT, OWNERS["clip"]] and parts[3] == "output" \
+            and (len(parts) == 4 or parts[4] in PHASES) and IDENTIFIER.fullmatch(parts[2]):
         return parts[2]
     return None
 
@@ -317,10 +321,31 @@ def clip_settings(clip: dict) -> dict:
             "loopMode": playback["loopMode"], "lastFrame": last_frame}
 
 
-def recipe(clip: dict) -> dict:
-    """Clip fields that determine the rendered frames, their timing and mouth track."""
-    return {"phase": clip["phase"], "processing": clip["processing"], "playback": clip["playback"],
-            **({"mouth": clip["mouth"]} if clip.get("mouth") else {})}
+def expected_anchor(character: dict, pose: dict) -> dict:
+    anchors = character.get("anchors") or {}
+    return {key: (pose.get("expected") or {}).get(key, anchors.get(key)) for key in ("headTopY", "headCenterX")}
+
+
+def mouth_prior(character: dict, clip: dict, pose: dict) -> dict:
+    """The selected mouth set moved with the pose's head offset from the base anchors."""
+    name = clip["mouth"]["set"]
+    sets = character.get("mouthSets") or {}
+    if name not in sets:
+        raise ValueError(f"Unknown mouth set {name!r}; define it with 'production mouth set'")
+    mouth_set, anchors = sets[name], character.get("anchors") or {}
+    expected = expected_anchor(character, pose)
+    return {**mouth_set, "cx": mouth_set["cx"] + (expected["headCenterX"] - anchors["headCenterX"]),
+            "cy": mouth_set["cy"] + (expected["headTopY"] - anchors["headTopY"])}
+
+
+def recipe(workspace: Path, clip: dict, *, character: dict | None = None) -> dict:
+    """Inputs that determine rendered frames, timing and mouth data, including shared settings."""
+    result = {"phase": clip["phase"], "processing": clip["processing"], "playback": clip["playback"]}
+    if clip.get("mouth"):
+        character = character if character is not None else load_character(workspace)
+        guess = mouth_prior(character, clip, load_owner(workspace, "pose", clip["to"]))
+        result.update(mouth=clip["mouth"], mouthSet=dict(character["mouthSets"][clip["mouth"]["set"]]), mouthPrior=guess)
+    return result
 
 
 def closed_mouth_pose(character: dict, pose: dict) -> str:
@@ -348,7 +373,7 @@ def render_freshness(workspace: Path, clip: dict) -> tuple[str, list[str]]:
     reasons = []
     if render.get("take") != clip.get("acceptedTake"):
         reasons.append("the accepted take changed")
-    if render.get("recipe") != recipe(clip):
+    if render.get("recipe") != recipe(workspace, clip):
         reasons.append("processing, playback or mouth settings changed")
     for role, pose_id in render_stills(workspace, clip).items():
         pose = load_owner(workspace, "pose", pose_id)

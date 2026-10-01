@@ -214,7 +214,10 @@ Amadeus anchors every frame at its bottom centre. It keeps such a clip at the
 character's size only when it fits the character by the pack's `canvas_size`
 (Code-Amadeus/Amadeus#138). Earlier runtimes fit each frame by its own texture, so in
 a width-limited view, such as the wallpaper CRT on screens narrower than 16:9, a wider
-frame draws the character smaller. Export writes `canvas_size` with the mouth profiles.
+frame draws the character smaller. Every production export writes `canvas_size`,
+including packs without mouth profiles and `--no-mouth` exports. The Production
+preview shows the full published frame, including margins, even while changed
+clip settings await a new render.
 
 `frameIntervalMs = round(1000 / (source fps × interpolate × speed))`. The Kurisu pack
 used 30 fps × 2 → 17 ms loops, 24 fps × 2 → 21 ms idle, and transitions at 2–4× speed
@@ -331,8 +334,11 @@ idle_loop --edge-guard 16` fixed it, as the earlier edge-leak repair did.
 ## Graph and export
 
 Bind a node to a clip with root `production/clips/<clip>/output` and the clip's phase.
-`production graph-sync` copies phase, frame interval and loop mode from `render.json`
-onto bound nodes; `--add-missing` also adds a node for each rendered clip that is not
+The Review folder list also exposes `output/<phase>` with phase `flat`; these
+bindings are subject to the same export gate and mouth export. Run
+`production graph-sync` to normalize them to the output root and copy phase, frame
+interval and loop mode from `render.json` onto bound nodes;
+`--add-missing` also adds a node for each rendered clip that is not
 in the graph (the base loop becomes root if the graph has none). Edges and weights stay
 the author's decision in the graph editor. Export also writes the mouth overlays below.
 
@@ -380,6 +386,10 @@ does.
 
 Mouth sets (`production mouth set NAME --cx --cy --width --height --curve`, in pixels
 from the canvas centre) are priors for detection and become the pack's `expressions`.
+Each mouth render snapshots the chosen set and its pose-adjusted prior. Changing
+that set or the pose's expected head offset makes the render stale and blocks
+export until it is rendered again. Earlier experimental mouth renders without
+this snapshot also need one re-render; body-only renders are unaffected.
 Approving the base still creates `neutral` from its anchors: centre 29% of the canvas
 height below the head top, 4.5% of the width wide, 1.75% of the height tall (Kurisu's
 hand-tuned neutral mouth is 4.0 / −196 / 34 × 18; the derived one is 5.8 / −195.9 /
@@ -388,7 +398,7 @@ hand-tuned neutral mouth is 4.0 / −196 / 34 × 18; the derived one is 5.8 / �
 Export writes one profile per bound speaking-loop node (`mouth_set`, `cx`, `cy`,
 `width`, `height`, `closed_frame_idx`, `openness`, `anchor_track`,
 `runtime_overlay_anchor`) and one KTX2 overlay in `mouthOverlays`; `--no-mouth` drops
-them. Amadeus applies profiles only to the labels it treats as speaking loops and keeps
+them while preserving the canvas header. Amadeus applies profiles only to the labels it treats as speaking loops and keeps
 its own per-label mask adjustments.
 
 ## Providers

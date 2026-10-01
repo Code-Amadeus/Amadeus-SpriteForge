@@ -27,11 +27,11 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
     if (production_dir(workspace) / "character.json").is_file():
         from .production.project import export_gate, export_mouth, export_nodes
         nodes = export_nodes(workspace, graph)
-    if any(bound_clip(node["root"]) for node in nodes):
         scope = {"nodes": nodes, "edges": graph["edges"]}
         export_gate(workspace, scope)
-        if not no_mouth:
-            speaking = export_mouth(workspace, scope)
+        speaking = export_mouth(workspace, scope, no_mouth=no_mouth)
+    elif any(bound_clip(node["root"]) for node in nodes):
+        raise ValueError("Production clips require production/character.json before export")
     layout = None
     if all("x" in node and "y" in node for node in graph["nodes"]):
         coordinates = layout_coordinates(graph, graph)

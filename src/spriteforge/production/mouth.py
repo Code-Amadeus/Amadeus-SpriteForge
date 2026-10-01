@@ -42,11 +42,6 @@ def default_set(anchors: dict, width: int, height: int) -> dict:
             "curve": DEFAULT_SET["curve"]}
 
 
-def prior(mouth_set: dict, offset: tuple[float, float]) -> dict:
-    """The mouth set moved with a pose's head offset from the base anchors."""
-    return {**mouth_set, "cx": mouth_set["cx"] + offset[0], "cy": mouth_set["cy"] + offset[1]}
-
-
 def _gray(image: np.ndarray, background: list[int]) -> np.ndarray:
     return cv2.GaussianBlur(cv2.cvtColor(composite(image, background), cv2.COLOR_BGR2GRAY), (3, 3), 0)
 
