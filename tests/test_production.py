@@ -188,6 +188,25 @@ def test_prepare_writes_exact_provider_inputs(studio):
         prepare(studio.root, "clip", "smile_in", studio.tmp / "handoff")
 
 
+@pytest.mark.parametrize("clip_id,source,target", [("smile_in", "idle", "smile"), ("idle_loop", "idle", "idle")])
+def test_english_preset_keeps_the_original_constraints_in_the_positive_prompt(studio, clip_id, source, target):
+    preset = read_json(Path(__file__).resolve().parents[1] / "examples/prompt-presets/live2d-idle.en.json")
+    library = prompts.load_library(studio.root)
+    prompts.import_preset(library, preset)
+    prompts.save_library(studio.root, library)
+    add_clip(studio.root, clip_id, source, target)
+    library = prompts.load_library(studio.root)
+    prompts.set_block(library, f"clip.{clip_id}", "with the character moving naturally between the supplied poses")
+    prompts.save_library(studio.root, library)
+    prepare(studio.root, "clip", clip_id, studio.tmp / "handoff")
+    snapshot = read_json(studio.tmp / "handoff/prompt.json")
+    expected = ("Create a natural Live2D-style idle animation clip, with the character moving naturally between the supplied poses, "
+                "using only the most natural transitions, keeping everything else unchanged, avoiding any exaggerated movement, "
+                "and keeping brightness constant")
+    assert snapshot["complete"] and snapshot["negative"] == "" and snapshot["text"] == expected
+    assert (studio.tmp / "handoff/prompt.txt").read_text(encoding="utf-8") == expected
+
+
 def test_a_transition_generated_from_its_first_frame_defines_its_end_pose(studio):
     add_pose(studio.root, "turn")
     add_clip(studio.root, "turn_in", "idle", "turn")

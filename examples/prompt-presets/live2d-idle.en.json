@@ -1,0 +1,25 @@
+{
+  "format": "spriteforge.production.prompt-preset.v1",
+  "templates": {
+    "transition": {
+      "blocks": ["live2d.style", "@subject", "live2d.constraints"],
+      "negative": [],
+      "join": ", "
+    },
+    "loop": {
+      "blocks": ["live2d.style", "@subject", "live2d.constraints"],
+      "negative": [],
+      "join": ", "
+    }
+  },
+  "blocks": {
+    "live2d.style": {
+      "description": "English opening of the original Live2D-style idle template",
+      "text": "Create a natural Live2D-style idle animation clip"
+    },
+    "live2d.constraints": {
+      "description": "Original shared constraints, included in the positive prompt for every provider",
+      "text": "using only the most natural transitions, keeping everything else unchanged, avoiding any exaggerated movement, and keeping brightness constant"
+    }
+  }
+}

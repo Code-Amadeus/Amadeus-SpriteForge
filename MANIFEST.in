@@ -1,7 +1,7 @@
 include README.md CONTRIBUTING.md LICENSE NOTICE.md THIRD_PARTY_NOTICES.md
 include pyproject.toml package.json package-lock.json
 recursive-include LICENSES *.txt
-recursive-include docs *.md *.png
+recursive-include docs *.md *.png *.gif
 recursive-include schemas *.json
 recursive-include examples *.md *.json *.png *.ktx2
 recursive-include tests *.py

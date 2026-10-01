@@ -27,6 +27,20 @@ from the geometric demo and its license grant; see the directory's provenance no
 
 ## Prompt presets
 
+The walkthrough now uses [`prompt-presets/live2d-idle.en.json`](prompt-presets/live2d-idle.en.json),
+the complete English counterpart of the original template: a Live2D-style opening,
+the clip's action, then the shared constraints (natural transitions, everything else
+unchanged, no exaggerated movement, constant brightness). For example, the **full** prompt is:
+
+```text
+Create a natural Live2D-style idle animation clip, with the character naturally changing from the neutral expression in the first frame to the gentle closed-eye smile in the last frame, keeping the standing pose and hand positions unchanged and settling smoothly into the supplied final pose, using only the most natural transitions, keeping everything else unchanged, avoiding any exaggerated movement, and keeping brightness constant
+```
+
+Import the English preset, edit a clip's subject block and run `production prompt render`
+to inspect the entire request. The constraints are in the positive prompt so they also
+reach Wan CLI. These English examples are a translation and starting point; they have
+not been qualified by new paid generations. The original Chinese preset remains available below.
+
 `prompt-presets/live2d-idle.zh-CN.json` is one way to write video prompts, taken from a
 production that used Wan image-to-video. It is a starting point, not a requirement:
 new workspaces keep placeholders, and you are free to write prompts any way that

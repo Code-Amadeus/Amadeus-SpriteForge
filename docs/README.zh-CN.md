@@ -4,6 +4,17 @@
 最后导出 Amadeus 可用的 KTX2 角色包。图生视频服务是可选适配器，Amadeus 主 runtime
 保持独立。组织仓库为 `Code-Amadeus/Amadeus-SpriteForge`。
 
+## 生产管线动图
+
+![生产画布、静帧对齐、过渡预览和循环 QA](images/production-pipeline.gif)
+
+12 秒实机界面录屏：连接姿态与片段 → 比较静帧对齐 → 查看过渡 → 检查循环与 QA。
+使用之前生成好的 Wan 3.0 take，录屏不包含模型生成等待时间。
+[静态总览](images/production-pipeline-poster.png) ·
+[用仓库参考图开始体验](../examples/references/kurisu/)。
+
+## 审阅界面
+
 ![KTX2 角色预览与原始行为图](images/reviewer-ktx2-graph.png)
 
 截图展示当前 reviewer 与单独提供的角色包；仓库内可直接运行的示例使用几何图形素材。
@@ -49,8 +60,9 @@ Graph 的 `Preview selected clip` 与导出共用帧选择、时间和循环配�
 Amadeus 继续负责语义 intent、说话状态、嘴部振幅、呈现优先级、停留和回落。
 单段预览不等于完整 TTS 表演模拟。仓库包含精选角色参考静帧；完整角色包、API key、模型权重、
 场景图编辑器和完整 renderer 不在仓库内；场景图后续按独立契约整理。
-新工作区的 prompt 都是占位符；`examples/prompt-presets/` 里有一份可选的示例预设
-（一句话写法的 live2d 风格 idle prompt，在 Wan 上用过），可以参考，也可以完全按自己的方式写。
+新工作区的 prompt 都是占位符；`examples/prompt-presets/` 保留了原来的中文模板，
+并提供完整英文版 `live2d-idle.en.json`。上手指南默认用英文版，保留“风格开头、动作、
+自然过渡、其余不变、不夸张、不改变明度”的结构，同时列出完整拼接结果。
 
 ## 生产管线
 
