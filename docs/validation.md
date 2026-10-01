@@ -303,3 +303,23 @@ asking for "only slight breathing", then returns to its first frame.
   checked-in runtime example.
 - No new provider calls, GPU interpolation or full Kurisu re-export were performed
   for these fixes. Earlier experimental mouth renders need a re-render before export.
+
+## Kurisu reference stills on the shipped framing (2026-10-02)
+
+- The published current idle came from the Wan trial's default framing. Its head
+  centre was 379.08 against 387.82 on the first frame of the shipped root `idle` node,
+  at 0.7% larger scale, so a graph joint between the two failed the 3 px head-centre
+  tolerance (seam check: `dHeadCenter` −8.74).
+- Its source artwork is the image the shipped idle was generated from: 1149 of 1200
+  ORB matches agree on one similarity transform to that frame. A least-squares scale
+  and offset over those inliers gives `--place 0.684764,16.716,10.864`, with a median
+  residual of 0.87 px (0.86 px with the 0.04° rotation the placement omits).
+- The idle and smile sources were matted again on CPU with the trial's anime-segmentation
+  wrapper. The idle was imported with that placement and the smile without one; the
+  smile registered to the new idle (989 of 1200 matches). Both pass still QA.
+- Against the shipped frames (the table in `examples/references/kurisu/README.md`), the
+  idle registers at (+0.20, −0.28) px and scale 0.99987, head anchors 21 / 387.66
+  against 20 / 387.82. The seam check passes its geometry and reports `fix` for a face
+  lightness of +2.07 L*: the source artwork is brighter than the shipped video frames.
+  The smile is 2.4 px right of the shipped smile pose (`trans_smile`'s last frame),
+  within tolerance. No provider calls were made.
