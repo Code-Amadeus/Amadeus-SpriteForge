@@ -42,7 +42,7 @@ const { spawn, spawnSync } = require("node:child_process");
     const routes = ["overview", "expressions", "clips", "workflows", "review", "behavior", "export"];
     for (const stage of routes) {
       await page.locator(`[data-stage='${stage}']`).click();
-      await page.waitForFunction(value => location.hash.startsWith("#/" + value), stage);
+      await page.waitForFunction(value => window.SFStudio?.route.stage === value, stage);
       await page.locator("#studioMain h1").waitFor();
       await page.screenshot({ path: path.join(screenshots, `studio-${stage}-en.png`) });
     }
@@ -64,6 +64,7 @@ const { spawn, spawnSync } = require("node:child_process");
       const link = page.locator(`[data-stage='${stage}']`);
       assert.ok((await link.innerText()).includes(chinese[stage]));
       await link.click();
+      await page.waitForFunction(value => window.SFStudio?.route.stage === value, stage);
       await page.locator("#studioMain h1").waitFor();
       if (stage !== "overview") assert.ok((await page.locator("#studioMain h1").innerText()).includes(chinese[stage]));
       await page.screenshot({ path: path.join(screenshots, `studio-${stage}-zh.png`) });
