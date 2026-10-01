@@ -32,6 +32,8 @@ node tools/ktx_smoke.cjs
 
 For installed Microsoft Edge, set `BROWSER_CHANNEL=msedge`. Browser smoke tests
 use temporary authoring workspaces and the checked-in geometric KTX2 example.
+Production tests with video takes and `tools/production_smoke.cjs` need FFmpeg on
+`PATH`; CI installs it.
 
 ## Contracts to preserve
 
