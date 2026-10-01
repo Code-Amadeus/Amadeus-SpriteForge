@@ -14,9 +14,16 @@ const { spawn, spawnSync } = require("node:child_process");
     { encoding: "utf8", windowsHide: true });
   assert.equal(result.status, 0, result.stderr);
   const workspace = result.stdout.trim().split(/\r?\n/).pop();
-  const server = spawn(python, ["-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser"],
+  const server = spawn(python, ["-X", "faulthandler", "-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser"],
     { windowsHide: true });
+  let serverErrors = "";
+  server.stderr.on("data", chunk => { serverErrors = (serverErrors + chunk).slice(-16000); });
   let browser, page;
+  const errors = [], consoleErrors = [], requestFailures = [], responses = [];
+  const pendingRequests = new Set();
+  const retain = (entries, value) => { entries.push(value); if (entries.length > 60) entries.shift(); };
+  const relevant = request => ["document", "script", "stylesheet"].includes(request.resourceType())
+    || /\/api\/(production|clips)(?:[/?]|$)/.test(request.url());
   const screenshots = path.join(__dirname, "..", "test-results");
   fs.mkdirSync(screenshots, { recursive: true });
   try {
@@ -31,8 +38,17 @@ const { spawn, spawnSync } = require("node:child_process");
     });
     browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL || undefined });
     page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    const errors = [];
     page.on("pageerror", error => errors.push(error.message));
+    page.on("console", message => { if (message.type() === "error") retain(consoleErrors, message.text()); });
+    page.on("request", request => { if (relevant(request)) pendingRequests.add(request); });
+    page.on("requestfinished", request => pendingRequests.delete(request));
+    page.on("requestfailed", request => {
+      pendingRequests.delete(request);
+      if (relevant(request)) retain(requestFailures, { url: request.url(), error: request.failure()?.errorText });
+    });
+    page.on("response", response => {
+      if (relevant(response.request())) retain(responses, { url: response.url(), status: response.status() });
+    });
     await page.goto(url + "/studio");
     await page.locator("#studioMain h1").waitFor();
     assert.equal(await page.locator("html").getAttribute("lang"), "en");
@@ -156,6 +172,18 @@ const { spawn, spawnSync } = require("node:child_process");
     assert.deepEqual(errors, []);
     console.log("Studio routes, language, history, tools, canvas and layout passed");
   } catch (error) {
+    console.error("Studio fixture server:", { exitCode: server.exitCode, signal: server.signalCode, stderr: serverErrors });
+    console.error("Studio browser errors:", { pageErrors: errors, consoleErrors, requestFailures,
+      pendingRequests: [...pendingRequests].map(request => request.url()), responses });
+    if (page) console.error("Studio boot facts:", await page.evaluate(() => {
+      const main = document.querySelector("#studioMain");
+      return { url: location.href, readyState: document.readyState, studio: Boolean(window.SFStudio),
+        route: window.SFStudio?.route, initialized: window.SFStudio?.state?.initialized,
+        mainBusy: main?.getAttribute("aria-busy"), headings: main?.querySelectorAll("h1").length,
+        mainText: main?.innerText.slice(0, 500),
+        sidebarChildren: document.querySelector("#studioSidebar")?.childElementCount,
+        topbarChildren: document.querySelector("#studioTopbar")?.childElementCount };
+    }).catch(cause => ({ unavailable: cause.message })));
     if (page) await page.screenshot({ path: path.join(screenshots, "studio-failure.png") }).catch(() => {});
     throw error;
   } finally {
