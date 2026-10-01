@@ -1,4 +1,5 @@
 import shutil
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,15 +19,27 @@ from spriteforge.production.geometry import measure  # noqa: E402
 from spriteforge.production.media import read_bgra, sorted_pngs  # noqa: E402
 from spriteforge.production.project import (add_clip, add_pose, graph_sync, overview, set_clip,  # noqa: E402
                                             set_runtime_clips)
+from spriteforge.production.api import ProductionApi  # noqa: E402
 from spriteforge.production.records import (decide, load_character, load_owner, load_take, output_root,  # noqa: E402
-                                            read_render, render_freshness)
+                                            read_render, render_freshness, take_dir)
 from spriteforge.production.render import render_clip, widen  # noqa: E402
-from spriteforge.production.stills import approve_still, import_still, set_expected  # noqa: E402
+from spriteforge.production.stills import adopt_frame, approve_still, import_still, set_expected  # noqa: E402
 from spriteforge.workspace import atomic_json, discover, read_json  # noqa: E402
+
+
+def quiet(*_):
+    pass
 
 
 def accepted_still_take(studio, pose):
     return load_take(studio.root, "pose", pose, load_owner(studio.root, "pose", pose)["acceptedTake"])
+
+
+def turned_still(studio) -> np.ndarray:
+    """The base silhouette with new content: a pose change that feature registration cannot undo."""
+    turned = still(studio, "idle").copy()
+    turned[:, :, :3] = figure(*CANVAS, seed=99)[:, :, :3]
+    return turned
 
 
 def test_base_still_defines_the_canvas_contract(studio):
@@ -134,6 +147,66 @@ def test_prepare_writes_exact_provider_inputs(studio):
     assert (first[0, 0] == 255).all() and "PLACEHOLDER" in (studio.tmp / "handoff/prompt.txt").read_text()
     with pytest.raises(ValueError, match="new or empty"):
         prepare(studio.root, "clip", "smile_in", studio.tmp / "handoff")
+
+
+def test_a_transition_generated_from_its_first_frame_defines_its_end_pose(studio):
+    add_pose(studio.root, "turn")
+    add_clip(studio.root, "turn_in", "idle", "turn")
+    with pytest.raises(ValueError, match="no accepted still: approve one, or generate this transition from its first frame"):
+        prepare(studio.root, "clip", "turn_in", studio.tmp / "refused")
+    add_clip(studio.root, "idle_loop", "idle", "idle")
+    with pytest.raises(ValueError, match="a loop must return to its still"):
+        set_clip(studio.root, "idle_loop", last_frame="none")
+    with pytest.raises(ValueError, match="lastFrame must be still or none"):
+        set_clip(studio.root, "turn_in", last_frame="maybe")
+    set_clip(studio.root, "turn_in", last_frame="none")
+    files = {p.name for p in prepare(studio.root, "clip", "turn_in", studio.tmp / "handoff")}
+    assert files == {"first.png", "prompt.txt", "negative.txt", "prompt.json"}
+    folder = studio.tmp / "turn_in"
+    for index, frame in enumerate(provider_frames(still(studio, "idle"), turned_still(studio), 20)):
+        save(folder / f"{index:04d}.png", frame)
+    take = import_clip_take(studio.root, "turn_in", folder, fps=30)
+    assert take["inputs"]["last"] is None and take["inputs"]["first"]["pose"] == "idle"
+    with pytest.raises(ValueError, match="base pose still"):
+        adopt_frame(studio.root, "turn_in", take["id"], pose_id="idle", log=quiet)
+    with pytest.raises(ValueError, match="outside the take's 20 frames"):
+        adopt_frame(studio.root, "turn_in", take["id"], frame=20, log=quiet)
+
+    adopted = adopt_frame(studio.root, "turn_in", take["id"], log=quiet)
+    assert adopted["source"] == {"provider": "clip", "clip": "turn_in", "take": take["id"], "frame": 19, "frames": 20,
+                                 "note": ""}
+    assert adopted["normalization"]["method"] == "clip" and adopted["inputs"]["start"]["pose"] == "idle"
+    assert adopted["qa"]["status"] == "watch" and [c["check"] for c in adopted["qa"]["checks"]] == ["framing"]
+    approve_still(studio.root, "turn", adopted["id"])
+    placed, base = measure(still(studio, "turn")), load_character(studio.root)["anchors"]
+    assert abs(placed["headTopY"] - base["headTopY"]) <= 1 and abs(placed["headCenterX"] - base["headCenterX"]) <= 1
+
+    decide(studio.root, "clip", "turn_in", take["id"], "accept")
+    render = render_clip(studio.root, "turn_in", log=quiet)
+    drift = render["registration"]["drift"]
+    assert abs(drift["scale"]) < 0.002 and abs(drift["tx"]) < 0.5 and abs(drift["ty"]) < 0.5, drift
+    assert render["qa"]["tail"]["level"] == "pass" and render["qa"]["status"] in {"pass", "watch"}, render["qa"]
+
+
+def test_a_page_job_adopts_a_pre_placed_frame_with_its_pixels(studio):
+    add_pose(studio.root, "turn")
+    add_clip(studio.root, "turn_wind", "idle", "turn")
+    set_clip(studio.root, "turn_wind", register=False, margin=12, last_frame="none")
+    turned, folder = turned_still(studio), studio.tmp / "turn_wind"
+    for index in range(4):
+        save(folder / f"{index:04d}.png", widen(turned, 12))
+    take = import_clip_take(studio.root, "turn_wind", folder, fps=30)
+    api = ProductionApi(studio.root)
+    job = api.post("jobs", {"action": "adopt", "pose": "turn", "clip": "turn_wind", "take": take["id"], "frame": "first"})["job"]
+    assert (job["kind"], job["owner"]) == ("pose", "turn")
+    deadline = time.monotonic() + 60
+    while api.job_list()[0]["status"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.05)
+    done = api.job_list()[0]
+    assert done["status"] == "succeeded" and done["result"].endswith("QA watch"), done
+    [adopted] = overview(studio.root)["poses"][-1]["takes"]
+    assert adopted["source"]["frame"] == 0 and adopted["normalization"]["method"] == "clip" and "start" not in adopted["inputs"]
+    assert np.array_equal(read_bgra(take_dir(studio.root, "pose", "turn", adopted["id"]) / "still.png")[0], turned)
 
 
 def test_render_registers_locks_and_times_a_transition(studio):

@@ -187,3 +187,35 @@ a scratch workspace; one interrupted session was resumed by running `apply` agai
     `shy_speaking1` as a `silence_close` config (overlay KTX2, 180-frame anchor track).
   - It added smile and sad to its graph as runtime post-speech nodes from the
     manifest.
+
+## End poses adopted from transitions (2026-10-01)
+
+A transition set to `lastFrame none` is generated from its first frame alone, and a
+frame of one of its takes becomes the end pose's still (`production take adopt`).
+
+- Python suite: 71 passed, 1 Windows symlink-capability skip. The new tests cover:
+  - loops refusing `lastFrame none`, and the hint when an end still is missing;
+  - `prepare` without `last.png`, and takes recording that no last frame was sent;
+  - the base pose and out-of-range frames refused;
+  - a pose change adopted with the take's framing, approved, and rendered with drift
+    below 0.2% and 0.5 px and a passing tail seam;
+  - pre-placed frames on a widened canvas keeping their pixels, through a page job;
+  - Wan and Seedance first-frame-only requests against the local fake APIs.
+- `tools/production_smoke.cjs` (Edge): **Last frame → smile still** on a transition
+  take adds a candidate still to the smile pose.
+- No paid request was sent. The first-frame-only request shapes follow the providers'
+  documentation: Wan 2.7 lists `first_frame` alone as first-frame-to-video, and Ark
+  takes one `image_url` with role `first_frame`.
+
+Real takes, in scratch workspaces holding the shipped idle still. Matting ran on CPU
+through `tools/processors/anime_seg_alpha.py` with a scratch copy of the
+anime-segmentation code and weights.
+
+| Take (60 frames, 818×1124, 30 fps) | Adopted frame 59 | Against the shipped still | Render, locks 6 + 12 |
+| --- | --- | --- | --- |
+| `kurisu_shy_trans.mp4` (expression change) | `registration`, QA pass, 14 s | head top 20 / 19, centre 387.55 / 387.69, alpha IoU 0.991 | drift 0.04%, (−0.43, 0.39) px; head and tail seams 0.0 L*; QA pass; 79 s |
+| `kurisu_thinking_trans.mp4` (pose change) | `clip` (93/1128 matches agree), head centre +4.72 px, recorded as the pose's offset, 16 s | head top 23 / 23, centre 392.48 / 392.91, alpha IoU 0.995 | drift −0.013%, (0.26, 0.04) px; head and tail seams 0.0 L*; QA pass; 81 s |
+
+The shipped stills came from the earlier chain alignment, in which the loops were
+aligned to these transitions' last frames. Adopting the same frames reproduces those
+placements within 1 px.

@@ -70,11 +70,12 @@ def still_report(character: dict, pose: dict, image: np.ndarray, normalization: 
         ratio = metrics["area"] / max(1, anchors["area"]) - 1
         if abs(ratio) * 100 > tolerance["areaPct"]:
             checks.append(_check("area", "watch", f"Visible area differs from the base still by {ratio:+.0%}"))
-    if (normalization or {}).get("method") == "fit":
+    if (normalization or {}).get("method") in {"fit", "clip"}:
         registration = normalization.get("registration") or {}
         agreement = (f"{registration['inliers']}/{registration['matches']} matches agree" if "inliers" in registration
                      else registration.get("error", "no registration"))
-        checks.append(_check("framing", "watch", f"The pose changed ({agreement}), so the generator's framing was kept; "
+        kept = "clip take's" if normalization["method"] == "clip" else "generator's"
+        checks.append(_check("framing", "watch", f"The pose changed ({agreement}), so the {kept} framing was kept; "
                              "confirm the overlay against the base still"))
     return {"status": worst(c["level"] for c in checks), "metrics": metrics, "checks": checks}
 

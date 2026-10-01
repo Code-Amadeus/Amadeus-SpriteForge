@@ -63,6 +63,9 @@ spriteforge review --workspace studio   # 打开 /production 审批、弃用和�
   其他姿态的静帧如果是底图的刚性拷贝（纯表情编辑，≥50% 特征匹配一致）就配准回去；
   姿态变了就保留生成器的构图，要求人工叠加确认。头顶、中心超出容差不能批准，
   确实要动的姿态（侧身、思考）用 `production pose expect` 记录有意偏移。
+  也可以沿用旧的链式做法：过渡设为只用首帧生成（`clip set --last-frame none`），
+  再用 `production take adopt` 把结果里的一帧（默认最后一帧）作为终点姿态的静帧；
+  批准后它同样是固定参照，重新生成过渡不会移动它。
 - **Take 不可变、不删除**：每次生成或导入都是一个 take，保存 prompt 快照、首尾帧输入、
   服务商任务号。每个片段只采用一个 take，弃用的 take 带原因留档，可恢复。
 - **Prompt 是带版本的数据**：character / 固定约束 / 动作 / 姿态主题分块，保存即新增版本，

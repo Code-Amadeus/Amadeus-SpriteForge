@@ -1,4 +1,4 @@
-"""Pose stills: import or generate, normalise onto the canvas, check and approve.
+"""Pose stills: import, generate or adopt from a clip, normalise onto the canvas, check and approve.
 
 The source image is kept untouched in its take; ``still.png`` is the RGBA canvas
 image that clip endpoints are registered to. The base pose is placed by explicit
@@ -9,6 +9,11 @@ defeats feature registration. Approval refuses a still whose geometry fails.
 A generated still is an image edit of the approved base still. Its take keeps
 the exact input image, prompt and request; the provider's image is then
 normalised exactly like an imported one.
+
+An adopted still is one frame of a clip take, so that a transition generated from
+its first frame alone can define its end pose where its motion ends. The frame
+keeps the take's own framing on the canvas (its first frame registered to the
+clip's start still) unless it is a rigid copy of the base still.
 """
 from __future__ import annotations
 
@@ -21,12 +26,12 @@ import numpy as np
 from .checks import still_report
 from .geometry import (composite, estimate_similarity, fit_placement, framing_placement, is_rigid, measure, placement,
                        warp)
-from .media import IMAGE_SUFFIXES, copy_durable, encode_png, image_suffix, read_bgra, write_durable, write_png
+from .media import IMAGE_SUFFIXES, copy_durable, encode_png, image_suffix, media_frames, read_bgra, write_durable, write_png
 from .mouth import default_set
 from .prompts import load_library, pose_prompt, require_complete
 from .providers import ImageJob, get_image_provider
-from .records import (canvas_size, decide, load_character, load_owner, load_take, new_take, save_character,
-                      save_owner, save_take, still_path, take_dir)
+from .records import (canvas_size, clip_settings, decide, load_character, load_owner, load_take, new_take,
+                      save_character, save_owner, save_take, still_path, take_dir, take_media_frames)
 from .tools import load_tools, run_processor
 
 
@@ -117,9 +122,64 @@ def generate_still(workspace: Path, pose_id: str, provider: str, *, dry_run: boo
     return take
 
 
+def adopt_frame(workspace: Path, clip_id: str, take_id: str, *, pose_id: str | None = None, frame: str | int = "last",
+                note: str = "", log=print) -> dict:
+    """Make a pose still from one frame of a clip take: by default its last frame, for the clip's end pose."""
+    character, clip = load_character(workspace), load_owner(workspace, "clip", clip_id)
+    pose_id = pose_id or clip["to"]
+    pose = load_owner(workspace, "pose", pose_id)
+    if pose_id == character["basePose"]:
+        raise ValueError("The base pose still is the reference every clip starts from: import it")
+    _require_base(character, pose_id)
+    source = load_take(workspace, "clip", clip_id, take_id)
+    if source.get("state") != "ready":
+        raise ValueError(f"Take {take_id} of clip {clip_id} is {source.get('state')}, not ready")
+    settings = clip_settings(clip)
+    with tempfile.TemporaryDirectory(prefix="spriteforge-adopt-") as temporary:
+        frames = media_frames(take_media_frames(workspace, source), load_tools(workspace).get("ffmpeg"), Path(temporary))
+        index = _frame_index(frame, len(frames))
+        inputs = {}
+        if settings["register"]:
+            # The take's framing: where registering its first frame to the start still puts the picture.
+            start_file, start_take = still_path(workspace, clip["from"])
+            framing = estimate_similarity(composite(read_bgra(frames[0])[0], character["background"]),
+                                          composite(read_bgra(start_file)[0], character["background"]))[0]
+            inputs["start"] = {"pose": clip["from"], "still": start_take["id"]}
+        else:  # the frames are already on the canvas, widened by the clip's margin
+            framing = placement(1.0, -settings["marginPx"], 0.0)
+        take, directory = new_take(workspace, "pose", pose_id, {"provider": "clip", "clip": clip_id, "take": take_id,
+                                                               "frame": index, "frames": len(frames), "note": note})
+        try:
+            name = "source" + frames[index].suffix.lower()
+            copy_durable(frames[index], directory / name)
+            take["inputs"] = inputs
+            _normalize(workspace, character, pose, take, name, None, framing)
+        except Exception as exc:
+            take.update(state="failed", error=str(exc))
+            raise
+        finally:
+            save_take(workspace, take)
+    log(f"Take {take['id']}: frame {index} of {clip_id} take {take_id}, {take['normalization']['method']}, "
+        f"QA {take['qa']['status']}")
+    return take
+
+
+def _frame_index(frame: str | int, count: int) -> int:
+    if frame in ("first", "last"):
+        index = 0 if frame == "first" else count - 1
+    elif isinstance(frame, int) and not isinstance(frame, bool) or isinstance(frame, str) and frame.isdigit():
+        index = int(frame)
+    else:
+        raise ValueError("A frame is 'first', 'last' or a 0-based frame index")
+    if not 0 <= index < count:
+        raise ValueError(f"Frame {index} is outside the take's {count} frames")
+    return index
+
+
 def _normalize(workspace: Path, character: dict, pose: dict, take: dict, name: str,
-               place: tuple[float, float, float] | None) -> None:
-    """Place a take's source image on the canvas as its still and check it."""
+               place: tuple[float, float, float] | None, framing: np.ndarray | None = None) -> None:
+    """Place a take's source image on the canvas as its still and check it. ``framing`` is where the
+    generator's picture sits on the canvas when that is known (a clip take); otherwise it is fitted."""
     directory = take_dir(workspace, "pose", pose["id"], take["id"])
     image, has_alpha = read_bgra(directory / name)
     if not has_alpha:
@@ -143,6 +203,8 @@ def _normalize(workspace: Path, character: dict, pose: dict, take: dict, name: s
             matrix, registration = None, {"error": str(exc)}
         if matrix is not None and is_rigid(registration):
             method = "registration"
+        elif framing is not None:
+            matrix, method = framing, "clip"
         else:
             matrix, method = fit_placement(image, width, height), "fit"
     still = warp(image, matrix, width, height, (0, 0, 0, 0))

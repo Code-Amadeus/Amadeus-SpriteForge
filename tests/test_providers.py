@@ -151,6 +151,23 @@ def test_seedance_request_and_recorded_failure(studio, providers):
     assert failed["state"] == "failed" and "content check" in failed["error"]
 
 
+def test_first_frame_only_requests(studio, providers):
+    add_pose(studio.root, "bow")
+    add_clip(studio.root, "bow_in", "idle", "bow")
+    write_prompts(studio)
+    set_clip(studio.root, "bow_in", provider="wan", last_frame="none")
+    take = generate_clip_take(studio.root, "bow_in", wait=False)
+    body = providers.requests[0][3]
+    assert [m["type"] for m in body["input"]["media"]] == ["first_frame"]
+    assert take["inputs"] == {"first": {**take["inputs"]["first"], "pose": "idle", "file": "first.png"}, "last": None}
+    assert {p.name for p in take_dir(studio.root, "clip", "bow_in", take["id"]).iterdir()} == {"take.json", "first.png"}
+    set_clip(studio.root, "bow_in", provider="seedance")
+    assert [c.get("role") for c in generate_clip_take(studio.root, "bow_in", dry_run=True)["request"]["content"]] == \
+        [None, "first_frame"]
+    generate_clip_take(studio.root, "bow_in", wait=False)
+    assert [c.get("role") for c in providers.requests[-1][3]["content"]] == [None, "first_frame"]
+
+
 def test_resume_after_submission_and_missing_key(studio, providers, monkeypatch):
     write_prompts(studio)
     set_clip(studio.root, "smile_in", provider="wan")

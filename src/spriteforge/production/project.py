@@ -26,7 +26,8 @@ from .tools import default_tools, load_tools, save_tools
 CLIP_SETTINGS = {
     "provider": ("generation", "provider", str), "duration": ("generation", "durationS", int),
     "resolution": ("generation", "resolution", str), "seed": ("generation", "seed", int),
-    "input_scale": ("generation", "inputScale", float), "register": ("processing", "register", bool),
+    "input_scale": ("generation", "inputScale", float), "last_frame": ("generation", "lastFrame", str),
+    "register": ("processing", "register", bool),
     "interpolate": ("processing", "interpolate", int), "margin": ("processing", "marginPx", int),
     "pingpong": ("processing", "pingpong", bool), "lock_head": ("processing", "lockHeadFrames", int),
     "lock_tail": ("processing", "lockTailFrames", int), "edge_guard": ("processing", "edgeGuardPx", int),

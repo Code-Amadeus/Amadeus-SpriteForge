@@ -1,9 +1,10 @@
 """HTTP operations behind the production page of the local editor.
 
 Reads return the production overview and take media. Writes are decisions,
-prompt versions, clip settings, uploads and background jobs (still generation;
-clip generation, resume and render). Only one job may run for a pose or clip at
-a time; paid generation is requested only by an explicit user action in the page.
+prompt versions, clip settings, uploads and background jobs (still generation or
+adoption of a clip frame; clip generation, resume and render). Only one job may run
+for a pose or clip at a time; paid generation is requested only by an explicit user
+action in the page.
 """
 from __future__ import annotations
 
@@ -75,15 +76,26 @@ class ProductionApi:
             return project.graph_sync(self.workspace, add_missing=bool(body.get("addMissing")))
         if route == "jobs":
             kind = "pose" if body.get("pose") else "clip"
-            return {"job": self.start(str(body.get("action")), kind, str(body.get(kind)), body.get("provider"), body.get("take"))}
+            adopt = {"clip": str(body.get("clip")), "frame": body.get("frame") or "last"} if kind == "pose" else None
+            return {"job": self.start(str(body.get("action")), kind, str(body.get(kind)), body.get("provider"),
+                                      body.get("take"), adopt)}
         raise KeyError(route)
 
-    def start(self, action: str, kind: str, owner: str, provider: str | None = None, take_id: str | None = None) -> dict:
+    def start(self, action: str, kind: str, owner: str, provider: str | None = None, take_id: str | None = None,
+              adopt: dict | None = None) -> dict:
+        """``adopt`` names the clip and frame whose take (``take_id``) a pose job takes its still from."""
         from .records import load_owner
         load_owner(self.workspace, kind, owner)
-        if kind == "pose":
+        if kind == "pose" and action == "adopt" and adopt:
+            from .stills import adopt_frame
+
+            def work(log):
+                take = adopt_frame(self.workspace, adopt["clip"], str(take_id), pose_id=owner, frame=adopt["frame"],
+                                   log=log)
+                return f"{take['id']} QA {take['qa']['status']}"
+        elif kind == "pose":
             if action != "generate":
-                raise ValueError("A pose job can only generate a still")
+                raise ValueError("A pose job can only generate a still or adopt a clip frame")
             from .stills import generate_still
 
             def work(log):

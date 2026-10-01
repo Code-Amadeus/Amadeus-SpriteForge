@@ -117,7 +117,7 @@ def clip_defaults(kind: str) -> dict:
     transition = kind == "transition"
     return {
         "generation": {"provider": "manual", "durationS": 2 if transition else 4, "resolution": "720P",
-                       "seed": None, "inputScale": 1.0},
+                       "seed": None, "inputScale": 1.0, "lastFrame": "still"},
         "processing": {"register": True, "interpolate": 1, "pingpong": False, "lockHeadFrames": 6 if transition else 0,
                        "lockTailFrames": 12 if transition else 0, "edgeGuardPx": 0, "marginPx": 0},
         "playback": {"speed": 1.0, "loopMode": "once_then_hold" if transition else "loop"},
@@ -248,6 +248,17 @@ def still_path(workspace: Path, pose_id: str) -> tuple[Path, dict]:
     return take_dir(workspace, "pose", pose_id, take["id"]) / take["media"]["still"], take
 
 
+def take_media_frames(workspace: Path, take: dict) -> list[Path] | Path:
+    """A frame folder take's frames, or the path of its video."""
+    directory = take_dir(workspace, "clip", take["owner"]["id"], take["id"])
+    media = take.get("media") or {}
+    if media.get("dir"):
+        return sorted(p for p in directory.joinpath(media["dir"]).glob("*.png") if p.is_file())
+    if media.get("video"):
+        return directory / media["video"]
+    raise ValueError(f"Take {take['id']} has no media")
+
+
 def output_root(clip_id: str) -> str:
     """Stable graph root of a clip; it always holds the render of the accepted take."""
     return f"{ROOT}/{OWNERS['clip']}/{check_id(clip_id, 'Clip')}/output"
@@ -285,6 +296,11 @@ def clip_settings(clip: dict) -> dict:
     duration, scale = generation.get("durationS"), generation.get("inputScale", 1.0)
     if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1 or not 0.5 <= float(scale) <= 1.0:
         raise ValueError("generation.durationS must be a positive integer and inputScale between 0.5 and 1.0")
+    last_frame = generation.get("lastFrame", "still")
+    if last_frame not in {"still", "none"}:
+        raise ValueError("generation.lastFrame must be still or none")
+    if last_frame == "none" and clip["kind"] != "transition":
+        raise ValueError("Only a transition can be generated without its last frame; a loop must return to its still")
     mouth = clip.get("mouth")
     if mouth is not None:
         source = mouth.get("closedSource") if isinstance(mouth, dict) else None
@@ -298,7 +314,7 @@ def clip_settings(clip: dict) -> dict:
         if source["kind"] == "pose":
             check_id(source.get("pose"), "Pose")
     return {**values, "register": register, "pingpong": bool(processing.get("pingpong")), "speed": float(speed),
-            "loopMode": playback["loopMode"]}
+            "loopMode": playback["loopMode"], "lastFrame": last_frame}
 
 
 def recipe(clip: dict) -> dict:

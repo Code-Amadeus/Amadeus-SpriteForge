@@ -5,7 +5,9 @@ explicit parameters. Provider errors are raised with the provider's own message;
 there are no silent retries, parameter downgrades or single-frame fallbacks. API
 keys come only from the environment variable named in production/tools.json.
 
-Video (clip takes):
+Video (clip takes) are generated from the first and last frames, or from the first
+frame alone when the clip asks for it (``generation.lastFrame`` none); both
+providers document the first-frame-only request.
 
 - ``wan``: Alibaba Cloud Model Studio, Wan 2.7 image-to-video (``first_frame`` and
   ``last_frame`` media, asynchronous task). Result URLs expire after 24 hours, so
@@ -52,7 +54,7 @@ class VideoJob:
     prompt: str
     negative: str
     first: bytes
-    last: bytes
+    last: bytes | None
     duration: int
     resolution: str
     seed: int | None = None
@@ -108,12 +110,15 @@ class Adapter:
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise ProviderError(f"{self.name} request failed: {exc}") from exc
 
-    def payload(self, job: VideoJob, first: str, last: str) -> dict:
+    def payload(self, job: VideoJob, first: str, last: str | None) -> dict:
         raise NotImplementedError
 
     def preview(self, job: VideoJob) -> dict:
         """The request as it will be sent, with images replaced by their hashes."""
-        return self.payload(job, image_label("first", job.first), image_label("last", job.last))
+        return self.payload(job, image_label("first", job.first), None if job.last is None else image_label("last", job.last))
+
+    def request(self, job: VideoJob) -> dict:
+        return self.payload(job, data_url(job.first), None if job.last is None else data_url(job.last))
 
     def submit(self, job: VideoJob) -> str:
         raise NotImplementedError
@@ -126,18 +131,19 @@ class Adapter:
 class Wan(Adapter):
     name = "wan"
 
-    def payload(self, job: VideoJob, first: str, last: str) -> dict:
+    def payload(self, job: VideoJob, first: str, last: str | None) -> dict:
         parameters = {"resolution": job.resolution, "duration": job.duration, "prompt_extend": False, "watermark": False}
         if job.seed is not None:
             parameters["seed"] = job.seed
-        inputs = {"prompt": job.prompt, "media": [{"type": "first_frame", "url": first}, {"type": "last_frame", "url": last}]}
+        media = [{"type": "first_frame", "url": first}] + ([{"type": "last_frame", "url": last}] if last else [])
+        inputs = {"prompt": job.prompt, "media": media}
         if job.negative:
             inputs["negative_prompt"] = job.negative
         return {"model": self.model, "input": inputs, "parameters": parameters}
 
     def submit(self, job: VideoJob) -> str:
-        result = self.call("POST", "/services/aigc/video-generation/video-synthesis",
-                           self.payload(job, data_url(job.first), data_url(job.last)), {"X-DashScope-Async": "enable"})
+        result = self.call("POST", "/services/aigc/video-generation/video-synthesis", self.request(job),
+                           {"X-DashScope-Async": "enable"})
         task_id = (result.get("output") or {}).get("task_id")
         if not task_id:
             raise ProviderError(f"wan returned no task id: {json.dumps(result)[:400]}")
@@ -157,16 +163,16 @@ class Seedance(Adapter):
     name = "seedance"
     negative_prompt = False
 
-    def payload(self, job: VideoJob, first: str, last: str) -> dict:
-        return {"model": self.model, "content": [
-                    {"type": "text", "text": job.prompt},
-                    {"type": "image_url", "image_url": {"url": first}, "role": "first_frame"},
-                    {"type": "image_url", "image_url": {"url": last}, "role": "last_frame"}],
-                "ratio": "adaptive", "duration": job.duration, "resolution": job.resolution.lower(),
-                "watermark": False, "generate_audio": False}
+    def payload(self, job: VideoJob, first: str, last: str | None) -> dict:
+        content = [{"type": "text", "text": job.prompt},
+                   {"type": "image_url", "image_url": {"url": first}, "role": "first_frame"}]
+        if last:
+            content.append({"type": "image_url", "image_url": {"url": last}, "role": "last_frame"})
+        return {"model": self.model, "content": content, "ratio": "adaptive", "duration": job.duration,
+                "resolution": job.resolution.lower(), "watermark": False, "generate_audio": False}
 
     def submit(self, job: VideoJob) -> str:
-        result = self.call("POST", "/contents/generations/tasks", self.payload(job, data_url(job.first), data_url(job.last)))
+        result = self.call("POST", "/contents/generations/tasks", self.request(job))
         if not result.get("id"):
             raise ProviderError(f"seedance returned no task id: {json.dumps(result)[:400]}")
         return str(result["id"])

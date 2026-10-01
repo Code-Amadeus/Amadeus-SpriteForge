@@ -22,12 +22,11 @@ import numpy as np
 
 from ..workspace import atomic_json
 from .checks import clip_report, expected_anchor, worst
-from .clips import take_media_frames
 from .geometry import composite, estimate_similarity, lerp_matrix, premultiplied_blend, smoothstep, warp
-from .media import copy_durable, decode_video, find_ffmpeg, read_bgra, sorted_pngs, write_png
+from .media import copy_durable, media_frames, read_bgra, sorted_pngs, write_png
 from .mouth import TONE_WATCH, analyze, harmonize, prior
 from .records import (accepted_take, canvas_size, clip_settings, load_character, load_owner, now, output_root, owner_dir,
-                      recipe, render_stills, still_path)
+                      recipe, render_stills, still_path, take_media_frames)
 from .tools import load_tools, run_processor
 
 RENDER_FORMAT = "spriteforge.production.render.v1"
@@ -72,8 +71,7 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
     work = clip_directory / f".work-{datetime.now():%Y%m%d-%H%M%S-%f}"
     work.mkdir()
     try:
-        media = take_media_frames(workspace, take)
-        source = decode_video(find_ffmpeg(tools.get("ffmpeg")), media, work / "decoded") if isinstance(media, Path) else media
+        source = media_frames(take_media_frames(workspace, take), tools.get("ffmpeg"), work / "decoded")
         if len(source) < 2:
             raise ValueError("A clip needs at least two frames")
         fps = float(take["media"]["fps"])

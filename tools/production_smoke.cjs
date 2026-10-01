@@ -58,6 +58,15 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.waitForFunction(() => (document.querySelector("#renderPreview") || {}).dataset?.frame !== undefined);
     await page.screenshot({ path: "test-results/production-clips.png", fullPage: true });
 
+    // The last frame of a transition take becomes a candidate still for the clip's end pose.
+    assert.equal(await page.locator("#clipDetail label").filter({ hasText: "Last frame input" }).locator("select").inputValue(), "still");
+    await page.locator("#clipDetail .card").filter({ hasText: "second attempt" })
+      .getByRole("button", { name: "Last frame → smile still" }).click();
+    await page.locator("#tabs button[data-tab='stills']").click();
+    await page.locator("[data-pose='smile']").click();
+    await page.locator("#poseDetail .card").filter({ hasText: "of smile_in take" }).waitFor({ timeout: 60000 });
+    await page.locator("#tabs button[data-tab='clips']").click();
+
     await page.locator("[data-clip='smile_talk']").click();
     await page.locator("#clipDetail").filter({ hasText: "closed mouth from idle still (shared)" }).waitFor();
     await page.locator("#silencePreview").check();
@@ -74,7 +83,8 @@ const { spawn, spawnSync } = require("node:child_process");
 
     assert.deepEqual(errors, []);
     assert.equal(await page.locator("body").evaluate((b) => /(^|\n)(null|\[object)/.test(b.innerText)), false);
-    console.log("PASS: still overlay, take decision, stale render, render job, silence overlay preview, prompt version");
+    console.log("PASS: still overlay, take decision, stale render, render job, clip frame adopted as a still, "
+      + "silence overlay preview, prompt version");
   } catch (error) {
     if (page) {
       fs.mkdirSync("test-results", { recursive: true });

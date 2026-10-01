@@ -58,6 +58,8 @@ def add_parser(commands) -> None:
     clip_set.add_argument("--resolution")
     clip_set.add_argument("--seed", type=int)
     clip_set.add_argument("--input-scale", type=float, help="Shrink the subject inside provider inputs (0.5-1)")
+    clip_set.add_argument("--last-frame", choices=["still", "none"],
+                          help="Transitions: send the end pose still, or generate from the first frame only")
     clip_set.add_argument("--register", action=argparse.BooleanOptionalAction,
                           help="Register both ends to the pose stills (off: frames are already on the canvas)")
     clip_set.add_argument("--margin", type=int, help="Transparent columns added on each side of the canvas")
@@ -118,6 +120,13 @@ def add_parser(commands) -> None:
         _owner(decision)
         decision.add_argument("take")
         decision.add_argument("--reason", default="")
+    adopt = take.add_parser("adopt", help="Make a pose still from one frame of a clip take")
+    adopt.add_argument("--workspace", type=Path, required=True)
+    adopt.add_argument("--clip", required=True)
+    adopt.add_argument("take")
+    adopt.add_argument("--pose", help="Pose that receives the still (default: the clip's end pose)")
+    adopt.add_argument("--frame", default="last", help="'last' (default), 'first' or a 0-based frame index of the take")
+    adopt.add_argument("--note", default="")
     resume = take.add_parser("resume", help="Continue polling a submitted provider task")
     resume.add_argument("--workspace", type=Path, required=True)
     _owner(resume, clip_only=True)
@@ -245,8 +254,11 @@ def run(args) -> None:
     elif action == "prepare":
         from .clips import prepare
         kind, owner = ("pose", args.pose) if args.pose else ("clip", args.clip)
-        for path in prepare(workspace, kind, owner, args.output.resolve()):
+        paths = prepare(workspace, kind, owner, args.output.resolve())
+        for path in paths:
             print(path)
+        if kind == "clip" and "last.png" not in {p.name for p in paths}:
+            print("No last frame: generate from first.png alone, then adopt a frame of the result as the end pose still")
     elif action == "take":
         _run_take(workspace, args)
     elif action == "generate" and args.pose:
@@ -348,6 +360,14 @@ def _print_still_qa(take: dict) -> None:
 
 def _run_take(workspace: Path, args) -> None:
     from .records import decide
+    if args.take_action == "adopt":
+        from .stills import adopt_frame
+        take = adopt_frame(workspace, args.clip, args.take, pose_id=args.pose, frame=args.frame, note=args.note,
+                           log=lambda *_: None)
+        _print_still_qa(take)
+        print(f"Frame index {take['source']['frame']} of {take['source']['frames']} frames; approve it with "
+              f"'production take accept --pose {take['owner']['id']} {take['id']}'")
+        return
     kind, owner = ("pose", args.pose) if getattr(args, "pose", None) else ("clip", args.clip)
     if args.take_action == "import":
         if kind == "pose":

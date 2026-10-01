@@ -263,11 +263,17 @@ function poseTakeCard(pose, take, selected) {
       onclick: () => { selection.poseTake = take.id; renderPoses(); } }) : null,
     h("div", { class: "row" }, badge(take.status), take.qa ? badge("QA " + take.qa.status, take.qa.status) : null,
       h("span", { class: "tiny" }, take.id)),
-    h("div", { class: "tiny" }, [take.source && (take.source.provider === "manual" ? take.source.note : `${take.source.provider} ${take.source.model}`),
-      take.normalization && take.normalization.method].filter(Boolean).join(" · ")),
+    h("div", { class: "tiny" }, [stillSource(take.source), take.normalization && take.normalization.method].filter(Boolean).join(" · ")),
     take.error ? h("div", { class: "tiny", style: "color:var(--bad)" }, take.error) : null,
     take.rejected ? h("div", { class: "tiny" }, "Rejected: " + (take.rejected.reason || "no reason given")) : null,
     h("div", { class: "row actions" }, decisionButtons("pose", pose.id, take)));
+}
+
+function stillSource(source) {
+  if (!source) return "";
+  if (source.provider === "manual") return source.note;
+  if (source.provider === "clip") return `frame ${source.frame} of ${source.clip} take ${source.take}`;
+  return `${source.provider} ${source.model}`;
 }
 
 function decisionButtons(kind, owner, take) {
@@ -302,7 +308,15 @@ function renderClips() {
   renderClipDetail(clips.find((c) => c.id === selection.clip));
 }
 
+function firstFrameOnly(clip) {
+  return clip.generation.lastFrame === "none";
+}
+
 function generateHint(clip, provider) {
+  if (!acceptedStill(clip.from)) return `Approve a still for ${clip.from} first`;
+  if (!firstFrameOnly(clip) && !acceptedStill(clip.to)) {
+    return `Approve a still for ${clip.to}, or set the last frame input to none and adopt a frame of a take as that still`;
+  }
   if (clip.generation.provider === "manual") return "Manual clips: copy the prompt and inputs into your generator, then import the video";
   if (!clip.promptPreview.complete) return "Write the prompt placeholders first";
   if (!provider || !provider.keySet) return `Set the API key environment variable for ${clip.generation.provider}`;
@@ -321,7 +335,8 @@ function renderClipDetail(clip) {
   const archived = clip.takes.filter((t) => t.status === "rejected").reverse();
   fill(root,
     h("div", { class: "row" }, h("h2", {}, clip.id), h("span", { class: "muted" }, `${clip.from} → ${clip.to} · ${clip.kind} · phase ${clip.phase}`)),
-    h("div", { class: "inputs", style: "max-width:320px" }, endpoint(clip.from, "first frame"), endpoint(clip.to, "last frame")),
+    h("div", { class: "inputs", style: "max-width:320px" }, endpoint(clip.from, "first frame"),
+      endpoint(clip.to, firstFrameOnly(clip) ? "last frame (not sent)" : "last frame")),
     h("h3", {}, "Settings"), settingsForm(clip),
     h("h3", {}, "Prompt"), promptView(clip.promptPreview),
     h("div", { class: "row", style: "margin-top:8px" },
@@ -360,6 +375,10 @@ function settingsForm(clip) {
     ["speed", "Playback speed", "number", clip.playback.speed],
     ["loop_mode", "Playback", "select", clip.playback.loopMode, ["loop", "once_then_hold"]],
   ];
+  if (clip.kind === "transition") {
+    fields.splice(5, 0, ["last_frame", "Last frame input (none: first frame only)", "select", clip.generation.lastFrame || "still",
+      ["still", "none"]]);
+  }
   if (clip.kind === "loop") {
     fields.push(["pingpong", "Pingpong loop", "checkbox", clip.processing.pingpong]);
     fields.push(["mouth", "Mouth set (silence overlay)", "select", clip.mouth ? clip.mouth.set : "off",
@@ -408,11 +427,18 @@ function clipTakeCard(clip, take) {
     take.rejected ? h("div", { class: "tiny" }, "Rejected: " + (take.rejected.reason || "no reason given")) : null,
     take.prompt ? h("details", {}, h("summary", {}, "Prompt snapshot"), promptView(take.prompt, true)) : null,
     take.inputs && take.inputs.first && take.inputs.first.file ? h("details", {},
-      h("summary", {}, "First / last frame inputs" + (take.inputs.assumed ? " (handed to an external tool)" : "")),
+      h("summary", {}, (take.inputs.last ? "First / last frame inputs" : "First frame input (no last frame)")
+        + (take.inputs.assumed ? " (handed to an external tool)" : "")),
       h("div", { class: "inputs" }, h("img", { src: media(takeFile(clip, take, take.inputs.first.file)) }),
-        h("img", { src: media(takeFile(clip, take, take.inputs.last.file)) }))) : null,
+        take.inputs.last ? h("img", { src: media(takeFile(clip, take, take.inputs.last.file)) }) : null)) : null,
     take.state === "submitted" ? h("button", { onclick: () => startJob("resume", { clip: clip.id }, { take: take.id }) }, "Resume download") : null,
-    h("div", { class: "row actions" }, decisionButtons("clip", clip.id, take)));
+    h("div", { class: "row actions" }, decisionButtons("clip", clip.id, take), adoptButton(clip, take)));
+}
+
+function adoptButton(clip, take) {
+  if (clip.kind !== "transition" || take.state !== "ready" || take.status === "rejected") return null;
+  return h("button", { class: "adopt", title: `Make the last frame of this take a candidate still for ${clip.to}; approve it on the Poses tab`,
+    onclick: () => startJob("adopt", { pose: clip.to }, { clip: clip.id, take: take.id, frame: "last" }) }, `Last frame → ${clip.to} still`);
 }
 
 function renderPanel(clip) {

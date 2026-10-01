@@ -115,6 +115,11 @@ def find_ffmpeg(configured: str | None) -> str:
     return found
 
 
+def media_frames(media: list[Path] | Path, ffmpeg: str | None, directory: Path) -> list[Path]:
+    """The frames of a take's media: a frame folder as it is, a video decoded into ``directory``."""
+    return decode_video(find_ffmpeg(ffmpeg), media, directory) if isinstance(media, Path) else media
+
+
 def decode_video(ffmpeg: str, video: Path, directory: Path) -> list[Path]:
     directory.mkdir(parents=True, exist_ok=True)
     if sorted_pngs(directory):

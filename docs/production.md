@@ -90,6 +90,7 @@ processor when it has no transparency, then normalises it onto the canvas:
 | `framing` | base pose |
 | `registration` | the image is a rigid copy of the base still (≥ 50% of feature matches agree): an expression edit that the generator shifted or scaled is moved back |
 | `fit` | the pose changed, so a whole-image transform would be wrong: the generator's framing is kept and QA asks for an overlay check |
+| `clip` | a frame adopted from a clip take whose pose changed: the take's own framing is kept (see below) and QA asks for an overlay check |
 | `placement` | explicit `--place SCALE,DX,DY` |
 
 The rigid threshold is calibrated on the real Kurisu stills: an expression edit keeps
@@ -119,6 +120,36 @@ message. `--dry-run` prints the request without sending it.
 For an image editor without an adapter, `production prepare --pose P --output DIR`
 writes the same `base.png` and the rendered prompt; import the result as above.
 
+### Adopting a frame of a clip take
+
+A pose can also take its still from where a transition's motion ends, the way the
+earlier tools chained a loop onto a transition's last frame. The still is then fixed:
+every clip that meets the pose is registered and checked against it, and regenerating
+the transition does not move it.
+
+1. `production clip set T --last-frame none` makes transition T generate from its first
+   frame only, so its end pose needs no still yet. Both providers document the
+   first-frame-only request; `prepare` writes no `last.png`, and the take records that
+   no last frame was sent. Loops cannot use it: they must return to their still.
+2. Generate or import takes of T as usual and review them.
+3. `production take adopt --clip T TAKE [--frame last|first|N] [--pose P]` (or
+   **Last frame → P still** on a take of the page) copies that frame of the take into a
+   new still take of the clip's end pose (or P). The source records the clip, the take
+   and the 0-based frame index.
+4. Approve it like any still. A pose that really moves the head records its offset
+   with `production pose expect` first.
+
+The frame is matted, then registered to the base still when it is a rigid copy (an
+expression change). Otherwise it keeps the take's framing: the transform that
+registers the take's first frame to the clip's start still places it on the canvas,
+so the camera is assumed to stay where the clip started. Frames already on the canvas
+(`register` off) keep their pixels, minus the clip's margin. The base pose cannot be
+adopted: it is the reference every clip starts from.
+
+Rendering T afterwards registers its last frame to the adopted still, so the camera
+drift is near zero and the tail lock changes nothing visible. Keeping `--last-frame
+none` is fine; switching back to `still` makes later takes aim for the adopted still.
+
 ## Clips and takes
 
 `production clip add ID --from A --to B` plans a clip. `A == B` is a loop; otherwise a
@@ -129,6 +160,7 @@ transition. Phase defaults to `loop`, `out` (ending on the base pose) or `in`.
 | `generation.provider` | `manual` | `manual`, `wan`, `seedance` |
 | `generation.durationS` | 2 / 4 | seconds requested |
 | `generation.inputScale` | 1.0 | shrink the subject inside provider inputs to leave a safety margin |
+| `generation.lastFrame` | `still` | transitions only: `none` generates from the first frame alone, for an end pose that adopts its still from the result |
 | `processing.register` | on | register both ends of the take to the pose stills; off takes frames that are already placed on the canvas as they are |
 | `processing.marginPx` | 0 | transparent columns added on each side of the canvas for motion past its edges (hair in the wind) |
 | `processing.interpolate` | 1 | frame multiplier from the interpolate processor |
@@ -154,11 +186,13 @@ used 30 fps × 2 → 17 ms loops, 24 fps × 2 → 21 ms idle, and transitions at
 Takes come from three places:
 
 - **Manual**: `production prepare --clip C --output DIR` writes `first.png`, `last.png`
-  and the prompt; generate in any tool, then `production take import --clip C VIDEO`
-  (or a PNG folder with `--fps`). The inputs are recorded as assumed.
+  (none for a first-frame-only transition) and the prompt; generate in any tool, then
+  `production take import --clip C VIDEO` (or a PNG folder with `--fps`). The inputs
+  are recorded as assumed.
 - **Provider**: `production generate --clip C [--dry-run] [--no-wait]` submits the
-  opaque first/last frames and the rendered prompt, records the task id before
-  waiting, downloads the result immediately and stores it as a candidate take.
+  opaque first/last frames (or the first alone) and the rendered prompt, records the
+  task id before waiting, downloads the result immediately and stores it as a
+  candidate take.
   `production take resume --clip C TAKE` continues a submitted task.
 - **Upload** on the Production page.
 
@@ -309,8 +343,8 @@ its own per-label mask adjustments.
 
 | Provider | Endpoint (tools.json) | Key | Request |
 | --- | --- | --- | --- |
-| `wan` | `https://dashscope.aliyuncs.com/api/v1`, model `wan2.7-i2v-2026-04-25` | `DASHSCOPE_API_KEY` | `media` = `first_frame` + `last_frame` data URLs, `duration`, `resolution`, `prompt_extend: false`, optional `seed` and `negative_prompt`; `X-DashScope-Async: enable` |
-| `seedance` | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedance-1-5-pro-251215` | `ARK_API_KEY` | `content` = text + `first_frame` + `last_frame`, `ratio: adaptive`, `duration`, `resolution`; no negative prompt (takes record it was not sent) |
+| `wan` | `https://dashscope.aliyuncs.com/api/v1`, model `wan2.7-i2v-2026-04-25` | `DASHSCOPE_API_KEY` | `media` = `first_frame` + `last_frame` data URLs (`first_frame` alone for a first-frame-only transition), `duration`, `resolution`, `prompt_extend: false`, optional `seed` and `negative_prompt`; `X-DashScope-Async: enable` |
+| `seedance` | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedance-1-5-pro-251215` | `ARK_API_KEY` | `content` = text + `first_frame` + `last_frame` (no `last_frame` for a first-frame-only transition), `ratio: adaptive`, `duration`, `resolution`; no negative prompt (takes record it was not sent) |
 | `qwen-image` (stills) | `https://dashscope.aliyuncs.com/api/v1`, model `qwen-image-edit-plus` | `DASHSCOPE_API_KEY` | one user message with the base still data URL and the prompt; `n: 1`, `prompt_extend: false`, `watermark: false`, optional `negative_prompt` and `size` (`W*H`); synchronous, the result URL is fetched at once |
 | `seedream` (stills) | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedream-4-0-250828` | `ARK_API_KEY` | `prompt`, `image` = base still data URL, `size`, `response_format: b64_json`, `sequential_image_generation: disabled`, `watermark: false`; no negative prompt |
 
@@ -324,7 +358,10 @@ appear in an existing tools.json with their defaults; entries in the file win.
 Keys are read only from the named environment variables and never written to disk.
 Workspace-specific DashScope hosts go in `baseUrl`. Provider errors are raised with the
 provider's message; there are no silent retries, duration downgrades or single-frame
-fallbacks. Wan result URLs expire after 24 hours, which is why takes download at once.
+fallbacks. A request without a last frame is sent only for a transition set to
+`lastFrame none`; both providers document it (Wan 2.7 lists `first_frame` alone as
+first-frame-to-video, and Ark takes one `image_url` with role `first_frame`). Wan
+result URLs expire after 24 hours, which is why takes download at once.
 Inputs are flattened onto the character background because Wan does not accept alpha.
 
 ## Importing an existing character

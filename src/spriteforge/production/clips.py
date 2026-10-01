@@ -4,6 +4,10 @@ Every take directory keeps the exact first/last frame images and the prompt
 snapshot it corresponds to. For a generated take they are what was sent; for an
 imported take they are the inputs 'production prepare' handed out, recorded as
 assumed because the external tool cannot be verified.
+
+A transition with ``generation.lastFrame`` set to ``none`` is generated from its
+first frame only: its end pose has no still yet and takes one from the result
+(``stills.adopt_frame``). Its takes record that no last frame was sent.
 """
 from __future__ import annotations
 
@@ -43,22 +47,31 @@ def upload_image(character: dict, still: np.ndarray, scale: float = 1.0) -> byte
     return encode_png(flat)
 
 
-def clip_inputs(workspace: Path, character: dict, clip: dict) -> tuple[bytes, bytes, dict]:
-    clip_settings(clip)
+def clip_inputs(workspace: Path, character: dict, clip: dict) -> tuple[bytes, bytes | None, dict]:
+    """The first and last frame images for a provider; no last frame when the clip is generated from its first only."""
+    first_only = clip_settings(clip)["lastFrame"] == "none"
     scale = float(clip["generation"].get("inputScale", 1.0))
-    images, record = {}, {}
-    for end in ("from", "to"):
-        path, take = still_path(workspace, clip[end])
+    images, record = {}, {"first": None, "last": None}
+    for end in ("from",) if first_only else ("from", "to"):
+        try:
+            path, take = still_path(workspace, clip[end])
+        except ValueError as exc:
+            if end == "to":
+                raise ValueError(f"{exc}: approve one, or generate this transition from its first frame only "
+                                 "(lastFrame none) and adopt a frame of the result as that still") from exc
+            raise
         images[end] = upload_image(character, read_bgra(path)[0], scale)
         record["first" if end == "from" else "last"] = {"pose": clip[end], "still": take["id"],
                                                          "sha256": hashlib.sha256(images[end]).hexdigest()}
-    return images["from"], images["to"], record
+    return images["from"], images.get("to"), record
 
 
-def _store_inputs(directory: Path, first: bytes, last: bytes, record: dict) -> None:
+def _store_inputs(directory: Path, first: bytes, last: bytes | None, record: dict) -> None:
     write_durable(directory / "first.png", first)
-    write_durable(directory / "last.png", last)
-    record["first"]["file"], record["last"]["file"] = "first.png", "last.png"
+    record["first"]["file"] = "first.png"
+    if last is not None:
+        write_durable(directory / "last.png", last)
+        record["last"]["file"] = "last.png"
 
 
 def prepare(workspace: Path, kind: str, owner_id: str, target: Path) -> list[Path]:
@@ -71,7 +84,9 @@ def prepare(workspace: Path, kind: str, owner_id: str, target: Path) -> list[Pat
     if kind == "clip":
         clip = load_owner(workspace, "clip", owner_id)
         snapshot = clip_prompt(workspace, character, clip)
-        files["first.png"], files["last.png"], _ = clip_inputs(workspace, character, clip)
+        files["first.png"], last, _ = clip_inputs(workspace, character, clip)
+        if last is not None:
+            files["last.png"] = last
     else:
         pose = load_owner(workspace, "pose", owner_id)
         snapshot = still_prompt(workspace, character, pose)
@@ -152,7 +167,8 @@ def generate_clip_take(workspace: Path, clip_id: str, *, provider: str | None = 
         raise
     take["state"] = "submitted"
     save_take(workspace, take)
-    log(f"Submitted {name} task {take['source']['taskId']} as take {take['id']}")
+    log(f"Submitted {name} task {take['source']['taskId']} as take {take['id']}"
+        + (" (first frame only)" if last is None else ""))
     return finish_take(workspace, take, log=log) if wait else take
 
 
@@ -186,14 +202,3 @@ def finish_take(workspace: Path, take: dict, *, log=print) -> dict:
 
 def resume_clip_take(workspace: Path, clip_id: str, take_id: str, *, log=print) -> dict:
     return finish_take(workspace, load_take(workspace, "clip", clip_id, take_id), log=log)
-
-
-def take_media_frames(workspace: Path, take: dict) -> list[Path] | Path:
-    """A frame folder take's frames, or the path of its video."""
-    directory = take_dir(workspace, "clip", take["owner"]["id"], take["id"])
-    media = take.get("media") or {}
-    if media.get("dir"):
-        return sorted_pngs(directory / media["dir"])
-    if media.get("video"):
-        return directory / media["video"]
-    raise ValueError(f"Take {take['id']} has no media")
