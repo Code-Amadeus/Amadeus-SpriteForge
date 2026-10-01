@@ -62,8 +62,10 @@
     }
     function renderSteps() {
       const current=sheet();const picked=current?.cells.filter((item)=>item.picked).length||0;
+      const workflowQuery=new URLSearchParams({template:tab==="concept"?"concept-still":"final-still",pose:pose()?.id||ctx.state.character.basePose});
+      if(tab!=="concept"&&current&&cell()){workflowQuery.set("sheet",current.id);workflowQuery.set("cell",cell().index);}
       steps.replaceChildren(...[["concepts",tr("conceptCount",{cells:current?.cells.length||0,picked})],["finals",tr("finalCount",{approved:poses().filter((item)=>item.acceptedTake).length,total:poses().length})],["clips",tr("clipHint")]].map(([key,summary],index)=>h("li",{class:"expression-step"+((tab==="concept"?index===0:index===1)?" on":"")},h("strong",{},`${index+1} · ${tr(key)}`),h("span",{class:"tiny"},summary))),
-        h("li",{class:"row"},action("plan",openPlan)));
+        h("li",{class:"row"},action("plan",openPlan),h("a",{class:"btn",href:"#/workflows?"+workflowQuery,"data-open-workflow":"pose"},ctx.t("shell.openWorkflow"))));
     }
     function renderBase() {
       const owner=base(),candidate=approved(owner);const url=stillUrl(owner,candidate);

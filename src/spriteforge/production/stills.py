@@ -65,17 +65,20 @@ def _require_base(character: dict, pose_id: str) -> None:
 
 
 def import_still(workspace: Path, pose_id: str, source: Path, *, note: str = "",
-                 place: tuple[float, float, float] | None = None) -> dict:
+                 place: tuple[float, float, float] | None = None, source_facts: dict | None = None,
+                 prompt_snapshot: dict | None = None, source_inputs: dict | None = None) -> dict:
     character, pose = load_character(workspace), load_owner(workspace, "pose", pose_id)
     source = Path(source)
     if source.suffix.lower() not in IMAGE_SUFFIXES or not source.is_file():
         raise ValueError(f"Still source must be an image file: {source}")
     _require_base(character, pose_id)
-    take, directory = new_take(workspace, "pose", pose_id, {"provider": "manual", "file": source.name, "note": note})
+    take, directory = new_take(workspace, "pose", pose_id, source_facts or {"provider": "manual", "file": source.name, "note": note})
     name = f"source{source.suffix.lower()}"
     try:
         copy_durable(source, directory / name)
-        take["prompt"] = still_prompt(workspace, character, pose)
+        take["prompt"] = prompt_snapshot if prompt_snapshot is not None else still_prompt(workspace, character, pose)
+        if source_inputs:
+            take["inputs"] = copy_source_inputs(workspace, directory, source_inputs)
         _normalize(workspace, character, pose, take, name, place)
     except Exception as exc:
         take.update(state="failed", error=str(exc))
@@ -83,6 +86,24 @@ def import_still(workspace: Path, pose_id: str, source: Path, *, note: str = "",
     finally:
         save_take(workspace, take)
     return take
+
+
+def copy_source_inputs(workspace: Path, directory: Path, inputs: dict) -> dict:
+    """Copy exact workflow provider inputs into a candidate's durable input files."""
+    from copy import deepcopy
+    from ..workspace import resolve_asset
+    files = {"base": "input.png", "reference": "reference.png", "first": "first.png", "last": "last.png"}
+    result = {}
+    for role, facts in inputs.items():
+        if role not in files:
+            raise ValueError(f"Unsupported provider input role: {role}")
+        source = resolve_asset(workspace, facts["path"])
+        if facts.get("sha256") != hashlib.sha256(source.read_bytes()).hexdigest():
+            raise ValueError("Recorded provider input bytes changed")
+        copy_durable(source, directory / files[role])
+        result[role] = {key: deepcopy(value) for key, value in facts.items() if key != "path"}
+        result[role]["file"] = files[role]
+    return result
 
 
 def generate_still(workspace: Path, pose_id: str, provider: str, *, concept: dict | None = None, dry_run: bool = False, log=print) -> dict:
@@ -195,12 +216,11 @@ def _frame_index(frame: str | int, count: int) -> int:
     return index
 
 
-def _normalize(workspace: Path, character: dict, pose: dict, take: dict, name: str,
-               place: tuple[float, float, float] | None, framing: np.ndarray | None = None) -> None:
-    """Place a take's source image on the canvas as its still and check it. ``framing`` is where the
-    generator's picture sits on the canvas when that is known (a clip take); otherwise it is fitted."""
-    directory = take_dir(workspace, "pose", pose["id"], take["id"])
-    image, has_alpha = read_bgra(directory / name)
+def normalize_image(workspace: Path, character: dict, pose: dict, image: np.ndarray, has_alpha: bool,
+                    place: tuple[float, float, float] | None = None, framing: np.ndarray | None = None
+                    ) -> tuple[np.ndarray, dict, dict | None]:
+    """Use the same alpha, ORB and placement rules without allocating a take."""
+    base_input = None
     if not has_alpha:
         image = matte(load_tools(workspace), image, character["background"])
     width, height = canvas_size(character)
@@ -213,7 +233,7 @@ def _normalize(workspace: Path, character: dict, pose: dict, take: dict, name: s
         # A rigid match means the generator moved the whole picture: undo it. Otherwise
         # the pose itself changed, and the generator's framing is kept for review.
         base_file, base_take = still_path(workspace, character["basePose"])
-        take["inputs"].setdefault("base", {"pose": character["basePose"], "still": base_take["id"]})
+        base_input = {"pose": character["basePose"], "still": base_take["id"]}
         base = read_bgra(base_file)[0]
         try:
             matrix, registration = estimate_similarity(composite(image, character["background"]),
@@ -227,12 +247,23 @@ def _normalize(workspace: Path, character: dict, pose: dict, take: dict, name: s
         else:
             matrix, method = fit_placement(image, width, height), "fit"
     still = warp(image, matrix, width, height, (0, 0, 0, 0))
-    write_png(directory / "still.png", still)
     normalization = {"method": method, "matrix": np.round(matrix, 6).tolist(),
                      **({"registration": registration} if registration else {})}
+    return still, normalization, base_input
+
+
+def _normalize(workspace: Path, character: dict, pose: dict, take: dict, name: str,
+               place: tuple[float, float, float] | None, framing: np.ndarray | None = None) -> None:
+    """Place a take's source image on the canvas as its still and check it. ``framing`` is where the
+    generator's picture sits on the canvas when that is known (a clip take); otherwise it is fitted."""
+    directory = take_dir(workspace, "pose", pose["id"], take["id"])
+    image, has_alpha = read_bgra(directory / name)
+    still, normalization, base_input = normalize_image(workspace, character, pose, image, has_alpha, place, framing)
+    if base_input is not None:
+        take["inputs"].setdefault("base", base_input)
+    write_png(directory / "still.png", still)
     take.update(state="ready", media={"source": name, "still": "still.png"},
                 normalization=normalization, qa=qa_for(character, pose, still, normalization))
-
 
 def qa_for(character: dict, pose: dict, still: np.ndarray, normalization: dict | None) -> dict:
     return {**still_report(character, pose, still, normalization), "anchorsTake": (character.get("anchors") or {}).get("take")}

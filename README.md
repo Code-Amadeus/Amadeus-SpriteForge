@@ -11,11 +11,11 @@ providers are optional adapters; the Amadeus application runtime is separate.
 
 ## Studio preview
 
-The new `/studio` shell follows the dark green production design. Generate & QA
-contains Expressions (concept sheet → final still), Clip Studio and native Canvas,
-Prompts, Jobs and Settings tools; a view switch separates it from asset editing.
-English and Chinese are available without reloading. Other stages are being added incrementally;
-the existing production and review pages remain available during the rollout.
+Studio separates **Generate & QA** from **Edit assets**. Production has a guided
+Studio and a ComfyUI-style node workflow view over the same records. Qualified
+candidates are explicitly adopted before they become graph material. The editor
+contains the material library, graph/player, seam checks, behavior statistics and
+versioned exports. Switch between English and Chinese without reloading.
 
 ![Studio character comparison and take review](docs/images/studio-preview.png)
 
@@ -24,25 +24,38 @@ blend the supplied stills; no model call is involved. [Full interface](docs/imag
 
 [Chinese Overview](docs/images/studio-overview-zh.png) ·
 [Expressions](docs/images/studio-expressions-en.png) ·
+[Node workflow](docs/images/studio-workflows-en.png) ·
+[Review & QA](docs/images/studio-review-en.png) ·
 [Approved assets](docs/images/studio-edit-assets-en.png) ·
 [Canvas](docs/images/studio-canvas-en.png) ·
 [Studio and production guide](docs/production.md#studio)
 
 ## Production preview
 
-![Production canvas, pose alignment, rendered transition and loop QA](docs/images/production-pipeline.gif)
+![Studio comparison, candidate QA, asset editing and node workflow](docs/images/production-pipeline.gif)
 
-A 12-second tour of the actual editor using existing Wan 3.0 takes: pose/clip
-connections, still alignment, a rendered transition and loop QA. Model generation
-time is outside this recording. [Static overview](docs/images/production-pipeline-poster.png)
+A 12-second tour of the current Studio: compare a candidate, review its QA, adopt
+it, open the asset library and graph player, and run a local node workflow. The
+demonstration blends the bundled reference stills and makes no provider calls.
+[Static overview](docs/images/production-pipeline-poster.png)
 · [Try it with the included references](examples/references/kurisu/).
 
-## Reviewer screenshots
+## Asset editing
+
+![Studio graph editor and exact character playback](docs/images/studio-behavior-en.png)
+
+The graph uses adopted material, with its recorded frame interval and loop mode.
+[Behavior statistics](docs/images/studio-stats-en.png) · [Export checks](docs/images/studio-export-en.png).
+
+<details>
+<summary>Existing KTX2 packs and the standalone reviewer</summary>
 
 ![KTX2 character preview beside its original saved behavior graph](docs/images/reviewer-ktx2-graph.png)
 
 Direct KTX2 playback alongside the creator's saved node layout. This example uses a
 separately supplied character pack; the repository's runnable examples use geometric sprites.
+
+</details>
 
 <details>
 <summary>Expanded behavior graph</summary>

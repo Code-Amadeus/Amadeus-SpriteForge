@@ -9,6 +9,7 @@ window.SF_I18N.en = {
   "shell.mode.produce": "Generate & QA",
   "shell.mode.edit": "Edit assets",
   "shell.generationView": "Generation view",
+  "shell.openWorkflow": "Open as workflow",
   "shell.generationView.studio": "Studio",
   "shell.generationView.workflow": "Node workflow",
   "assets.title": "Approved assets",

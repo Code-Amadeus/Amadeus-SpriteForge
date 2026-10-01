@@ -52,6 +52,29 @@ def add_parser(commands) -> None:
     release = command("export", "Export a versioned runtime pack and record its source hashes and notes")
     release.add_argument("--version", required=True)
     release.add_argument("--notes", default="")
+    workflow = sub.add_parser("workflow", help="Fixed candidate workflows, dependency caches and explicit paid runs").add_subparsers(
+        dest="workflow_action", required=True)
+    for name in ("list", "save", "import", "export", "plan", "run", "template"):
+        step = workflow.add_parser(name)
+        step.add_argument("--workspace", type=Path, required=True)
+        if name in {"save", "import"}:
+            step.add_argument("file", type=Path)
+        if name in {"plan", "run", "export"}:
+            step.add_argument("target", help="Workflow id, or a JSON file for run")
+        if name == "export":
+            step.add_argument("file", type=Path)
+        if name in {"plan", "run"}:
+            step.add_argument("--rerun", action="append", default=[], help="Explicitly invalidate a node and its downstream cache identities")
+        if name == "run":
+            step.add_argument("--yes-paid", type=int)
+            step.add_argument("--ack-import", action="store_true", help="Confirm the printed imported paid-node and processor disclosure")
+        if name == "template":
+            step.add_argument("template", choices=("transition", "loop", "speaking", "final-still", "concept-still"))
+            step.add_argument("--pose")
+            step.add_argument("--clip")
+            step.add_argument("--concept", help="Existing reference SHEET:CELL")
+            step.add_argument("--id")
+            step.add_argument("--output", type=Path, required=True)
 
     concept = sub.add_parser("concept", help="Generate, import, pick and reroll expression reference sheets").add_subparsers(
         dest="concept_action", required=True)
@@ -302,6 +325,8 @@ def run(args) -> None:
     elif action == "export":
         from .exports import export_workspace
         print(json.dumps(export_workspace(workspace, args.version, notes=args.notes), ensure_ascii=False, indent=2))
+    elif action == "workflow":
+        _run_workflow(workspace, args)
     elif action == "concept":
         from .concepts import generate_sheet, import_sheet, reroll_cell, set_cell
         if args.concept_action == "new":
@@ -480,6 +505,39 @@ def _run_import(args) -> None:
             print(f"edge {labels.get(edge['from'], edge['from'])} -> {labels.get(edge['to'], edge['to'])}: {edge['level']} "
                   f"faceL={edge['faceL']} dHeadTop={edge['dHeadTop']} dHeadCenter={edge['dHeadCenter']}")
     print(f"Imported; graph QA {report['status']}")
+
+
+def _run_workflow(workspace: Path, args) -> None:
+    from ..workspace import atomic_json, read_json
+    from .workflows import WorkflowEngine, list_workflows, load_workflow, save_workflow, template_workflow
+    action = args.workflow_action
+    if action == "list":
+        result = list_workflows(workspace)
+    elif action in {"save", "import"}:
+        result = save_workflow(workspace, read_json(args.file), imported=action == "import")
+    elif action == "export":
+        result = load_workflow(workspace, args.target)
+        atomic_json(args.file, result)
+    elif action == "template":
+        concept = None
+        if args.concept:
+            sheet, separator, cell = args.concept.partition(":")
+            if not separator or not cell.isdigit():
+                raise ValueError("--concept needs SHEET:CELL")
+            concept = {"sheet": sheet, "cell": int(cell)}
+        result = template_workflow(workspace, args.template, pose=args.pose, clip=args.clip, concept=concept, identifier=args.id)
+        atomic_json(args.output, result)
+    else:
+        identifier = args.target
+        if action == "run" and Path(identifier).is_file():
+            identifier = save_workflow(workspace, read_json(Path(identifier)), imported=True)["id"]
+        engine = WorkflowEngine(workspace)
+        result = engine.plan(identifier, rerun=args.rerun)
+        if action == "run":
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            result = engine.run(identifier, plan_hash=result["planHash"], confirm_paid=args.yes_paid if args.yes_paid is not None else 0,
+                                confirm_imported=args.ack_import, rerun=args.rerun)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def _ids(value: str) -> list[str]:

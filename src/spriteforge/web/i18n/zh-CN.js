@@ -9,6 +9,7 @@ window.SF_I18N["zh-CN"] = {
   "shell.mode.produce": "生成与 QA",
   "shell.mode.edit": "素材编辑",
   "shell.generationView": "生成视图",
+  "shell.openWorkflow": "转为节点工作流",
   "shell.generationView.studio": "工作台",
   "shell.generationView.workflow": "节点工作流",
   "assets.title": "已采纳素材",

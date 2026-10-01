@@ -104,13 +104,14 @@
     // Canvas has its own full-main route so a drawer can overlay it and reload there.
     if (tool === "canvas") { stage = "canvas"; id = null; }
     const mode = ["behavior", "export"].includes(stage) || ["overview", "review"].includes(stage) && parameters.get("mode") === "edit" ? "edit" : "produce";
-    return { stage, mode, select: parameters.get("select"), id: stage === "behavior" ? (id === "stats" ? "stats" : "graph") : id, tool: tool !== "canvas" && tools.includes(tool) ? tool : null };
+    return { stage, mode, select: parameters.get("select"), template: parameters.get("template"), pose: parameters.get("pose"), clip: parameters.get("clip"), sheet: parameters.get("sheet"), cell: parameters.get("cell"), id: stage === "behavior" ? (id === "stats" ? "stats" : "graph") : id, tool: tool !== "canvas" && tools.includes(tool) ? tool : null };
   }
 
   function routeHash(value = route, tool = value.tool) {
     const query = new URLSearchParams();
     if (["overview", "review"].includes(value.stage) && value.mode === "edit") query.set("mode", "edit");
     if (value.select) query.set("select", value.select);
+    if (value.stage === "workflows") for (const key of ["template", "pose", "clip", "sheet", "cell"]) if (value[key] != null && value[key] !== "") query.set(key, value[key]);
     if (tool) query.set("tool", tool);
     return "#/" + value.stage + (value.id ? "/" + encodeURIComponent(value.id) : "") + (query.size ? "?" + query : "");
   }

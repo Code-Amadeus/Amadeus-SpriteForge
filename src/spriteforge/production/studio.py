@@ -39,7 +39,7 @@ def _number(value: object) -> int | float | None:
 
 
 def usage_summary(poses: list[dict], clips: list[dict], *, at: datetime | None = None,
-                  concepts: list[dict] | None = None) -> dict:
+                  concepts: list[dict] | None = None, workflow_receipts: list[dict] | None = None) -> dict:
     """Seven days of recorded usage, without estimating missing balances or timing.
 
 Only the latest render of each clip is retained on disk. This is consequently
@@ -54,6 +54,8 @@ the sum of retained renders, not a history of overwritten processing runs.
         for take in owner.get("takes", []):
             stamp = _timestamp(take.get("createdAt"))
             source = take.get("source") or {}
+            if source.get("workflow"):
+                continue  # one workflow paid artifact can fan out to several candidate takes
             if source.get("provider") == "wan-cli":
                 before = _number((source.get("balanceBefore") or {}).get("credits"))
                 after = _number((source.get("balanceAfter") or {}).get("credits"))
@@ -68,10 +70,26 @@ the sum of retained renders, not a history of overwritten processing runs.
     for sheet in concepts or []:
         records = [sheet, *(attempt for cell in sheet["cells"] for attempt in cell.get("rerolls", []))]
         for record in records:
+            if record.get("workflow") or (record.get("source") or {}).get("workflow"):
+                continue
             stamp = _timestamp(record.get("createdAt"))
             if stamp is not None and since <= stamp <= at and record.get("provider") == "gpt-image" \
                     and record.get("sourceFile") and record.get("size"):
                 images += 1
+    for receipt in workflow_receipts or []:
+        source = receipt.get("operation") or {}
+        stamp = _timestamp(source.get("requestedAt") or receipt.get("startedAt"))
+        if source.get("provider") == "wan-cli":
+            before = _number((source.get("balanceBefore") or {}).get("credits"))
+            after = _number((source.get("balanceAfter") or {}).get("credits"))
+            balance = after if after is not None else before
+            if stamp is not None and stamp <= at and balance is not None:
+                balance_records.append((stamp, receipt["cacheKey"], balance))
+            if stamp is not None and since <= stamp <= at:
+                wan.append(recorded_credit_delta(source))
+        if stamp is not None and since <= stamp <= at and source.get("provider") == "gpt-image" and source.get("state") == "ready" \
+                and (receipt.get("outputs") or source.get("outputs")):
+            images += 1
     for clip in clips:
         render = clip.get("render") or {}
         stamp = _timestamp(render.get("renderedAt"))
@@ -91,6 +109,7 @@ def studio_summary(workspace: Path, character: dict, poses: list[dict], clips: l
     """Add Studio's read model to an existing overview without reading it again."""
     from .checks import graph_report
     from .concepts import list_sheets
+    from .workflows import paid_receipts
 
     sheets = list_sheets(workspace)
     current = next((sheet["id"] for sheet in reversed(sheets) if sheet["state"] == "ready"), None)
@@ -122,4 +141,4 @@ def studio_summary(workspace: Path, character: dict, poses: list[dict], clips: l
     issues = issue_summary(poses, clips, scope, report, known) + conflicts
     issues.sort(key=lambda issue: (ISSUE_LEVELS.index(issue["level"]), issue["key"]))
     return {"concepts": concepts, "issues": issues,
-            "variants": variant_groups(clips), "usage": usage_summary(poses, clips, concepts=concepts)}
+            "variants": variant_groups(clips), "usage": usage_summary(poses, clips, concepts=concepts, workflow_receipts=paid_receipts(workspace))}

@@ -29,6 +29,7 @@ class ProductionApi:
         self.jobs: dict[str, dict] = {}
         self.lock = threading.Lock()
         self.provider_locks: dict[str, threading.Lock] = {}
+        self.workflows = None
 
     def available(self) -> bool:
         return (production_dir(self.workspace) / "character.json").is_file()
@@ -66,6 +67,35 @@ class ProductionApi:
 
     def post(self, route: str, body: dict) -> dict:
         from . import project, prompts
+        if route == "workflows" or route.startswith("workflows/"):
+            from .workflows import save_workflow, template_workflow
+            engine = self.workflow_engine()
+            if route in {"workflows", "workflows/import"}:
+                with self.lock:
+                    return {"workflow": save_workflow(self.workspace, body, imported=route.endswith("/import"))}
+            if route == "workflows/template":
+                return {"workflow": template_workflow(self.workspace, body.get("template"), pose=body.get("pose"),
+                                                       clip=body.get("clip"), concept=body.get("concept"), identifier=body.get("id"))}
+            if route == "workflows/plan":
+                return engine.plan(body.get("id"), rerun=body.get("rerun"))
+            if route == "workflows/run":
+                plan = engine.confirmed_plan(body.get("id"), body.get("planHash"), body.get("confirmPaid"),
+                                             confirm_imported=body.get("confirmImported", False), rerun=body.get("rerun"))
+                run_id = uuid.uuid4().hex
+                with self.lock:
+                    image_locks = {entry["provider"]: self.provider_locks.setdefault(entry["provider"], threading.Lock())
+                                   for entry in plan["entries"].values() if entry["kind"] in {"image-edit", "concept-sheet"}
+                                   and not entry["cacheHit"]}
+
+                def workflow(log):
+                    result = engine.run(body["id"], plan_hash=body["planHash"], confirm_paid=body["confirmPaid"],
+                                        confirm_imported=body.get("confirmImported", False), rerun=body.get("rerun"), run_id=run_id,
+                                        provider_locks=image_locks, log=log)
+                    return result["id"]
+
+                return {"job": self._launch("workflow", "workflow", body["id"], workflow,
+                                             details={"workflow": body["id"], "runId": run_id, "owners": plan["owners"]})}
+            raise KeyError(route)
         if route == "tools-settings":
             from .tools import set_ui_defaults
             with self.lock:
@@ -88,7 +118,7 @@ class ProductionApi:
             with self.lock:
                 if any(job["action"] == "export" and job["status"] == "running" for job in self.jobs.values()):
                     raise ValueError("An export is running; published clip output cannot change until it finishes")
-                if any(job["kind"] == "clip" and job["owner"] == body.get("clip") and job["status"] == "running"
+                if any(("clip", body.get("clip")) in self.job_owners(job) and job["status"] == "running"
                        for job in self.jobs.values()):
                     raise ValueError(f"A job for clip {body.get('clip')} is already running; wait before adopting its output")
                 return {"take": adopt_processed_take(self.workspace, body.get("clip"), body.get("take"))}
@@ -257,11 +287,14 @@ class ProductionApi:
             raise ValueError("Provider must be a provider id")
         with self.lock:
             active = [job for job in self.jobs.values() if job["status"] == "running"]
+            if action == "workflow" and any(job["action"] == "workflow" for job in active):
+                raise ValueError("A workflow is already running")
             if action == "export" and any(job["action"] == "render" for job in active):
                 raise ValueError("A published render is running; wait for it before exporting")
             if action == "render" and any(job["action"] == "export" for job in active):
                 raise ValueError("An export is running; published clip output cannot change until it finishes")
-            if any((j["kind"], j["owner"]) == (kind, owner) and j["status"] == "running" for j in self.jobs.values()):
+            reservations = self.job_owners({"kind": kind, "owner": owner, **(details or {})})
+            if any(self.job_owners(job) & reservations or (job["kind"], job["owner"]) == (kind, owner) for job in active):
                 raise ValueError(f"A job for {kind} {owner} is already running")
             job = {"id": uuid.uuid4().hex[:12], "action": action, "kind": kind, "owner": owner, "status": "running", "log": [],
                    "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "result": None, "error": None,
@@ -287,6 +320,32 @@ class ProductionApi:
                     job.update(status="failed", error=str(exc))
         threading.Thread(target=run, daemon=True, name=f"spriteforge-{action}-{kind}-{owner}").start()
         return dict(job)
+
+    @staticmethod
+    def job_owners(job: dict) -> set[tuple[str, str]]:
+        result = {(item["kind"], item["id"]) for item in job.get("owners", [])}
+        if job["kind"] in {"pose", "clip"}:
+            result.add((job["kind"], job["owner"]))
+        return result
+
+    def workflow_engine(self):
+        from .workflows import WorkflowEngine
+        with self.lock:
+            if self.workflows is None:
+                self.workflows = WorkflowEngine(self.workspace)
+            return self.workflows
+
+    def workflow_get(self, suffix: str) -> dict:
+        from .workflows import TEMPLATES, list_workflows, load_workflow, read_run, schema
+        if suffix in {"", "/"}:
+            return {"workflows": list_workflows(self.workspace)}
+        if suffix == "/schema":
+            return schema(self.workspace)
+        if suffix == "/templates":
+            return {"templates": TEMPLATES}
+        if suffix.startswith("/runs/"):
+            return {"run": read_run(self.workspace, suffix.removeprefix("/runs/"))}
+        return {"workflow": load_workflow(self.workspace, suffix.removeprefix("/"))}
 
     def job_list(self) -> list[dict]:
         with self.lock:
@@ -430,4 +489,17 @@ class ProductionApi:
                 from .concepts import import_sheet
                 with self.lock:
                     return {"sheet": import_sheet(self.workspace, target, poses, grid)}
+            if kind == "workflow":
+                from .media import IMAGE_SUFFIXES, VIDEO_SUFFIXES, copy_durable, read_bgra, video_info
+                if suffix in IMAGE_SUFFIXES:
+                    read_bgra(target)
+                    asset_type = "IMAGE"
+                elif suffix in VIDEO_SUFFIXES:
+                    video_info(target)
+                    asset_type = "VIDEO"
+                else:
+                    raise ValueError("Workflow inputs must be supported images or videos")
+                saved = resolve_asset(self.workspace, str(production_dir(self.workspace) / "workflows" / "inputs" / f"{uuid.uuid4().hex}{suffix}"))
+                copy_durable(target, saved)
+                return {"asset": {"type": asset_type, "path": saved.relative_to(self.workspace).as_posix()}}
         raise ValueError("Uploads belong to a pose, clip or concept sheet")

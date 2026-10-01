@@ -6,7 +6,7 @@ No provider, private workspace, matting model or account is used.
 import sys
 from pathlib import Path
 
-from spriteforge.workspace import atomic_json
+from spriteforge.workspace import atomic_json, read_json
 from spriteforge.production import prompts
 from spriteforge.production.clips import import_clip_take
 from spriteforge.production.geometry import premultiplied_blend
@@ -61,6 +61,17 @@ def build(target: Path) -> Path:
     candidate = import_clip_take(workspace, "smile_in", target / "demo-inputs/smile_in", fps=12, note="Compare endpoint alignment")
     render_take(workspace, "smile_in", candidate["id"], log=lambda *_: None)
     graph_sync(workspace, add_missing=True)
+    graph = read_json(workspace / "graph_config.json")
+    positions = {"idle_loop": (110, 240), "smile_in": (360, 100),
+                 "smile_loop": (610, 240), "smile_out": (360, 380)}
+    for node in graph["nodes"]:
+        node["x"], node["y"] = positions[node["id"]]
+    graph["edges"] = [{"id": f"demo-{index}", "from": source, "to": destination, "prob": weight}
+                      for index, (source, destination, weight) in enumerate((
+                          ("idle_loop", "idle_loop", .88), ("idle_loop", "smile_in", .12),
+                          ("smile_in", "smile_loop", 1), ("smile_loop", "smile_loop", .8),
+                          ("smile_loop", "smile_out", .2), ("smile_out", "idle_loop", 1)))]
+    atomic_json(workspace / "graph_config.json", graph)
     print(workspace)
     return workspace
 

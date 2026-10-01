@@ -4,12 +4,23 @@
 最后导出 Amadeus 可用的 KTX2 角色包。图生视频服务是可选适配器，Amadeus 主 runtime
 保持独立。组织仓库为 `Code-Amadeus/Amadeus-SpriteForge`。
 
+## Studio 界面
+
+**生成与 QA**、**素材编辑**是两个视图。生成侧包含引导式工作台和 ComfyUI 式节点工作流，
+共用同一份素材记录；候选完成处理和 QA 后，由用户明确采纳。编辑侧包含素材库、行为图、
+精确播放器、接缝检查、行为统计和版本导出。支持中英文即时切换。
+
+![人物对比和版本审阅](images/studio-preview.png)
+
+[节点工作流](images/studio-workflows-zh.png) · [审阅与 QA](images/studio-review-zh.png) ·
+[图编辑和播放器](images/studio-behavior-zh.png) · [导出](images/studio-export-zh.png)。
+
 ## 生产管线动图
 
-![生产画布、静帧对齐、过渡预览和循环 QA](images/production-pipeline.gif)
+![候选对比、QA、采纳、素材编辑与节点工作流](images/production-pipeline.gif)
 
-12 秒实机界面录屏：连接姿态与片段 → 比较静帧对齐 → 查看过渡 → 检查循环与 QA。
-使用之前生成好的 Wan 3.0 take，录屏不包含模型生成等待时间。
+12 秒当前界面演示：候选对比 → QA → 采纳 → 素材库与图播放器 → 本地节点工作流。
+演示帧由仓库公开参考静帧混合而成，未调用模型；工作流只产出新候选，不改已采纳素材。
 [静态总览](images/production-pipeline-poster.png) ·
 [用仓库参考图开始体验](../examples/references/kurisu/)。
 
@@ -31,6 +42,8 @@ python -m venv .venv
 ```
 
 默认地址 `http://127.0.0.1:7788`，支持 `--port`、`--no-browser`。
+已初始化生产的工作区默认打开 Studio，`/production` 也跳转到 `/studio`；
+未初始化工作区和运行时角色包继续打开独立 reviewer。
 基本编辑、预览和校验仅需 Python 标准库；QA 的可选依赖为 OpenCV 和 NumPy。
 示例是自行生成的几何图形，不含现有角色素材。
 

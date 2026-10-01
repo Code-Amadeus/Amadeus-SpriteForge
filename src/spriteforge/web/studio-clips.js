@@ -186,7 +186,7 @@
       choose.value = clip.id;
       header.replaceChildren(h("h1",{class:"mono"},clip.id),badge(tr("kind." + kind)),h("span",{class:"clip-endpoints"},endpoint(clip.from,"firstStill"),h("span",{class:"tiny","aria-hidden":"true"},"→"),
         clip.generation.lastFrame === "none" ? h("span",{class:"tiny"},tr("lastNotSent")) : endpoint(clip.to,"lastStill")),badge(summary.join(" · "),clip.render.qa?.status === "fail" ? "fail" : clip.render.state === "stale" ? "watch" : accepted ? "pass" : ""),
-        h("div",{class:"spacer"}),choose,button("import",openImport,{disabled:!inputReady(),title:!inputReady()?tr("stillsRequired"):null}),
+        h("div",{class:"spacer"}),choose,h("a",{class:"btn",href:"#/workflows?template="+kind+"&clip="+encodeURIComponent(clip.id),"data-open-workflow":"clip"},ctx.t("shell.openWorkflow")),button("import",openImport,{disabled:!inputReady(),title:!inputReady()?tr("stillsRequired"):null}),
         button("generate",() => openGenerate(),{class:"primary",disabled:!!generationHint(),title:generationHint()||null},{cost:costLabel()}),
         takeA() && takeA().status !== "accepted"
           ? button("processTake", event => processTake(takeA(), event.currentTarget), {disabled:takeA().state!=="ready"||running()})

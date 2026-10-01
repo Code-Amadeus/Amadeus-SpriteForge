@@ -34,14 +34,23 @@ def request(url, path, body=None, **headers):
         return response.status, json.loads(payload) if response.headers.get_content_type() == "application/json" else payload
 
 
-def test_studio_and_legacy_routes_remain_available(studio_server):
-    for route, script in (("/", b"review.js"), ("/production", b"production.js"), ("/studio", b"studio.js")):
+def test_production_entry_points_open_studio(studio_server):
+    for route, script in (("/", b"studio.js"), ("/production", b"studio.js"), ("/studio", b"studio.js")):
         status, content = request(studio_server, route)
         assert status == 200 and script in content
     for asset in ("studio.css", "studio.js", "studio-tools.js", "i18n/en.js", "i18n/zh-CN.js"):
         assert request(studio_server, "/static/" + asset)[0] == 200
     assert request(studio_server, "/static/i18n/../../production/tools.json")[0] == 404
     assert request(studio_server, "/studio", Host="evil.test")[0] == 403
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_):
+            return None
+
+    for route in ("/", "/production"):
+        with pytest.raises(urllib.error.HTTPError) as redirect:
+            urllib.request.build_opener(NoRedirect).open(studio_server + route)
+        assert redirect.value.code == 302 and redirect.value.headers["Location"] == "/studio"
 
 
 def test_settings_shared_with_overview_and_origin_checked(studio_server, studio):
