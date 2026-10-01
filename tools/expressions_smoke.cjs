@@ -34,9 +34,11 @@ const { spawn, spawnSync } = require("node:child_process");
   configured.providers["qwen-image"].baseUrl = `http://127.0.0.1:${fake.address().port}/api/v1`;
   configured.defaults = { conceptProvider: "qwen-image", stillProvider: "qwen-image", batchConfirmThreshold: 3 };
   fs.writeFileSync(toolsFile, JSON.stringify(configured));
-  const server = spawn(python, ["-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser"], {
+  const server = spawn(python, ["-X", "faulthandler", "-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser"], {
     windowsHide: true, env: { ...process.env, DASHSCOPE_API_KEY: "synthetic-local-provider-only" },
   });
+  let serverErrors = "";
+  server.stderr.on("data", chunk => { serverErrors = (serverErrors + chunk).slice(-16000); });
   const shots = path.join(__dirname, "..", "test-results"); fs.mkdirSync(shots, { recursive: true });
   let browser, page;
   try {
@@ -137,6 +139,7 @@ const { spawn, spawnSync } = require("node:child_process");
     assert.deepEqual(errors, []);
     console.log("PASS: concept grid, trim, actual dimensions, pick, single reroll, reference still, QA, approval, history, languages and free clip planning");
   } catch (error) {
+    console.error("Expression fixture server:", {exitCode: server.exitCode, signal: server.signalCode, stderr: serverErrors});
     if (page) console.error(await page.evaluate(() => window.SFStudio?.jobs.map(job => ({ action: job.action, status: job.status, error: job.error })) ).catch(() => []));
     if (page) await page.screenshot({ path: path.join(shots, "studio-expressions-failure.png") }).catch(() => {});
     throw error;
