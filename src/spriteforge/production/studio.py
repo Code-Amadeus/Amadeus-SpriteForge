@@ -10,9 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..workspace import read_json, resolve_asset
-from .records import bound_clip, output_root, production_dir, recorded_credit_delta
-
-ISSUE_LEVELS = ("fail", "fix", "watch")
+from .records import bound_clip, output_root, recorded_credit_delta
+from .issues import ISSUE_LEVELS, issue_summary, load_review
 
 
 def variant_groups(clips: list[dict]) -> list[dict]:
@@ -88,62 +87,7 @@ the sum of retained renders, not a history of overwritten processing runs.
                       else None, "renders": len(durations), "unknownDurations": len(durations) - len(known_durations)}}
 
 
-def issue_summary(poses: list[dict], clips: list[dict], graph: dict, report: dict,
-                  known: dict | None = None) -> list[dict]:
-    """Project existing recheck, render, binding and seam results into stable keys."""
-    issues = []
-    known = known or {}
-    bound = {node["id"]: node for node in graph.get("nodes", [])}
-    exported = {clip for node in bound.values() if (clip := bound_clip(node.get("root"))) is not None}
-
-    def add(key: str, level: str, kind: str, message: str, *, blocks_export: bool = False, **facts) -> None:
-        if level in ISSUE_LEVELS:
-            issues.append({**facts, "key": key, "level": level, "kind": kind, "message": message,
-                           "blocksExport": blocks_export and level == "fail",
-                           "known": known.get(key) if level == "watch" else None})
-
-    for pose in poses:
-        if pose.get("needsRecheck"):
-            add(f"pose:{pose['id']}:recheck", "watch", "pose", "Re-check the approved still against the base",
-                pose=pose["id"])
-    by_id = {clip["id"]: clip for clip in clips}
-    for clip in clips:
-        for check in (clip.get("render", {}).get("qa") or {}).get("checks", []):
-            add(f"clip:{clip['id']}:{check['check']}", check["level"], "clip", check["message"],
-                blocks_export=clip["id"] in exported,
-                clip=clip["id"], **{key: value for key, value in check.items() if key not in {"check", "level", "message"}})
-    # The export report owns these failures. Stable reason keys come from the
-    # corresponding recorded binding fields, rather than from diagnostic prose.
-    for result in report.get("nodes", []):
-        if not result.get("issues"):
-            continue
-        facts = {"node": result["node"], "clip": result["clip"]}
-        if result["clip"] not in by_id:
-            add(f"node:{result['node']}:unknownClip", "fail", "node", "Bound clip record missing",
-                blocks_export=True, **facts)
-            continue
-        node, clip = bound[result["node"]], by_id[result["clip"]]
-        render = clip.get("render") or {}
-        if render.get("state") in {"missing", "stale"}:
-            reason = render["state"]
-            add(f"node:{result['node']}:{reason}", "fail", "node",
-                "Render missing" if reason == "missing" else "Render out of date",
-                blocks_export=True, reasons=render.get("reasons", []), **facts)
-        if render.get("state") != "missing":
-            for key in ("phase", "frameIntervalMs", "loopMode"):
-                if node.get(key) != render.get(key):
-                    add(f"node:{result['node']}:{key}", "fail", "node", f"Node {key} differs from its render",
-                        blocks_export=True, expected=render.get(key), actual=node.get(key), **facts)
-    for edge in report.get("edges", []):
-        add(f"edge:{edge['from']}->{edge['to']}", edge["level"], "edge", "Graph seam needs review",
-            blocks_export=True,
-            **{key: value for key, value in edge.items() if key != "level"},
-            clips=list(dict.fromkeys(clip for node_id in (edge["from"], edge["to"])
-                                     if (clip := bound_clip(bound[node_id].get("root"))) is not None)))
-    return sorted(issues, key=lambda issue: (ISSUE_LEVELS.index(issue["level"]), issue["key"]))
-
-
-def studio_summary(workspace: Path, character: dict, poses: list[dict], clips: list[dict]) -> dict:
+def studio_summary(workspace: Path, character: dict, poses: list[dict], clips: list[dict], *, graph: dict | None = None) -> dict:
     """Add Studio's read model to an existing overview without reading it again."""
     from .checks import graph_report
     from .concepts import list_sheets
@@ -152,10 +96,10 @@ def studio_summary(workspace: Path, character: dict, poses: list[dict], clips: l
     current = next((sheet["id"] for sheet in reversed(sheets) if sheet["state"] == "ready"), None)
     concepts = [{**sheet, "current": sheet["id"] == current, "version": index} for index, sheet in enumerate(sheets, 1)]
 
-    graph_path = resolve_asset(workspace, "graph_config.json")
-    graph = read_json(graph_path) if graph_path.is_file() else {"nodes": [], "edges": []}
-    review_path = production_dir(workspace) / "review.json"
-    known = (read_json(review_path).get("known") or {}) if review_path.is_file() else {}
+    if graph is None:
+        graph_path = resolve_asset(workspace, "graph_config.json")
+        graph = read_json(graph_path) if graph_path.is_file() else {"nodes": [], "edges": []}
+    known = load_review(workspace)["known"]
     by_id = {clip["id"]: clip for clip in clips}
     nodes = list(graph.get("nodes", []))
     conflicts = []

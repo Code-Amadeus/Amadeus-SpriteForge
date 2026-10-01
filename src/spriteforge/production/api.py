@@ -4,7 +4,8 @@ Reads return the production overview and take media. Writes are decisions,
 prompt versions, clip settings, uploads and background jobs (still generation or
 adoption of a clip frame; clip generation, resume and render). Only one job may run
 for a pose or clip at a time; paid generation is requested only by an explicit user
-action in the page.
+action in the page. Export and publishing clip outputs share this server's job
+lock. Separate CLI processes are outside this local scheduling boundary.
 """
 from __future__ import annotations
 
@@ -69,6 +70,28 @@ class ProductionApi:
             from .tools import set_ui_defaults
             with self.lock:
                 return {"defaults": set_ui_defaults(self.workspace, body.get("defaults"))}
+        if route == "review-known":
+            from .issues import set_known
+            return set_known(self.workspace, body.get("key"), body.get("note", ""), clear=body.get("clear", False))
+        if route == "behavior/trigger-test":
+            return self.behavior_trigger_test(body.get("minutes", 10), body.get("seed", 1), body.get("events", []))
+        if route == "export":
+            from .exports import export_workspace, validate_version
+            version = validate_version(body.get("version"))
+
+            def export(log):
+                return export_workspace(self.workspace, version, notes=body.get("notes", ""), log=log)["version"]
+
+            return {"job": self._launch("export", "export", version, export)}
+        if route == "adopt-processed":
+            from .render import adopt_processed_take
+            with self.lock:
+                if any(job["action"] == "export" and job["status"] == "running" for job in self.jobs.values()):
+                    raise ValueError("An export is running; published clip output cannot change until it finishes")
+                if any(job["kind"] == "clip" and job["owner"] == body.get("clip") and job["status"] == "running"
+                       for job in self.jobs.values()):
+                    raise ValueError(f"A job for clip {body.get('clip')} is already running; wait before adopting its output")
+                return {"take": adopt_processed_take(self.workspace, body.get("clip"), body.get("take"))}
         if route == "decision":
             kind, owner, take, action = body.get("kind"), body.get("owner"), body.get("take"), body.get("action")
             if kind == "pose" and action == "accept":
@@ -179,6 +202,11 @@ class ProductionApi:
             def work(log):
                 take = generate_still(self.workspace, owner, provider, concept=concept, log=log)
                 return f"{take['id']} QA {take['qa']['status']}"
+        elif action == "render-take":
+            from .render import render_take
+
+            def work(log):
+                return render_take(self.workspace, owner, take_id, log=log)["qa"]["status"]
         elif action == "render":
             from .render import render_clip
 
@@ -197,7 +225,7 @@ class ProductionApi:
             def work(log):
                 return resume_clip_take(self.workspace, owner, str(take_id), log=log)["state"]
         else:
-            raise ValueError("Job action must be render, generate or resume")
+            raise ValueError("Job action must be render, render-take, generate or resume")
         return self._launch(action, kind, owner, work, provider=provider if kind == "pose" and action == "generate" else None)
 
     def start_concept(self, poses: object, grid: object, provider: str | None) -> dict:
@@ -228,6 +256,11 @@ class ProductionApi:
         if provider is not None and not isinstance(provider, str):
             raise ValueError("Provider must be a provider id")
         with self.lock:
+            active = [job for job in self.jobs.values() if job["status"] == "running"]
+            if action == "export" and any(job["action"] == "render" for job in active):
+                raise ValueError("A published render is running; wait for it before exporting")
+            if action == "render" and any(job["action"] == "export" for job in active):
+                raise ValueError("An export is running; published clip output cannot change until it finishes")
             if any((j["kind"], j["owner"]) == (kind, owner) and j["status"] == "running" for j in self.jobs.values()):
                 raise ValueError(f"A job for {kind} {owner} is already running")
             job = {"id": uuid.uuid4().hex[:12], "action": action, "kind": kind, "owner": owner, "status": "running", "log": [],
@@ -258,6 +291,115 @@ class ProductionApi:
     def job_list(self) -> list[dict]:
         with self.lock:
             return sorted((dict(j) for j in self.jobs.values()), key=lambda j: j["startedAt"], reverse=True)
+
+    def review_seam(self, key: str) -> dict:
+        from .issues import seam_detail
+        return seam_detail(self.workspace, key)
+
+    def export_preflight(self) -> dict:
+        from .exports import preflight
+        return preflight(self.workspace)
+
+    def export_diff(self) -> dict:
+        from .exports import installed_diff
+        return installed_diff(self.workspace)
+
+    def _behavior_snapshot(self, minutes: object, seed: object) -> tuple:
+        from ..graph import validate_graph
+        from ..workspace import clip_frames, read_json
+        from .project import overview
+        from .records import bound_clip
+        if isinstance(minutes, str):
+            try:
+                minutes = int(minutes)
+            except ValueError:
+                raise ValueError("Behavior minutes must be 10, 30 or 60") from None
+        if isinstance(seed, str):
+            try:
+                seed = int(seed)
+            except ValueError:
+                raise ValueError("Seed must be an unsigned 32-bit integer") from None
+        if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes not in {10, 30, 60}:
+            raise ValueError("Behavior minutes must be 10, 30 or 60")
+        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 0xFFFFFFFF:
+            raise ValueError("Seed must be an unsigned 32-bit integer")
+        path = resolve_asset(self.workspace, "graph_config.json")
+        graph = read_json(path) if path.is_file() else {"nodes": [], "edges": []}
+        if graph["nodes"]:
+            graph = validate_graph(self.workspace, graph, check_assets=False)
+        data = overview(self.workspace, graph=graph)
+        clips = {clip["id"]: clip for clip in data["clips"]}
+        bindings = {node["id"]: bound_clip(node.get("root")) for node in graph["nodes"]}
+        durations, nodes = {}, {}
+        for node in graph["nodes"]:
+            clip_id = bindings[node["id"]]
+            count = ((clips.get(clip_id) or {}).get("render") or {}).get("frameCount")
+            if clip_id is None:
+                try:
+                    count = len(clip_frames(self.workspace, node))
+                except (ValueError, OSError):
+                    count = None
+            known = isinstance(count, int) and not isinstance(count, bool) and count > 0
+            duration = count * node["frameIntervalMs"] / 1000 if known else 2.5
+            durations[node["id"]] = duration
+            nodes[node["id"]] = {"id": node["id"], "label": node["label"], "clip": clip_id,
+                                 "durationS": duration, "durationKnown": known}
+        return minutes, seed, graph, data, bindings, durations, nodes
+
+    def behavior_stats(self, minutes: object = 10, seed: object = 1) -> dict:
+        from ..behavior import pose_coverage, root_node, simulate, topology_summary
+        minutes, seed, graph, data, bindings, durations, nodes = self._behavior_snapshot(minutes, seed)
+        edge_issues = {issue["edge"]: issue for issue in data["issues"] if issue["kind"] == "edge" and issue["level"] == "fail"}
+        simulation = simulate(graph, durations, seconds=minutes * 60, seed=seed, failing_edges=set(edge_issues))
+        simulation["visitedSeamFailures"] = [edge_issues[edge]["key"] for edge in simulation.pop("jumps")]
+        simulation.pop("route")
+        simulation.pop("events")
+        ship = {"blocking": [issue for issue in data["issues"] if issue["blocksExport"]]}
+        out_of_date = {}
+        clips = {clip["id"]: clip for clip in data["clips"]}
+        for issue in ship["blocking"]:
+            if issue["kind"] == "node" and ((clips.get(issue.get("clip")) or {}).get("render") or {}).get("state") in {"missing", "stale"}:
+                out_of_date[issue["node"]] = nodes.get(issue["node"], {"id": issue["node"], "label": issue["clip"], "clip": issue["clip"]})
+        ship["outOfDate"] = list(out_of_date.values())
+        ship.update({key: [nodes[node] for node in ids] for key, ids in topology_summary(graph).items()})
+        root = root_node(graph)
+        root_clip = clips.get(bindings.get(root)) or {}
+        root_pose = root_clip.get("to")
+        groups = {}
+        for node in graph["nodes"]:
+            clip = clips.get(bindings[node["id"]])
+            pose = (clip["from"] if clip["to"] == data["character"]["basePose"] and clip["kind"] == "transition"
+                    else clip["to"]) if clip else None
+            label = pose or node["label"]
+            group_key = (pose, label)
+            group = groups.setdefault(group_key, {"pose": pose, "label": label + " family" if
+                                                 (pose is not None and pose == root_pose) or (pose is None and root and node["label"] == nodes[root]["label"])
+                                                 else label, "seconds": 0, "share": 0, "nodes": []})
+            time = simulation["nodeTime"][node["id"]]
+            group["seconds"] += time
+            group["nodes"].append({**nodes[node["id"]], "seconds": time,
+                                   "share": time / simulation["seconds"] if simulation["seconds"] else 0,
+                                   "visits": simulation["nodeVisits"][node["id"]]})
+        for group in groups.values():
+            group["seconds"] = round(group["seconds"], 6)
+            group["share"] = group["seconds"] / simulation["seconds"] if simulation["seconds"] else 0
+            group["nodes"].sort(key=lambda node: (-node["seconds"], node["id"]))
+        return {"available": bool(graph["nodes"]), "minutes": minutes, "seed": seed, "root": root, "ship": ship,
+                "simulation": simulation, "groups": sorted(groups.values(), key=lambda group: (-group["seconds"], group["label"])),
+                "coverage": pose_coverage(data["poses"], data["clips"], bindings, data["character"]["basePose"])}
+
+    def behavior_trigger_test(self, minutes: object = 10, seed: object = 1, events: object = None) -> dict:
+        from ..behavior import root_node, simulate
+        minutes, seed, graph, data, bindings, durations, _ = self._behavior_snapshot(minutes, seed)
+        if not isinstance(events, list):
+            raise ValueError("Trigger events must be a list")
+        clips = {clip["id"]: clip for clip in data["clips"]}
+        speech = {node for node, clip_id in bindings.items() if (clips.get(clip_id) or {}).get("mouth")}
+        failing = {issue["edge"] for issue in data["issues"] if issue["kind"] == "edge" and issue["level"] == "fail"}
+        result = simulate(graph, durations, seconds=minutes * 60, seed=seed, events=events, speech_targets=speech,
+                          failing_edges=failing, trace=True)
+        return {"minutes": minutes, "seed": seed, "root": root_node(graph), "route": result["route"],
+                "events": result["events"], "transitions": result["changes"], "jumps": result["jumps"]}
 
     def upload(self, kind: str, owner: str, name: str, stream, length: int, fps: float | None, note: str,
                *, poses: list[str] | None = None, grid: object = "3x2") -> dict:

@@ -37,6 +37,7 @@ window.SF_I18N["zh-CN"] = {
   "stage.clips": "片段",
   "stage.workflows": "工作流",
   "stage.review": "审阅",
+  "stage.connections": "图连接检查",
   "stage.behavior": "行为",
   "stage.export": "导出",
   "tool.canvas": "画布",

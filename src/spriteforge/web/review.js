@@ -1,5 +1,26 @@
+"use strict";
+(() => {
+function createReview(context = null) {
 
-const q = (id) => document.getElementById(id);
+let disposed = false;
+const lifecycle = new AbortController();
+const framesPending = new Set(), delayed = new Set();
+const fetch = (url, options = {}) => window.fetch(url, {...options, signal:lifecycle.signal});
+const q = (id) => context ? (context.root.id === id ? context.root : context.root.querySelector('#'+id)) : document.getElementById(id);
+const inspector = () => context ? context.root : document.querySelector('.inspector');
+const tx = (key, fallback, values = {}) => (context ? context.t('behavior.'+key,values) : fallback).replace(/\{(\w+)\}/g,(_,name)=>String(values[name] ?? '{'+name+'}'));
+const schedule = (fn, delay) => { const id=window.setTimeout(()=>{delayed.delete(id);if(!disposed)fn();},delay); delayed.add(id);return id; };
+const nextFrame = (fn) => { const id=window.requestAnimationFrame(()=>{framesPending.delete(id);if(!disposed)fn();});framesPending.add(id);return id; };
+const listen = (element, type, fn, options={}) => element.addEventListener(type,fn,{...options,signal:lifecycle.signal});
+const SpriteForgeMedia = context ? window.SpriteForgeMedia.create(context.root,{onError:error=>gTranslatedStatus('previewFailed','Preview failed: {error}',{error:error.message})}) : window.SpriteForgeMedia;
+const colors = context ? {bg:'#07100b',grid:'#173522',selected:'#9eefb6',from:'#70da95',node:'#0d1c13',selectedNode:'#1b3b27',border:'#35583f',text:'#87b598',edge:'#477b58'} :
+ {bg:'#0b0e14',grid:'#1c2435',selected:'#4a9eff',from:'#50ff90',node:'#141928',selectedNode:'#172940',border:'#283a5a',text:'#6a8fba',edge:'#2e5080'};
+if(context){
+  const style=getComputedStyle(context.root);
+  for(const [key,token] of Object.entries({bg:'--bg',grid:'--border',selected:'--info',from:'--success',node:'--surface',selectedNode:'--surface-alt',border:'--border-strong',text:'--muted',edge:'--faint'}))colors[key]=style.getPropertyValue(token).trim() || colors[key];
+}
+let observer, saving=false, statusTranslation=null;
+
 const esc=(value)=>String(value??" ").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;", "'":"&#39;"}[c]));
 let data = { layout: "", clips: {} };
 let qa = null;
@@ -482,6 +503,7 @@ function play() {
   timer = setInterval(() => {if(!SpriteForgeMedia.busy)showFrame(playIndex + 1);}, Math.round(1000 / fps));
 }
 
+if (!context) {
 q("customLoadBtn").addEventListener("click", loadCustomPath);
 q("customRoot").addEventListener("keydown", (e) => { if (e.key === "Enter") loadCustomPath(); });
 q("qaBtn").addEventListener("click", runQa);
@@ -493,6 +515,8 @@ q("prevBtn").addEventListener("click", () => { stop(); showFrame(playIndex - 1);
 q("nextBtn").addEventListener("click", () => { stop(); showFrame(playIndex + 1); });
 q("fps").addEventListener("change", () => { if (timer) play(); });
 
+
+}
 
 // ── Mouth Preview ─────────────────────────────────────────────────────────────
 let mouthAllConfigs  = {};    // expr → { cx, cy, width, height, openness, frameUrls }
@@ -732,11 +756,12 @@ function setInspTab(tab) {
   q("graphPanel").style.display = isGraph ? "" : "none";
   if (isMouth && !Object.keys(mouthAllConfigs).length) loadMouthConfigs();
   document.querySelector('main').classList.toggle('graph-active',isGraph);
-  document.querySelector('.inspector').classList.toggle('graph-active',isGraph);
+  inspector().classList.toggle('graph-active',isGraph);
   if(!isGraph) gSetExpanded(false);
-  if (isGraph) requestAnimationFrame(gResize);
+  if (isGraph) nextFrame(gResize);
 }
 
+if (!context) {
 q("tabInspQA").addEventListener("click",    () => setInspTab("qa"));
 q("tabInspMouth").addEventListener("click", () => setInspTab("mouth"));
 q("tabInspGraph").addEventListener("click", () => setInspTab("graph"));
@@ -809,12 +834,13 @@ q("mouthCopyBtn").addEventListener("click", () => {
   };
   const text = JSON.stringify(obj, null, 2);
   navigator.clipboard.writeText(text).then(
-    () => { q("mouthCopyBtn").textContent = "Copied!"; setTimeout(() => q("mouthCopyBtn").textContent = "Copy JSON", 1800); },
+    () => { q("mouthCopyBtn").textContent = "Copied!"; schedule(() => q("mouthCopyBtn").textContent = "Copy JSON", 1800); },
     () => { q("mouthCopyBtn").textContent = text; }
   );
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+}
 // Graph Editor — 表演状态机可视化编辑器
 // 节点 = 表情/动画状态（关联一个 frames root 路径）
 // 边   = 有向转换，带概率权重（同一节点出边之和应为 1.0）
@@ -911,9 +937,9 @@ function gZoomAt(factor,x=gViewWidth/2,y=gViewHeight/2) {
   gZoom=next; gFitActive=false; gDraw();
 }
 function gSetExpanded(expanded) {
-  document.querySelector('.inspector').classList.toggle('graph-expanded',expanded);
-  q('gExpand').textContent=expanded?'Collapse':'Expand';
-  requestAnimationFrame(gResize);
+  inspector().classList.toggle('graph-expanded',expanded);
+  q('gExpand').textContent=expanded?tx('collapse','Collapse'):tx('expand','Expand');
+  nextFrame(gResize);
 }
 function gResize() {
   const cv=q('graphCanvas'), viewport=q('graphViewport');
@@ -929,18 +955,20 @@ function gResize() {
   }
 }
 function gDraw() {
+  if(disposed)return;
+  if(context && context.onChange)context.onChange(graph,gSel);
   const cv = q('graphCanvas'); if (!cv || !cv.width) return;
   const ctx = cv.getContext('2d');
   ctx.setTransform(gPixelRatio,0,0,gPixelRatio,0,0);
   ctx.clearRect(0, 0, gViewWidth, gViewHeight);
   q("gZoomLabel").textContent=Math.round(gZoom*100)+"%";
   // 背景
-  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, gViewWidth, gViewHeight);
+  ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, gViewWidth, gViewHeight);
   // 网格（固定在屏幕，不随 pan 移动，给人无限画布感）
   const gs = 30;
   const ox = ((gPan.x % gs) + gs) % gs;
   const oy = ((gPan.y % gs) + gs) % gs;
-  ctx.fillStyle = '#1c2435';
+  ctx.fillStyle = colors.grid;
   for (let x = ox; x < gViewWidth;  x += gs)
     for (let y = oy; y < gViewHeight; y += gs)
       ctx.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
@@ -972,10 +1000,10 @@ function gDrawNode(ctx, n) {
   const sel  = gSel && gSel.type==='node' && gSel.id===n.id;
   const from = gEdgeFrom===n.id;
   ctx.save();
-  if (sel||from) { ctx.shadowColor=sel?'#4a9eff':'#50ff90'; ctx.shadowBlur=12; }
+  if (sel||from) { ctx.shadowColor=sel?colors.selected:colors.from; ctx.shadowBlur=12; }
   ctx.beginPath(); ctx.arc(n.x,n.y,GR,0,Math.PI*2);
-  ctx.fillStyle   = sel?'#172940':from?'#172b1e':'#141928'; ctx.fill();
-  ctx.strokeStyle = sel?'#4a9eff':from?'#40e080':n.isRoot?'#c8a020':'#283a5a'; ctx.lineWidth=sel?2.5:n.isRoot?2.5:1.5; ctx.stroke();
+  ctx.fillStyle   = sel?colors.selectedNode:from?'#172b1e':colors.node; ctx.fill();
+  ctx.strokeStyle = sel?colors.selected:from?colors.from:n.isRoot?'#c8a020':colors.border; ctx.lineWidth=sel?2.5:n.isRoot?2.5:1.5; ctx.stroke();
   if (n.isRoot) {
     ctx.save(); ctx.beginPath(); ctx.arc(n.x,n.y,GR+5,0,Math.PI*2);
     ctx.strokeStyle='rgba(200,160,32,0.45)'; ctx.lineWidth=1.5; ctx.setLineDash([4,4]); ctx.stroke(); ctx.restore();
@@ -984,16 +1012,17 @@ function gDrawNode(ctx, n) {
   ctx.save();
   ctx.beginPath(); ctx.arc(n.x,n.y,GR-3,0,Math.PI*2); ctx.clip();
   ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle=sel?'#8ccfff':'#6a8fba';
+  ctx.fillStyle=sel?colors.selected:colors.text;
   const lbl=n.label||'?';
   if (lbl.length<=9) { ctx.fillText(lbl,n.x,n.y); }
   else { const h=Math.ceil(lbl.length/2); ctx.fillText(lbl.slice(0,h),n.x,n.y-6); ctx.fillText(lbl.slice(h),n.x,n.y+7); }
   ctx.restore();
+  if(context && context.nodeIssue && context.nodeIssue(n)) { ctx.fillStyle='#ff7474';ctx.beginPath();ctx.arc(n.x+GR-4,n.y-GR+4,4,0,Math.PI*2);ctx.fill(); }
 }
 function gDrawEdge(ctx, e) {
   const geom=gEdgeGeom(e); if (!geom) return;
   const sel=gSel&&gSel.type==='edge'&&gSel.id===e.id;
-  const col=sel?'#4a9eff':'#2e5080';
+  const col=sel?colors.selected:colors.edge;
   const isManual = e.prob === 0;
   ctx.save(); ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=sel?2:1.5;
   if (isManual) ctx.setLineDash([5,4]);
@@ -1007,11 +1036,13 @@ function gDrawEdge(ctx, e) {
   }
   const mp=gEdgeMid(e);
   if (mp) {
-    const txt=isManual?'manual':(e.prob*100).toFixed(0)+'%';
+    const total=graph.edges.filter(other=>other.from===e.from && other.prob>0).reduce((sum,other)=>sum+other.prob,0);
+    const seam=context && context.edgeIssue && context.edgeIssue(e);
+    const txt=seam || (isManual?tx('manual','manual'):((total>0?e.prob/total:0)*100).toFixed(0)+'%');
     ctx.font='9px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
     const tw=ctx.measureText(txt).width;
-    ctx.fillStyle='rgba(11,14,20,0.85)'; ctx.fillRect(mp.x-tw/2-3,mp.y-7,tw+6,14);
-    ctx.fillStyle=isManual?(sel?'#7ab4ff':'#3a5a88'):(sel?'#6af':'#4a7aaa'); ctx.fillText(txt,mp.x,mp.y);
+    ctx.fillStyle=colors.bg; ctx.fillRect(mp.x-tw/2-3,mp.y-7,tw+6,14);
+    ctx.fillStyle=seam?'#ff7474':sel?colors.selected:colors.text; ctx.fillText(txt,mp.x,mp.y);
   }
   ctx.restore();
 }
@@ -1031,7 +1062,8 @@ function gSetMode(m) {
   q('graphCanvas').style.cursor={select:'default',node:'cell',edge:'crosshair'}[m];
   gSetStatus(''); gDraw();
 }
-function gSetStatus(msg) { const el=q('gStatus'); if(el) el.textContent=msg; }
+function gSetStatus(msg) { statusTranslation=null; const el=q('gStatus'); if(!disposed && el) el.textContent=msg; }
+function gTranslatedStatus(key,fallback,values={}) {gSetStatus(tx(key,fallback,values));statusTranslation={key,fallback,values};}
 
 function gOnDown(e) {
   if (e.button!==0) return;
@@ -1047,18 +1079,18 @@ function gOnDown(e) {
         : 'node';
       const n={id:gUid(),label:defaultLabel,root:currentRoot||'',x,y,isRoot:graph.nodes.length===0};
       graph.nodes.push(n); gSel={type:'node',id:n.id}; gRefreshProps(); gDraw();
-      setTimeout(()=>{q('gNLabel').focus();q('gNLabel').select();},40);
+      schedule(()=>{q('gNLabel').focus();q('gNLabel').select();},40);
     }
     return;
   }
   if (gMode==='edge') {
     if (hitN) {
-      if (!gEdgeFrom) { gEdgeFrom=hitN.id; gMouse={x,y}; gSetStatus('Edge from "'+hitN.label+'" — click target'); }
+      if (!gEdgeFrom) { gEdgeFrom=hitN.id; gMouse={x,y}; gTranslatedStatus('edgeFrom','Edge from {label} — click target',{label:hitN.label}); }
       else {
         const dup=graph.edges.find(e2=>e2.from===gEdgeFrom&&e2.to===hitN.id);
         if (!dup) { const edge={id:gUid(),from:gEdgeFrom,to:hitN.id,prob:1.0}; graph.edges.push(edge); gSel={type:'edge',id:edge.id}; gRefreshProps(); }
-        else gSetStatus('Edge already exists');
-        gEdgeFrom=null; gDraw(); setTimeout(()=>gSetStatus(''),1500);
+        else gTranslatedStatus('edgeExists','Edge already exists');
+        gEdgeFrom=null; gDraw(); schedule(()=>gSetStatus(''),1500);
       }
     } else { gEdgeFrom=null; gSetStatus(''); gDraw(); }
     return;
@@ -1095,7 +1127,7 @@ function gOnUp()  { gDrag=null; gPanning=false; }
 
 function gOnDbl(e) {
   const {x,y}=gXY(e); const hitN=gHitNode(x,y);
-  if (hitN) { gSel={type:'node',id:hitN.id}; gRefreshProps(); setTimeout(()=>{q('gNLabel').focus();q('gNLabel').select();},30); }
+  if (hitN) { gSel={type:'node',id:hitN.id}; gRefreshProps(); schedule(()=>{q('gNLabel').focus();q('gNLabel').select();},30); }
 }
 function gOnCtx(e) {
   e.preventDefault(); if(graphReadOnly)return; const {x,y}=gXY(e);
@@ -1123,13 +1155,15 @@ function gNormalize() {
     auto.forEach(e=>{e.prob=parseFloat((e.prob/sum).toFixed(4));});
   }
   if(gSel&&gSel.type==='edge') gRefreshEdgeProp(gFindEdge(gSel.id));
-  gDraw(); gSetStatus('Normalized'); setTimeout(()=>gSetStatus(''),1800);
+  gDraw(); gTranslatedStatus('normalized','Normalized'); schedule(()=>gSetStatus(''),1800);
 }
 
 // -- Property panel -----------------------------------------------------------
 function gRefreshProps() {
+  if(disposed)return;
+  if(context && context.onSelection)context.onSelection(gSel,graph);
   q('graphProperties').hidden=!gSel;
-  requestAnimationFrame(gResize);
+  nextFrame(gResize);
   const np=q('gNodeProp'),ep=q('gEdgeProp');
   if(!gSel){np.style.display='none';ep.style.display='none';return;}
   if(gSel.type==='node') {
@@ -1156,7 +1190,7 @@ function gRefreshEdgeProp(e) {
   const sum=autoOut.reduce((s,e2)=>s+e2.prob,0);
   const warn=q('gEWarn'); const manualHint=q('gEManual');
   manualHint.style.display = e.prob===0 ? '' : 'none';
-  if(e.prob>0&&sum>0){warn.textContent='Normalized chance: '+(e.prob/sum*100).toFixed(1)+'%';warn.style.display='';}
+  if(e.prob>0&&sum>0){warn.textContent=tx('chance','Normalized chance: {value}%',{value:(e.prob/sum*100).toFixed(1)});warn.style.display='';}
   else warn.style.display='none';
 }
 
@@ -1177,107 +1211,141 @@ function gPopulate() {
     graph.nodes.push({id:gUid(),label:lbl,root,isRoot:graph.nodes.length===0,x:70+(i%3)*155,y:70+Math.floor(i/3)*110});
     added++;
   }
-  if(added){gSetStatus('+'+added+' nodes added');setTimeout(()=>gSetStatus(''),2000);}
-  else gSetStatus('No new states (load a project first)');
+  if(added){gTranslatedStatus('nodesAdded','+'+added+' nodes added',{count:added});schedule(()=>gSetStatus(''),2000);}
+  else gTranslatedStatus('noNewStates','No new states (load a project first)');
   gDraw();
 }
 
 // -- Save / Load --------------------------------------------------------------
 async function gSaveGraph() {
+  if(saving || disposed)return;
+  const snapshot=JSON.stringify(graph); saving=true;q('gSave').disabled=true;
   try {
-    const r=await fetch('/api/graph',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(graph)});
-    const d=await r.json();
-    if(d.ok){graph=d.graph;gRefreshProps();gDraw();} gSetStatus(d.ok?'Saved':'Error: '+d.error);
-  } catch(ex){gSetStatus('Save failed');}
+    const r=await fetch('/api/graph',{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
+    const d=await r.json();if(disposed)return;
+    if(d.ok){if(JSON.stringify(graph)===snapshot)graph=d.graph; if(context && context.onSaved)context.onSaved(d.graph,'save');gRefreshProps();gDraw();}
+    if(d.ok)gTranslatedStatus('saved','Saved');else gTranslatedStatus('error','Error: {error}',{error:d.error});
+  } catch(ex){gTranslatedStatus('saveFailed','Save failed');}
+  finally{saving=false;if(!disposed)q('gSave').disabled=graphReadOnly;}
 }
 async function gLoadGraph() {
   try {
     const r=await fetch('/api/graph'),d=await r.json();
-    if(d.ok&&d.graph){graph=d.graph;gLayoutAvailable=d.layoutAvailable!==false;gFitActive=true;gSel=null;gRefreshProps();gResize();gSetStatus(!gLayoutAvailable?'No saved layout supplied. Open with --layout path/to/graph_config.json':graphReadOnly?'Runtime pack · saved layout · read only':'Loaded');}else gSetStatus('Error: '+d.error);
-  } catch(ex){gSetStatus('Load failed');}
+    if(disposed)return;
+    if(d.ok&&d.graph){graph=d.graph;if(context && context.onSaved)context.onSaved(graph,'load');gLayoutAvailable=d.layoutAvailable!==false;gFitActive=true;gSel=null;gRefreshProps();gResize();
+      if(!gLayoutAvailable)gSetStatus('No saved layout supplied. Open with --layout path/to/graph_config.json');else if(graphReadOnly)gSetStatus('Runtime pack · saved layout · read only');else gTranslatedStatus('loaded','Loaded');
+    }else gTranslatedStatus('error','Error: {error}',{error:d.error});
+  } catch(ex){gTranslatedStatus('loadFailed','Load failed');}
 }
 
 
+let nodeSegments=[],segmentIndex=0,nodeFrameIndex=0;
+function currentSegment(){return nodeSegments[segmentIndex];}
+async function showNodeFrame(){
+  const segment=currentSegment(); if(!segment || disposed)return;
+  const index=nodeFrameIndex;
+  const shown=await SpriteForgeMedia.show(segment.frames[index]);
+  if(!shown || disposed || segment!==currentSegment() || index!==nodeFrameIndex)return;
+  setNow(`${segment.node.label} ${index+1}/${segment.frames.length}`,segment.frames[index]);
+  if(context && context.onFrame)context.onFrame(segment.node,index,segment.frames.length);
+}
+function playNodeFrames(){
+  stop();const segment=currentSegment();if(!segment)return;
+  const interval=segment.node.frameIntervalMs;
+  if(context)q('fps').value=Math.round(100000/interval)/100;
+  showNodeFrame();
+  timer=setInterval(()=>{
+    if(SpriteForgeMedia.busy)return;
+    if(nodeFrameIndex===segment.frames.length-1){
+      if(nodeSegments.length>1){
+        if(segmentIndex===nodeSegments.length-1){stop();return;}
+        segmentIndex++;nodeFrameIndex=0;playNodeFrames();return;
+      }
+      if(segment.node.loopMode==='once_then_hold'){stop();return;}
+    }
+    nodeFrameIndex=(nodeFrameIndex+1)%segment.frames.length;showNodeFrame();
+  },interval);
+}
+function stepNodeFrames(delta){stop();const segment=currentSegment();if(!segment)return;nodeFrameIndex=Math.max(0,Math.min(segment.frames.length-1,nodeFrameIndex+delta));showNodeFrame();}
 async function previewNode(node) {
-  stop();
-  const generation=previewGeneration;
+  stop();const generation=previewGeneration;
   try {
     const response=await fetch('/api/preview-node',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({graph,nodeId:node.id})});
-    const result=await response.json();
-    if(generation!==previewGeneration)return;
-    if(!result.ok){gSetStatus('Error: '+result.error);return;}
-    const frames=result.frames;
-    let index=0;
-    const show=()=>{SpriteForgeMedia.show(frames[index]);setNow(`${result.node.label} ${index+1}/${frames.length}`,frames[index]);};
-    show();
-    timer=setInterval(()=>{
-      if(SpriteForgeMedia.busy)return;
-      if(index===frames.length-1 && result.node.loopMode==='once_then_hold'){stop();return;}
-      index=(index+1)%frames.length;show();
-    }, result.node.frameIntervalMs);
-    gSetStatus('Exact selected clip · '+result.node.frameIntervalMs+' ms · '+result.node.loopMode);
-  }catch(e){gSetStatus('Preview failed: '+e);}
+    const result=await response.json();if(disposed || generation!==previewGeneration)return;
+    if(!result.ok){gTranslatedStatus('error','Error: {error}',{error:result.error});return;}
+    nodeSegments=[{node:result.node,frames:result.frames}];segmentIndex=0;nodeFrameIndex=0;playNodeFrames();
+    gTranslatedStatus('exactPreview','Exact selected clip · {interval} ms · {loop}',{interval:result.node.frameIntervalMs,loop:result.node.loopMode});
+  }catch(e){gTranslatedStatus('previewFailed','Preview failed: {error}',{error:String(e)});}
+}
+async function previewRoute(route){
+  stop();const generation=previewGeneration;
+  try{
+    const response=await fetch('/api/preview-route',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({graph,route})});
+    const result=await response.json();if(disposed || generation!==previewGeneration)return;
+    if(!result.ok)throw new Error(result.error);
+    nodeSegments=result.segments.filter(segment=>segment.frames.length);segmentIndex=0;nodeFrameIndex=0;playNodeFrames();
+  }catch(error){gTranslatedStatus('previewFailed','Preview failed: {error}',{error:String(error)});}
 }
 
 // -- Init ---------------------------------------------------------------------
 function gInitGraph() {
   const cv=q('graphCanvas'); if(!cv) return;
-  cv.addEventListener('mousedown',  gOnDown);
-  cv.addEventListener('mousemove',  gOnMove);
-  window.addEventListener('mouseup', gOnUp);
-  cv.addEventListener('dblclick',   gOnDbl);
-  cv.addEventListener('contextmenu',gOnCtx);
-  window.addEventListener('resize',()=>{if(q('graphPanel').style.display!=='none')gResize();});
-  q('gModeSelect').addEventListener('click',()=>gSetMode('select'));
-  q('gModeNode').addEventListener('click',  ()=>gSetMode('node'));
-  q('gModeEdge').addEventListener('click',  ()=>gSetMode('edge'));
-  q('gNormalize').addEventListener('click', gNormalize);
-  q('gPopulate').addEventListener('click',  gPopulate);
-  q('gResetView').addEventListener('click', gFitGraph);
-  q('gZoomIn').addEventListener('click',()=>gZoomAt(1.25));
-  q('gZoomOut').addEventListener('click',()=>gZoomAt(.8));
-  q('gExpand').addEventListener('click',()=>gSetExpanded(!document.querySelector('.inspector').classList.contains('graph-expanded')));
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')gSetExpanded(false);});
-  cv.addEventListener('wheel',e=>{e.preventDefault();const p=gXY(e);gZoomAt(Math.exp(-e.deltaY*.0015),p.sx,p.sy);},{passive:false});
-  new ResizeObserver(gResize).observe(q('graphViewport'));
-  q('gSave').addEventListener('click',      gSaveGraph);
-  q('gLoad').addEventListener('click',      gLoadGraph);
-  q('gValidate').addEventListener('click', async()=>{try {const res=await fetch('/api/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(graph)});const d=await res.json();gSetStatus(d.ok?'Valid topology and frame bindings':'Error: '+d.error);}catch(e){gSetStatus(String(e));}});
-  q('gClear').addEventListener('click',()=>{
-    if(!confirm('Clear all nodes and edges?')) return;
+  listen(cv,'mousedown',  gOnDown);
+  listen(cv,'mousemove',  gOnMove);
+  listen(window,'mouseup', gOnUp);
+  listen(cv,'dblclick',   gOnDbl);
+  listen(cv,'contextmenu',gOnCtx);
+  listen(window,'resize',()=>{if(q('graphPanel').style.display!=='none')gResize();});
+  listen(q('gModeSelect'),'click',()=>gSetMode('select'));
+  listen(q('gModeNode'),'click',  ()=>gSetMode('node'));
+  listen(q('gModeEdge'),'click',  ()=>gSetMode('edge'));
+  listen(q('gNormalize'),'click', gNormalize);
+  listen(q('gPopulate'),'click',  gPopulate);
+  listen(q('gResetView'),'click', gFitGraph);
+  listen(q('gZoomIn'),'click',()=>gZoomAt(1.25));
+  listen(q('gZoomOut'),'click',()=>gZoomAt(.8));
+  listen(q('gExpand'),'click',()=>gSetExpanded(!inspector().classList.contains('graph-expanded')));
+  listen(document,'keydown',e=>{if(e.key==='Escape')gSetExpanded(false);});
+  listen(cv,'wheel',e=>{e.preventDefault();const p=gXY(e);gZoomAt(Math.exp(-e.deltaY*.0015),p.sx,p.sy);},{passive:false});
+  observer = new ResizeObserver(gResize); observer.observe(q('graphViewport'));
+  listen(q('gSave'),'click',      gSaveGraph);
+  listen(q('gLoad'),'click',      gLoadGraph);
+  listen(q('gValidate'),'click', async()=>{try {const res=await fetch('/api/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(graph)});const d=await res.json();if(d.ok)gTranslatedStatus('valid','Valid topology and frame bindings');else gTranslatedStatus('error','Error: {error}',{error:d.error});}catch(e){gSetStatus(String(e));}});
+  listen(q('gClear'),'click',()=>{
+    if(!confirm(tx('clearConfirm','Clear all nodes and edges?'))) return;
     graph={nodes:[],edges:[]};gSel=null;gRefreshProps();gDraw();
   });
-  q('gNLabel').addEventListener('input',()=>{
+  listen(q('gNLabel'),'input',()=>{
     const n=gSel&&gSel.type==='node'&&gFindNode(gSel.id);
     if(n){n.label=q('gNLabel').value;gDraw();}
   });
-  q('gNIsRoot').addEventListener('change',()=>{
+  listen(q('gNIsRoot'),'change',()=>{
     const n=gSel&&gSel.type==='node'&&gFindNode(gSel.id);
     if(n){if(q('gNIsRoot').checked) graph.nodes.forEach(other=>other.isRoot=false); n.isRoot=q('gNIsRoot').checked;gDraw();}
   });
-  q('gNRoot').addEventListener('change',()=>{
+  listen(q('gNRoot'),'change',()=>{
     const n=gSel&&gSel.type==='node'&&gFindNode(gSel.id);
-    if(n) n.root=q('gNRoot').value;
+    if(n) {n.root=q('gNRoot').value;gDraw();}
   });
-  q('gNView').addEventListener('click',()=>{
+  listen(q('gNView'),'click',()=>{
     const n=gSel&&gSel.type==='node'&&gFindNode(gSel.id);
     if(n&&n.root) previewNode(n);
   });
   for(const [id,key] of [['gNPhase','phase'],['gNInterval','frameIntervalMs'],['gNLoop','loopMode']]) {
-    q(id).addEventListener('change',()=>{const n=gSel&&gFindNode(gSel.id);if(n)n[key]=key==='frameIntervalMs'?Number(q(id).value):q(id).value;});
+    listen(q(id),'change',()=>{const n=gSel&&gFindNode(gSel.id);if(n){n[key]=key==='frameIntervalMs'?Number(q(id).value):q(id).value;gDraw();}});
   }
-  q('gNDel').addEventListener('click',()=>{if(gSel&&gSel.type==='node')gDeleteNode(gSel.id);});
-  q('gEProb').addEventListener('focus', ()=>{ gEProbFocused=true; });
-  q('gEProb').addEventListener('blur',  ()=>{ gEProbFocused=false; });
-  q('gEProb').addEventListener('input',()=>{
+  listen(q('gNDel'),'click',()=>{if(gSel&&gSel.type==='node')gDeleteNode(gSel.id);});
+  listen(q('gEProb'),'focus', ()=>{ gEProbFocused=true; });
+  listen(q('gEProb'),'blur',  ()=>{ gEProbFocused=false; });
+  listen(q('gEProb'),'input',()=>{
     const e=gSel&&gSel.type==='edge'&&gFindEdge(gSel.id);
     if(e){const v=parseFloat(q('gEProb').value);if(!isNaN(v)){e.prob=v;gRefreshEdgeProp(e);gDraw();}}
   });
-  q('gEDel').addEventListener('click',()=>{if(gSel&&gSel.type==='edge')gDeleteEdge(gSel.id);});
+  listen(q('gEDel'),'click',()=>{if(gSel&&gSel.type==='edge')gDeleteEdge(gSel.id);});
 }
 
 // ── Inspector 拖拽调宽 ────────────────────────────────────────────────────────
-(function() {
+if (!context) (function() {
   const handle = q('inspResizeHandle');
   const insp   = document.querySelector('section.inspector');
   let dragging = false, startX = 0, startW = 0;
@@ -1307,7 +1375,33 @@ function gInitGraph() {
 })();
 
 gInitGraph();
-gLoadGraph();
-
-// 启动
-loadSources();
+if(context){
+  listen(q('playBtn'),'click',playNodeFrames);listen(q('pauseBtn'),'click',stop);
+  listen(q('prevBtn'),'click',()=>stepNodeFrames(-1));listen(q('nextBtn'),'click',()=>stepNodeFrames(1));
+  q('fps').readOnly=true;
+} else {gLoadGraph();loadSources();}
+return {
+  load:gLoadGraph, save:gSaveGraph, previewNode, previewRoute, resize:gResize, draw:gDraw, normalize:gNormalize,
+  select(key){
+    const node=graph.nodes.find(n=>'node:'+n.id===key),edge=graph.edges.find(e=>'edge:'+e.from+'->'+e.to===key);
+    gSel=node?{type:'node',id:node.id}:edge?{type:'edge',id:edge.id}:null;gRefreshProps();gDraw();
+  },
+  update(next){
+    context=next;
+    if(statusTranslation){const {key,fallback,values}=statusTranslation;q('gStatus').textContent=tx(key,fallback,values);}
+    if(gSel && gSel.type==='edge'){const value=q('gEProb').value;gRefreshEdgeProp(gFindEdge(gSel.id));q('gEProb').value=value;}
+    gDraw();
+  },
+  setClips(clips){allClips=Object.fromEntries(clips.filter(c=>c.output).map(c=>[c.output+'||flat',c]));},
+  get graph(){return graph;},get selection(){return gSel;},get gZoom(){return gZoom;},get gPan(){return gPan;},
+  get gViewWidth(){return gViewWidth;},get gViewHeight(){return gViewHeight;},GR,
+  cleanup(){disposed=true;stop();lifecycle.abort();if(observer)observer.disconnect();for(const id of delayed)clearTimeout(id);for(const id of framesPending)cancelAnimationFrame(id);if(context)SpriteForgeMedia.dispose();}
+};
+}
+window.SFReview={create:createReview};
+if(document.getElementById('tabInspGraph')){
+  const legacy=createReview();
+  // These read-only diagnostics are consumed by the legacy browser smoke tests.
+  for(const key of ['graph','gZoom','gPan','gViewWidth','gViewHeight','GR'])Object.defineProperty(window,key,{configurable:true,get:()=>legacy[key]});
+}
+})();

@@ -2,6 +2,9 @@
 (() => {
   const translations = {
     en: {
+      "clips.processTake": "Process & QA · free", "clips.processingTake": "Candidate processing started · published material stays unchanged",
+      "clips.processFirst": "Process and check this candidate before adopting it.", "clips.blockedQA": "This candidate has blocking QA findings.",
+      "clips.showSource": "Show source", "clips.showProcessed": "View processed candidate",
       "clips.title": "Clip studio", "clips.none": "No clips have been created yet.", "clips.missing": "This clip does not exist.",
       "clips.choose": "Choose clip", "clips.newClip": "New clip", "clips.newVariant": "New variant", "clips.variants": "{from} → {to} · variants",
       "clips.variantHint": "Variants are named sibling clips. Each has its own versions.", "clips.variantId": "New variant id", "clips.idHint": "1–64 lowercase letters, digits, _ or -; the id must be unused.",
@@ -33,6 +36,9 @@
       "clips.progress": "{percent}%", "clips.jobRunning": "A job is running for this clip.", "clips.settingsHint": "Save edited settings before generating; generation uses the current server settings."
     },
     "zh-CN": {
+      "clips.processTake": "处理与 QA · 免费", "clips.processingTake": "候选处理已开始，已发布素材保持不变",
+      "clips.processFirst": "先处理并检查此候选，再采纳为可用素材。", "clips.blockedQA": "此候选存在阻塞性的 QA 问题。",
+      "clips.showSource": "查看原始素材", "clips.showProcessed": "查看处理后候选",
       "clips.title": "片段工作室", "clips.none": "尚未创建片段。", "clips.missing": "此片段不存在。", "clips.choose": "选择片段", "clips.newClip": "新建片段", "clips.newVariant": "新建变体", "clips.variants": "{from} → {to} · 变体", "clips.variantHint": "变体是按名字区分的兄弟片段，各有自己的版本。", "clips.variantId": "新变体 id", "clips.idHint": "1–64 个小写字母、数字、_ 或 -；id 必须尚未使用。", "clips.variantCreated": "已创建变体 {id}", "clips.clipId": "片段 id", "clips.from": "起始姿态", "clips.to": "结束姿态", "clips.phase": "阶段", "clips.clipCreated": "已创建片段 {id}",
       "clips.kind.transition": "过渡", "clips.kind.loop": "循环", "clips.kind.speaking": "说话循环", "clips.versions": "版本", "clips.filter": "筛选版本", "clips.filter.all": "全部", "clips.filter.review": "待审阅", "clips.filter.rejected": "已弃用", "clips.noVersions": "此筛选条件下没有版本。", "clips.versionStatus.accepted": "已接受", "clips.versionStatus.rejected": "已弃用", "clips.versionStatus.failed": "失败", "clips.versionStatus.submitted": "已提交", "clips.versionStatus.generating": "生成中", "clips.versionStatus.review": "待审阅", "clips.versionStatus.pending": "待处理", "clips.reason": "原因：{reason}", "clips.error": "错误：{error}", "clips.basedOn": "基于 v{version}：{note}", "clips.promptVersion": "prompt v{version}", "clips.credits": "{credits} credits", "clips.pinB": "将 v{version} 钉住为 B", "clips.unpinB": "将已接受版本用作 B", "clips.selectVersion": "选择 v{version} 作为 A", "clips.details": "详情",
       "clips.tab.prompt": "提示词", "clips.tab.generation": "生成", "clips.tab.processing": "处理", "clips.tab.playback": "播放", "clips.tab.mouth": "嘴型", "clips.tab.qa": "QA", "clips.sentPrompt": "v{version} 实际发出的 prompt", "clips.noSnapshot": "此版本没有 prompt 快照。", "clips.currentPrompt": "当前 prompt 预览", "clips.negative": "负面 prompt", "clips.negativeNotSent": "此服务商未收到负面 prompt。", "clips.diffAgainst": "与 B · v{version} 的词级差异", "clips.subject": "当前主题块 · {block}", "clips.savePrompt": "保存为新 prompt 版本", "clips.promptSaved": "prompt 已保存为新版本", "clips.copyPrompt": "复制 prompt", "clips.copied": "prompt 已复制", "clips.copyFailed": "请选中 prompt 后手动复制。", "clips.note": "版本备注", "clips.saveNote": "保存备注", "clips.noteSaved": "版本备注已保存",
@@ -95,7 +101,7 @@
     let ctx = initial;
     const { h } = initial;
     const tr = (key, values) => ctx.t("clips." + key, values);
-    let selectedA = null; let pinnedB = null; let filter = "all"; let detailTab = "prompt";
+    let selectedA = null; let pinnedB = null; let filter = "all"; let detailTab = "prompt"; let showProcessed = false;
     let compare = null; let details = null; let detailsKey = null; let detailsPaused = false; let disposed = false;
     let currentClip = null; let dialog = null; let dialogRefresh = null;
     let promptDraft = null; const noteDrafts = new Map();
@@ -180,7 +186,9 @@
         clip.generation.lastFrame === "none" ? h("span",{class:"tiny"},tr("lastNotSent")) : endpoint(clip.to,"lastStill")),badge(summary.join(" · "),clip.render.qa?.status === "fail" ? "fail" : clip.render.state === "stale" ? "watch" : accepted ? "pass" : ""),
         h("div",{class:"spacer"}),choose,button("import",openImport,{disabled:!inputReady(),title:!inputReady()?tr("stillsRequired"):null}),
         button("generate",() => openGenerate(),{class:"primary",disabled:!!generationHint(),title:generationHint()||null},{cost:costLabel()}),
-        button(clip.render.state === "current" ? "renderCheck" : "render",(event) => startJob("render",{},tr("rendering"),event.currentTarget),{disabled:!clip.acceptedTake||running()}));
+        takeA() && takeA().status !== "accepted"
+          ? button("processTake", event => processTake(takeA(), event.currentTarget), {disabled:takeA().state!=="ready"||running()})
+          : button(clip.render.state === "current" ? "renderCheck" : "render",(event) => startJob("render",{},tr("rendering"),event.currentTarget),{disabled:!clip.acceptedTake||running()}));
     }
 
     function groupKey(clip) { return `${clip.kind === "loop" && clip.mouth ? "speaking" : clip.kind}:${clip.from}:${clip.to}`; }
@@ -213,9 +221,9 @@
       }) : [h("p",{class:"tiny"},tr("noVersions"))]));
     }
 
-    function selectA(id) { selectedA=id;renderVersions();updateCompare();renderDetails();renderActions(); }
+    function selectA(id) { selectedA=id;showProcessed=false;renderHeader();renderVersions();updateCompare();renderDetails();renderActions(); }
     function updateCompare() {
-      const local={...ctx,root:compareRoot}; const options={clip:currentClip,takeA:takeA(),takeB:takeB()};
+      const local={...ctx,root:compareRoot}; const options={clip:currentClip,takeA:takeA(),takeB:takeB(),candidatePreview:showProcessed};
       if (compare) compare.update(local,options);
       else compare=window.SFClipCompare.mount(local,options);
     }
@@ -227,11 +235,19 @@
         if (details&&!detailsPaused) {details.pause();detailsPaused=true;}
         renderPrompt();
       } else {
+        const candidate = takeA();
+        if (detailTab === "qa" && candidate && candidate.status !== "accepted" && candidate.candidateRender?.state === "missing") {
+          if (details && !detailsPaused) { details.pause(); detailsPaused=true; }
+          detailBody.replaceChildren(h("p", {class:"tiny"}, tr("processFirst")));
+          return;
+        }
+        const displayed = detailTab === "qa" && candidate?.candidateRender?.state !== "missing" && candidate?.candidateRender
+          ? {...currentClip,render:candidate.candidateRender,output:candidate.candidateRender.output} : currentClip;
         const key=currentClip.id;
         const local={...ctx,root:nativeDetailsRoot};
         if(nativeDetailsRoot.parentNode!==detailBody)detailBody.replaceChildren(nativeDetailsRoot);
-        if (details && detailsKey===key) details.update(local,{clip:currentClip,tab:detailTab});
-        else {if(details)details.cleanup();details=window.SFProduction.create(local).mountClipDetails(nativeDetailsRoot,currentClip,detailTab);detailsKey=key;}
+        if (details && detailsKey===key) details.update(local,{clip:displayed,tab:detailTab});
+        else {if(details)details.cleanup();details=window.SFProduction.create(local).mountClipDetails(nativeDetailsRoot,displayed,detailTab);detailsKey=key;}
         detailsPaused=false;
       }
     }
@@ -271,8 +287,11 @@
       const take=takeA(); const hint=generationHint();
       actions.replaceChildren();
       if(take){
+        const preview = take.candidateRender;
+        const qualified = preview?.state === "current" && ["pass","watch","fix"].includes(preview.qa?.status);
         if(take.status==="rejected")actions.append(button("restore",(event)=>decision("restore",take,"",event.currentTarget),{}, {version:take.version}));
-        else actions.append(button("accept",(event)=>decision("accept",take,"",event.currentTarget),{class:"primary",disabled:take.state!=="ready"||take.status==="accepted"},{version:take.version}),button("reject",()=>openReject(take),{class:"danger",disabled:take.state!=="ready"}));
+        else actions.append(button("accept",(event)=>decision("accept",take,"",event.currentTarget),{class:"primary",disabled:!qualified||take.state!=="ready"||take.status==="accepted"||running(),title:qualified?null:tr(preview?.qa?.status==="fail"?"blockedQA":"processFirst")},{version:take.version}),button("reject",()=>openReject(take),{class:"danger",disabled:take.state!=="ready"}));
+        if (preview && preview.state !== "missing") actions.append(button(showProcessed?"showSource":"showProcessed",()=>{showProcessed=!showProcessed;updateCompare();renderActions();}));
         actions.append(button("generateFrom",()=>openGenerate(take),{disabled:!!hint||!subject(take),title:hint||(!subject(take)?tr("historicalMissing"):null)},{version:take.version,cost:costLabel()}));
         if(take.state==="submitted")actions.append(button("resume",(event)=>startJob("resume",{take:take.id},tr("resuming"),event.currentTarget),{disabled:running()}));
         if(take.state==="ready"&&currentClip.kind==="transition")actions.append(button("adopt",()=>openAdopt(take),{}, {pose:currentClip.to}));
@@ -281,7 +300,13 @@
     }
 
     async function copy(text) { try {await navigator.clipboard.writeText(text);ctx.toast(tr("copied"));}catch(_){ctx.toast(tr("copyFailed"),true);} }
-    function decision(action,take,reason,buttonElement) {return ctx.run(()=>ctx.api("/api/production/decision",{kind:"clip",owner:currentClip.id,take:take.id,action,reason}),tr(action==="accept"?"accepted":action==="reject"?"rejected":"restored",{version:take.version}),buttonElement);}
+    function decision(action,take,reason,buttonElement) {return ctx.run(()=>action==="accept"
+      ? ctx.api("/api/production/adopt-processed",{clip:currentClip.id,take:take.id})
+      : ctx.api("/api/production/decision",{kind:"clip",owner:currentClip.id,take:take.id,action,reason}),tr(action==="accept"?"accepted":action==="reject"?"rejected":"restored",{version:take.version}),buttonElement);}
+    async function processTake(take, buttonElement) {
+      const result = await startJob("render-take", {take:take.id}, tr("processingTake"), buttonElement);
+      if (result && !disposed && selectedA===take.id) {showProcessed=true;detailTab="qa";updateCompare();renderDetails();renderActions();}
+    }
     function startJob(action,extra,message,buttonElement) {return ctx.run(()=>ctx.api("/api/production/jobs",{action,clip:currentClip.id,...extra}),message,buttonElement);}
 
     function modal(titleKey,titleValues={}) {
@@ -418,7 +443,7 @@
       const previous=currentClip?.id;currentClip=selectedClip();
       if(!currentClip){header.replaceChildren(h("h1",{},tr("title")));variants.replaceChildren();columns.hidden=true;shortcuts.replaceChildren();header.append(h("p",{class:"tiny"},tr(ctx.route.id?"missing":"none")),button("newClip",openNewClip));return;}
       columns.hidden=false;
-      if(previous!==currentClip.id){selectedA=null;pinnedB=null;promptDraft=null;}
+      if(previous!==currentClip.id){selectedA=null;pinnedB=null;promptDraft=null;showProcessed=false;}
       if(!currentClip.takes.some((take)=>take.id===selectedA))selectedA=[...currentClip.takes].reverse().find((take)=>take.state==="ready"&&take.status==="candidate")?.id||currentClip.acceptedTake||currentClip.takes.at(-1)?.id||null;
       if(pinnedB&&!currentClip.takes.some((take)=>take.id===pinnedB))pinnedB=null;
       renderHeader();renderVariants();renderVersions();updateCompare();renderDetails();renderActions();renderShortcuts();if(dialogRefresh)dialogRefresh();

@@ -1,0 +1,41 @@
+.review-studio { display: grid; grid-template-columns: 350px minmax(0,1fr) 280px; gap: 14px; height: 100%; min-height: 0; }
+.review-inbox,.review-detail,.review-queue { padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; overflow: hidden; }
+.review-inbox { padding: 10px; gap: 8px; }
+.review-list,.review-queue-list { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.review-filter { flex-wrap: wrap; align-self: flex-start; overflow: visible; }
+.review-filter button { padding: 5px 9px; }
+.review-group { margin: 4px 0 0; letter-spacing: .06em; }
+.review-issue { display: flex; flex-direction: column; gap: 5px; width: 100%; border: 1px solid rgba(105,230,214,.14); background: rgba(13,37,42,.72); border-radius: 8px; padding: 8px 10px; color: var(--text); text-align: left; font-size: 13px; }
+.review-issue.active { border-color: var(--info); background: rgba(15,45,50,.88); box-shadow: 0 1px 12px var(--glow); }
+.review-issue .row { align-items: flex-start; }
+.review-issue-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.review-detail-body { min-height: 0; overflow: auto; flex: 1; }
+.review-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; padding-top: 8px; border-top: 1px solid var(--divider); }
+.review-queue-entry { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; padding: 8px 10px; }
+.review-queue-entry.active { border-color: var(--info); }
+.review-queue-entry .thumb { width: 30px; height: 41px; flex: none; }
+.review-queue-meta { display: flex; flex-direction: column; line-height: 18px; min-width: 0; overflow-wrap: anywhere; }
+.review-queue-start { width: 100%; margin-top: auto; }
+.review-queue-shortcuts { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.review-queue-shortcuts kbd { font: 11px Consolas,'Cascadia Mono',monospace; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); }
+.review-seam-panes { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-top: 10px; }
+.review-seam-panes.single { grid-template-columns: minmax(0,1fr); }
+.review-seam-pane { min-width: 0; }
+.review-seam-pane canvas { width: 100%; max-height: 300px; object-fit: contain; display: block; border-radius: 6px; }
+.review-seam-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin: 10px 0; }
+.review-seam-metrics .item { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.review-seam-metrics b { font-size: 16px; }
+.review-way { margin: 8px 0; }
+.review-record { overflow-wrap: anywhere; }
+.review-candidate-root { min-height: 400px; }
+.review-production-qa { margin-top: 12px; }
+.review-dialog { width: min(560px,calc(100vw - 80px)); max-height: calc(100vh - 80px); padding: 20px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 16px 60px var(--shadow-color); }
+.review-dialog::backdrop { background: rgba(0,8,12,.65); }
+.review-dialog form { display: flex; flex-direction: column; gap: 12px; }
+.review-dialog label { display: flex; flex-direction: column; gap: 5px; }
+.review-dialog .inline-check { flex-direction: row; align-items: center; gap: 8px; }
+.review-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.review-dialog output { color: var(--danger); font-size: 12px; }
+.review-detail .compare { grid-template-columns: minmax(0,1fr); }
+.review-edit { grid-template-columns: 350px minmax(0,1fr); }
+.review-edit .review-queue { display: none; }

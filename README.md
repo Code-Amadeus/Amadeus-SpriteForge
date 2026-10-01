@@ -17,7 +17,10 @@ Prompts, Jobs and Settings tools; a view switch separates it from asset editing.
 English and Chinese are available without reloading. Other stages are being added incrementally;
 the existing production and review pages remain available during the rollout.
 
-![Studio Overview using the synthetic production workspace](docs/images/studio-overview-en.png)
+![Studio character comparison and take review](docs/images/studio-preview.png)
+
+Clip review using the bundled character references. These demonstration frames
+blend the supplied stills; no model call is involved. [Full interface](docs/images/studio-preview-full.png).
 
 [Chinese Overview](docs/images/studio-overview-zh.png) ·
 [Expressions](docs/images/studio-expressions-en.png) ·

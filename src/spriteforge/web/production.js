@@ -364,7 +364,9 @@ function decisionButtons(kind, owner, take) {
       tx(action === "accept" ? "decisionAccepted" : action === "reject" ? "decisionArchived" : "decisionRestored", `${action === "accept" ? "Accepted" : action === "reject" ? "Archived" : "Restored"} {take}`, { take: take.id }));
   };
   return [
-    take.status === "candidate" ? h("button", { class: "primary", onclick: decide("accept") }, kind === "pose" ? tx("approveStill", "Approve still") : tx("useTake", "Use this take")) : null,
+    take.status === "candidate" ? context && kind === "clip"
+      ? h("a", { class: "button primary", href: "#/clips/" + encodeURIComponent(owner) }, tx("reviewClip", "Review in Clip Studio"))
+      : h("button", { class: "primary", onclick: decide("accept") }, kind === "pose" ? tx("approveStill", "Approve still") : tx("useTake", "Use this take")) : null,
     take.status !== "rejected" ? h("button", { class: "danger", onclick: decide("reject") }, tx("rejectArchive", "Reject & archive")) : null,
     take.status === "rejected" ? h("button", { onclick: decide("restore") }, tx("restore", "Restore")) : null,
   ];

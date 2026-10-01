@@ -35,6 +35,23 @@ def add_parser(commands) -> None:
     settings.add_argument("--concept-provider")
     settings.add_argument("--still-provider")
     settings.add_argument("--batch-confirm-threshold", type=int)
+    known = command("review-known", "Annotate a current watch issue, or clear its annotation")
+    known.add_argument("key")
+    annotation = known.add_mutually_exclusive_group(required=True)
+    annotation.add_argument("--note")
+    annotation.add_argument("--clear", action="store_true")
+    behavior = sub.add_parser("behavior", help="Read graph statistics and deterministic trigger simulations").add_subparsers(
+        dest="behavior_action", required=True)
+    for name in ("stats", "trigger-test"):
+        step = behavior.add_parser(name)
+        step.add_argument("--workspace", type=Path, required=True)
+        step.add_argument("--minutes", type=int, default=10, choices=(10, 30, 60))
+        step.add_argument("--seed", type=int, default=1)
+        if name == "trigger-test":
+            step.add_argument("--events", type=Path, required=True, help="JSON list of {atS,label} or {atS,speech:true}")
+    release = command("export", "Export a versioned runtime pack and record its source hashes and notes")
+    release.add_argument("--version", required=True)
+    release.add_argument("--notes", default="")
 
     concept = sub.add_parser("concept", help="Generate, import, pick and reroll expression reference sheets").add_subparsers(
         dest="concept_action", required=True)
@@ -180,6 +197,12 @@ def add_parser(commands) -> None:
     resume.add_argument("--workspace", type=Path, required=True)
     _owner(resume, clip_only=True)
     resume.add_argument("take")
+    for name, text in (("process", "Process and QA a candidate without replacing published clip output"),
+                       ("adopt-processed", "Publish a current processed candidate whose QA has no failure")):
+        step = take.add_parser(name, help=text)
+        step.add_argument("--workspace", type=Path, required=True)
+        _owner(step, clip_only=True)
+        step.add_argument("take")
 
     generate = command("generate", "Edit the base still into a pose, or submit a clip to its image-to-video provider")
     _owner(generate)
@@ -267,6 +290,18 @@ def run(args) -> None:
             "batchConfirmThreshold": args.batch_confirm_threshold,
         }.items() if value is not None}
         print(json.dumps(set_ui_defaults(workspace, values), ensure_ascii=False, indent=2))
+    elif action == "review-known":
+        from .issues import set_known
+        print(json.dumps(set_known(workspace, args.key, args.note or "", clear=args.clear), ensure_ascii=False, indent=2))
+    elif action == "behavior":
+        from .api import ProductionApi
+        api = ProductionApi(workspace)
+        result = api.behavior_stats(args.minutes, args.seed) if args.behavior_action == "stats" else api.behavior_trigger_test(
+            args.minutes, args.seed, json.loads(args.events.read_text(encoding="utf-8")))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif action == "export":
+        from .exports import export_workspace
+        print(json.dumps(export_workspace(workspace, args.version, notes=args.notes), ensure_ascii=False, indent=2))
     elif action == "concept":
         from .concepts import generate_sheet, import_sheet, reroll_cell, set_cell
         if args.concept_action == "new":
@@ -497,6 +532,14 @@ def _run_take(workspace: Path, args) -> None:
         from .records import set_take_note
         set_take_note(workspace, kind, owner, args.take, args.note)
         print(f"Updated note for {kind} take {args.take}")
+    elif args.take_action == "process":
+        from .render import render_take
+        result = render_take(workspace, owner, args.take)
+        print(f"Processed {kind} take {args.take}: QA {result['qa']['status']}")
+    elif args.take_action == "adopt-processed":
+        from .render import adopt_processed_take
+        adopt_processed_take(workspace, owner, args.take)
+        print(f"Published processed {kind} take {args.take}")
     elif args.take_action == "accept" and kind == "pose":
         from .stills import approve_still
         approve_still(workspace, owner, args.take, args.reason)

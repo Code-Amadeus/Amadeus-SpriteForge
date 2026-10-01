@@ -1,15 +1,19 @@
 /* PNG uses the browser image decoder; KTX2 uses the same pinned Pixi/Basis loader as Amadeus. */
-window.SpriteForgeMedia = (() => {
+(() => {
+let dependencies;
+function create(root = document, options = {}) {
   let app, sprite, ready;
+  let observer, disposed = false, cancelImage;
+  const q = (id) => root.querySelector('#' + id);
   let generation = 0;
   let busy = false;
   const cache = new Map();
   const bytes = new Map();
-  const image = () => document.getElementById("frame");
-  const holder = () => document.getElementById("ktxStage");
+  const image = () => q("frame");
+  const holder = () => q("ktxStage");
   const urlFor = (path) => "/frame?path=" + encodeURIComponent(path);
   function fitTexture() {
-    if(!app || !sprite || !cache.size) return;
+    if(disposed || !app || !sprite || !cache.size) return;
     const width=holder().clientWidth, height=holder().clientHeight;
     if(!width || !height) return;
     app.renderer.resize(width,height);
@@ -28,33 +32,48 @@ window.SpriteForgeMedia = (() => {
   }
   function initialize() {
     if (!ready) ready = (async () => {
-      await loadScript("/static/vendor/pixi.min.js");
-      await loadScript("/static/vendor/pixi-basis-ktx2.global.js");
+      if (!dependencies) dependencies = (async () => {
+        if (!window.PIXI) await loadScript("/static/vendor/pixi.min.js");
+        if (!window.PixiBasisKtx2Shim) await loadScript("/static/vendor/pixi-basis-ktx2.global.js");
+        await PixiBasisKtx2Shim.KTX2Parser.loadTranscoder("/static/vendor/basis_transcoder.js", "/static/vendor/basis_transcoder.wasm");
+        await PIXI.Assets.init({ texturePreference: { format: ["ktx2"] } });
+      })();
+      await dependencies;
+      if (disposed) return;
       app = new PIXI.Application({ width: 512, height: 512, backgroundAlpha: 0, preserveDrawingBuffer: true });
       holder().appendChild(app.view);
       sprite = new PIXI.Sprite();
       sprite.anchor.set(.5);
       app.stage.addChild(sprite);
-      new ResizeObserver(fitTexture).observe(holder());
-      await PixiBasisKtx2Shim.KTX2Parser.loadTranscoder("/static/vendor/basis_transcoder.js", "/static/vendor/basis_transcoder.wasm");
-      await PIXI.Assets.init({ texturePreference: { format: ["ktx2"] } });
+      observer = new ResizeObserver(fitTexture); observer.observe(holder());
     })();
     return ready;
   }
   async function show(path) {
+    if (disposed) return false;
+    if (cancelImage) cancelImage();
     const token = ++generation;
     busy = true;
     try {
       if (!path.toLowerCase().endsWith(".ktx2")) {
         image().style.display = "";
         holder().style.display = "none";
-        image().src = urlFor(path);
-        return;
+        const img = image();
+        await new Promise((resolve, reject) => {
+          const finish = (error) => { img.onload = img.onerror = null; cancelImage = null; error ? reject(error) : resolve(); };
+          cancelImage = () => finish();
+          img.onload = () => finish(); img.onerror = () => finish(new Error("Cannot decode frame"));
+          img.src = urlFor(path);
+        });
+        if(disposed || token !== generation) return false;
+        img.dataset.frame = path;
+        return true;
       }
       image().style.display = "none";
-      document.getElementById("mouthCanvas").style.display = "none";
+      if(q("mouthCanvas")) q("mouthCanvas").style.display = "none";
       holder().style.display = "grid";
       await initialize();
+      if(disposed || token !== generation) return false;
       const url = urlFor(path);
       let texture = cache.get(url);
       if (!texture) {
@@ -65,7 +84,7 @@ window.SpriteForgeMedia = (() => {
         // Conservative upper bound independent of actual GPU compression format.
         bytes.set(url, texture.width * texture.height * 4);
       }
-      if (token !== generation) return;
+      if (disposed || token !== generation) { if (disposed) await PIXI.Assets.unload(url); return false; }
       cache.delete(url); cache.set(url, texture);
       sprite.texture = texture;
       fitTexture();
@@ -81,11 +100,24 @@ window.SpriteForgeMedia = (() => {
         cache.delete(key); bytes.delete(key);
         await PIXI.Assets.unload(key);
       }
+      return true;
     } catch (error) {
-      if (token === generation) document.getElementById("now").textContent = "Preview failed: " + error.message;
+      if (!disposed && token === generation) {
+        if(options.onError)options.onError(error);
+        else if(q("now"))q("now").textContent = "Preview failed: " + error.message;
+      }
+      return false;
     } finally {
       if (token === generation) busy = false;
     }
   }
-  return { show, get busy() { return busy; } };
+  return { show, get busy() { return busy; }, dispose() {
+    disposed = true; generation++; if(cancelImage) cancelImage(); busy = false;
+    if(observer) observer.disconnect();
+    if(app) app.destroy(true, {children:true,texture:false,baseTexture:false});
+    for(const key of cache.keys()) PIXI.Assets.unload(key);
+    cache.clear(); bytes.clear();
+  } };
+}
+window.SpriteForgeMedia = Object.assign(create(), {create});
 })();

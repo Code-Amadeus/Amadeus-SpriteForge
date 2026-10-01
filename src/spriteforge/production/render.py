@@ -27,17 +27,18 @@ from .geometry import composite, estimate_similarity, lerp_matrix, premultiplied
 from .media import copy_durable, media_frames, read_bgra, sorted_pngs, write_png
 from .mouth import TONE_WATCH, analyze, harmonize
 from .records import (accepted_take, canvas_size, clip_settings, load_character, load_owner, now, output_root, owner_dir,
-                      recipe, render_stills, still_path, take_media_frames)
+                      recipe, render_stills, still_path, take_media_frames, load_take, take_dir, decide,
+                      candidate_output_root, candidate_render_freshness, read_candidate_render)
 from .tools import load_tools, run_processor
 
 RENDER_FORMAT = "spriteforge.production.render.v1"
 MOUTH_OVERLAY = ".mouth/closed.png"  # hidden from frame-folder discovery; export encodes it
 
 
-def recover_output(clip_directory: Path) -> None:
+def recover_output(clip_directory: Path, output_name: str = "output") -> None:
     """Restore the previous render if a publish was interrupted; drop abandoned work."""
-    output = clip_directory / "output"
-    previous = sorted(clip_directory.glob(".output-old-*"))
+    output = clip_directory / output_name
+    previous = sorted(clip_directory.glob(f".{output_name}-old-*"))
     if previous and not output.exists():
         previous.pop().rename(output)
     for leftover in [*previous, *clip_directory.glob(".work-*")]:
@@ -57,21 +58,35 @@ def widen(image: np.ndarray, margin: int) -> np.ndarray:
 
 
 def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=print) -> dict:
+    """Re-render the already accepted take to its published graph output."""
+    return _render(workspace, clip_id, keep_work=keep_work, log=log)
+
+
+def render_take(workspace: Path, clip_id: str, take_id: str, *, keep_work: bool = False, log=print) -> dict:
+    """Process and check a candidate without changing the accepted take or graph output."""
+    return _render(workspace, clip_id, take_id=take_id, keep_work=keep_work, log=log)
+
+
+def _render(workspace: Path, clip_id: str, *, take_id: str | None = None, keep_work: bool = False, log=print) -> dict:
     started = monotonic()
     character, tools = load_character(workspace), load_tools(workspace)
     clip = load_owner(workspace, "clip", clip_id)
     settings = clip_settings(clip)
     render_recipe = recipe(workspace, clip, character=character)
-    take = accepted_take(workspace, "clip", clip_id)
+    take = load_take(workspace, "clip", clip_id, take_id) if take_id is not None else accepted_take(workspace, "clip", clip_id)
+    if take.get("state") != "ready":
+        raise ValueError("Only a ready clip take can be processed")
     (start_path, start_take), (end_path, end_take) = still_path(workspace, clip["from"]), still_path(workspace, clip["to"])
     start, end = read_bgra(start_path)[0], read_bgra(end_path)[0]
     margin = settings["marginPx"]
     width, height = canvas_size(character)
     wide_start, wide_end, wide_width = widen(start, margin), widen(end, margin), width + 2 * margin
     background = character["background"]
-    clip_directory = owner_dir(workspace, "clip", clip_id)
-    recover_output(clip_directory)
-    work = clip_directory / f".work-{datetime.now():%Y%m%d-%H%M%S-%f}"
+    destination_root = candidate_output_root(clip_id, take_id) if take_id is not None else output_root(clip_id)
+    container = take_dir(workspace, "clip", clip_id, take_id) if take_id is not None else owner_dir(workspace, "clip", clip_id)
+    destination = container / ("processed" if take_id is not None else "output")
+    recover_output(container, destination.name)
+    work = container / f".work-{datetime.now():%Y%m%d-%H%M%S-%f}"
     work.mkdir()
     try:
         source = media_frames(take_media_frames(workspace, take), tools.get("ffmpeg"), work / "decoded")
@@ -164,13 +179,48 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
                   "registration": registration, "qa": qa,
                   **({"mouth": mouth} if mouth else {})}
         atomic_json(output / "render.json", render)
-        _publish(output, clip_directory / "output")
-        log(f"{clip_id}: published {total} frames to {output_root(clip_id)} (QA {qa['status']}, "
+        _publish(output, destination)
+        log(f"{clip_id}: saved {total} frames to {destination_root} (QA {qa['status']}, "
             f"{render['frameIntervalMs']} ms/frame)")
         return render
     finally:
         if not keep_work:
             shutil.rmtree(work, ignore_errors=True)
+
+
+def adopt_processed_take(workspace: Path, clip_id: str, take_id: str) -> dict:
+    """Publish reviewed, current candidate output only after an explicit adoption."""
+    clip = load_owner(workspace, "clip", clip_id)
+    take = load_take(workspace, "clip", clip_id, take_id)
+    if take.get("state") != "ready":
+        raise ValueError("Only a ready clip take can be adopted")
+
+    def require_current() -> dict:
+        current = load_owner(workspace, "clip", clip_id)
+        state, reasons = candidate_render_freshness(workspace, current, take_id)
+        if state != "current":
+            raise ValueError("Process and check this candidate before adopting it: " + "; ".join(reasons))
+        render = read_candidate_render(workspace, clip_id, take_id)
+        if (render.get("qa") or {}).get("status") not in {"pass", "watch", "fix"}:
+            raise ValueError("Candidate QA must pass without a blocking failure before adoption")
+        return render
+
+    require_current()
+    directory = owner_dir(workspace, "clip", clip_id)
+    recover_output(directory)
+    work = directory / f".work-adopt-{datetime.now():%Y%m%d-%H%M%S-%f}"
+    staging = work / "output"
+    preview = take_dir(workspace, "clip", clip_id, take_id) / "processed"
+    try:
+        for source in preview.rglob("*"):
+            if source.is_file():
+                copy_durable(source, staging / source.relative_to(preview))
+        # Copying can take time. Geometry or processing edits invalidate this review.
+        require_current()
+        _publish(staging, directory / "output", commit=lambda: decide(workspace, "clip", clip_id, take_id, "accept"))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return load_take(workspace, "clip", clip_id, take_id)
 
 
 def _mouth_track(workspace: Path, character: dict, clip: dict, frames: list[Path], stills: dict, output: Path,
@@ -215,10 +265,19 @@ def _edge_guard(frame: np.ndarray, band: int, cut_edges: list[str]) -> np.ndarra
     return frame
 
 
-def _publish(staged: Path, output: Path) -> None:
-    previous = output.with_name(f".output-old-{datetime.now():%Y%m%d-%H%M%S-%f}")
+def _publish(staged: Path, output: Path, *, commit=None) -> None:
+    previous = output.with_name(f".{output.name}-old-{datetime.now():%Y%m%d-%H%M%S-%f}")
     if output.exists():
         output.rename(previous)
-    staged.rename(output)
+    try:
+        staged.rename(output)
+        if commit is not None:
+            commit()
+    except Exception:
+        if output.exists():
+            output.rename(staged)
+        if previous.exists():
+            previous.rename(output)
+        raise
     if previous.exists():
         shutil.rmtree(previous, ignore_errors=True)

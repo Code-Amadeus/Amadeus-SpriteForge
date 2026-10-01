@@ -323,6 +323,17 @@ def read_render(workspace: Path, clip_id: str) -> dict | None:
     return read_json(path) if path.is_file() else None
 
 
+def candidate_output_root(clip_id: str, take_id: str) -> str:
+    if not isinstance(take_id, str) or not TAKE_ID.fullmatch(take_id):
+        raise ValueError("Invalid take id")
+    return f"{ROOT}/{OWNERS['clip']}/{check_id(clip_id, 'Clip')}/takes/{take_id}/processed"
+
+
+def read_candidate_render(workspace: Path, clip_id: str, take_id: str) -> dict | None:
+    path = resolve_asset(workspace, candidate_output_root(clip_id, take_id)) / "render.json"
+    return read_json(path) if path.is_file() else None
+
+
 def clip_settings(clip: dict) -> dict:
     """Validated processing and playback settings of a clip."""
     processing, playback, generation = clip["processing"], clip["playback"], clip["generation"]
@@ -410,12 +421,19 @@ def render_stills(workspace: Path, clip: dict) -> dict[str, str]:
 
 def render_freshness(workspace: Path, clip: dict) -> tuple[str, list[str]]:
     """'missing', 'stale' or 'current', with the reasons a render no longer matches its inputs."""
-    render = read_render(workspace, clip["id"])
+    return _render_freshness(workspace, clip, read_render(workspace, clip["id"]), clip.get("acceptedTake"))
+
+
+def candidate_render_freshness(workspace: Path, clip: dict, take_id: str) -> tuple[str, list[str]]:
+    return _render_freshness(workspace, clip, read_candidate_render(workspace, clip["id"], take_id), take_id)
+
+
+def _render_freshness(workspace: Path, clip: dict, render: dict | None, take_id: str | None) -> tuple[str, list[str]]:
     if render is None:
         return "missing", ["not rendered"]
     reasons = []
-    if render.get("take") != clip.get("acceptedTake"):
-        reasons.append("the accepted take changed")
+    if render.get("take") != take_id:
+        reasons.append("the accepted take changed" if take_id == clip.get("acceptedTake") else "the selected take changed")
     if render.get("recipe") != recipe(workspace, clip):
         reasons.append("processing, playback or mouth settings changed")
     for role, pose_id in render_stills(workspace, clip).items():

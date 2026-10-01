@@ -11,10 +11,10 @@ idle master ──measure──► character contract (canvas, head anchors, tol
                              loop B→B (first = last = B still)
                              out B→A (optional)
         each generation is a take (prompt snapshot, inputs, provider task)
-        review: use / reject and archive / restore
-          ▼ accepted take
-        render: decode ─► register both ends to the stills ─► pingpong ─► interpolate
-                ─► alpha ─► edge guard ─► lock ends to the stills ─► QA ─► publish
+        process candidate: decode ─► register both ends to the stills ─► pingpong ─► interpolate
+                ─► alpha ─► edge guard ─► lock ends to the stills ─► QA
+          ▼ human review: adopt / reject and archive / restore
+        publish qualified candidate
           ▼
         behavior graph (review page) ─► KTX2 character pack for Amadeus
 ```
@@ -68,6 +68,28 @@ second acceptance record. The editing Overview lists approved stills with curren
 anchors and accepted clips with current, non-failing QA; pending and failed
 candidates remain on the production side. A return-to-QA link opens their existing
 pose or clip. The editing view keeps provider controls out of graph composition.
+
+Clip Studio and Review process each candidate under its take directory. A current
+non-failing result is required before **Adopt** becomes available. Adoption copies
+that result into the published clip output and records the accepted take; the
+candidate preview remains available. Processing a different take does not replace
+the current graph material. Changing its recipe or approved endpoint stills marks
+the processed result stale and requires another local processing pass.
+The Studio Canvas sends clip adoption to Clip Studio so its inspector shares the
+same review gate. The standalone legacy page and CLI retain their existing
+accept-then-render commands for compatibility.
+
+Behavior embeds the existing graph editor and exact node player, with a separate
+Stats tab for seeded automatic playback and first-hop intent tests. The editor's
+Graph checks page contains assembly and seam findings, while candidate decisions
+stay in Generate & QA. A watch finding can be annotated as known with a note; its
+measurement and severity are retained.
+
+Export reruns preflight, displays the actual encoding settings, and creates a
+versioned pack under `production/exports/`. It saves editable release notes and
+an export history. An optional installed pack in Settings is a read-only comparison
+source. Updated textures can only be established after a recorded encoding of the
+current source; otherwise the comparison explicitly awaits encoding.
 
 Browser acceptance: `node tools/studio_smoke.cjs` uses a synthetic production
 workspace and writes 1440×900 English/Chinese screenshots to `test-results/`.

@@ -37,6 +37,7 @@ window.SF_I18N.en = {
   "stage.clips": "Clips",
   "stage.workflows": "Workflows",
   "stage.review": "Review",
+  "stage.connections": "Graph checks",
   "stage.behavior": "Behavior",
   "stage.export": "Export",
   "tool.canvas": "Canvas",
