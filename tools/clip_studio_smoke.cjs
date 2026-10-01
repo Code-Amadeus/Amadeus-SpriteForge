@@ -25,7 +25,8 @@ const { spawn, spawnSync } = require("node:child_process");
   configuredTools.providers["wan-cli"].pollSeconds = 0.01;
   fs.writeFileSync(toolsPath, JSON.stringify(configuredTools));
   const server = spawn(python, ["-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser"], {
-    windowsHide: true, env: { ...process.env, FAKE_WAN_STATE: fakeState, FAKE_WAN_VIDEO: browserVideo },
+    windowsHide: true, env: { ...process.env, FAKE_WAN_STATE: fakeState, FAKE_WAN_VIDEO: browserVideo,
+      WAN_ACCESS_KEY: "synthetic-browser-test-only", WAN_CONFIG_DIR: fakeState },
   });
   const shots = path.join(__dirname, "..", "test-results");
   fs.mkdirSync(shots, { recursive: true });
