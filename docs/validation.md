@@ -236,3 +236,23 @@ placements within 1 px.
     card, Last frame → wink still, and approval in the side panel turn the wire into a
     dashed one labelled with the frame number;
   - then the earlier checks of the list tabs.
+
+## Wan 3.0 through the CLI, on account credits (2026-10-01)
+
+First paid run, in a scratch workspace on a wan.video membership's credits.
+`@wan-ai/cli` 0.0.3 was installed locally with `--ignore-scripts`; no agent skill was
+written. The account owner logged the CLI in. Stills came from Kurisu artwork
+(1070×1470, white background), matted on CPU: the neutral image as the base (framing,
+head top 21, head centre 379.08) and a closed-eye smile registered to it (QA pass).
+Both clips were 480P, 2 s, without audio, with trial prompts (character, fixed-camera
+invariants, motion text).
+
+| Clip | Generation | Credits | Take | Registration drift | Render, CPU matting | QA |
+| --- | --- | --- | --- | --- | --- | --- |
+| `idle_to_smile` (first and last frame) | 50 s | 4 | 60 frames, 30 fps, 550×742 | 0.09%, (−0.15, −0.44) px | 88 s, 60 frames at 33 ms | pass, no findings; head and tail seams 0.0 L* |
+| `smile_loop` (same still at both ends) | 49 s | 4 | 60 frames, 30 fps, 550×742 | −0.01%, (−0.22, 0.26) px | 85 s, 60 frames at 33 ms | watch: the head moves 40.7 px inside the loop; head, tail and wrap seams pass (≤ 0.35 L*, ≤ 0.25 px) |
+
+Both outputs adapt to the input's aspect (550×742 for a 764×1028 canvas) and register
+at scale 1.387. Contact sheets show the measurements are real motion: the transition
+tilts the head slightly mid-way (25 px), and the loop adds a visible head tilt despite
+asking for "only slight breathing", then returns to its first frame.
