@@ -137,6 +137,32 @@ def test_prompt_versions_placeholders_and_snapshots(studio):
         prompts.validate_library(library)
 
 
+def test_sentence_templates_travel_between_workspaces_as_presets(studio):
+    library = prompts.load_library(studio.root)
+    prompts.set_block(library, "live2d.style", "生成一个自然的live2d风格idle片段")
+    prompts.set_block(library, "live2d.constraints", "只做最自然的过渡，其他一切保持不变。")
+    for kind in ("transition", "loop"):
+        prompts.set_template(library, kind, ["live2d.style", "@subject", "live2d.constraints"], join="，")
+    prompts.save_library(studio.root, library)
+    add_clip(studio.root, "smile_in", "idle", "smile")
+    library = prompts.load_library(studio.root)
+    prompts.set_block(library, "clip.smile_in", "角色自然地闭上双眼然后右手插兜。")
+    rendered = prompts.clip_prompt(library, load_character(studio.root), load_owner(studio.root, "clip", "smile_in"))
+    assert rendered["text"] == "生成一个自然的live2d风格idle片段，角色自然地闭上双眼然后右手插兜，只做最自然的过渡，其他一切保持不变"
+    assert rendered["complete"] and rendered["negative"] == ""
+
+    preset = prompts.export_preset(library, ["transition", "loop"])
+    assert set(preset["blocks"]) == {"live2d.style", "live2d.constraints"}  # subjects stay with their clips
+    other = prompts.default_library()
+    assert prompts.import_preset(other, preset) == {"live2d.constraints": 1, "live2d.style": 1}
+    assert other["templates"]["loop"] == {"blocks": ["live2d.style", "@subject", "live2d.constraints"], "negative": [], "join": "，"}
+    with pytest.raises(ValueError, match="unknown block"):
+        prompts.set_template(other, "loop", ["missing", "@subject"])
+    assert other["templates"]["loop"]["join"] == "，"  # a refused template leaves the library as it was
+    with pytest.raises(ValueError, match="Not a SpriteForge prompt preset"):
+        prompts.import_preset(other, {"templates": {}})
+
+
 def test_prepare_writes_exact_provider_inputs(studio):
     add_clip(studio.root, "smile_in", "idle", "smile")
     set_clip(studio.root, "smile_in", input_scale=0.9)

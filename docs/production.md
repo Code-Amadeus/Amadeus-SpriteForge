@@ -253,6 +253,19 @@ unknown variable is an error. Every block starts as a placeholder. `production p
 set BLOCK --text ...` (or the Prompts tab) adds a version; `production prompt render
 --clip C` shows the exact text. The Prompts tab shows how many takes used each version.
 
+Templates are workspace data. `production prompt template ID --blocks a,@subject,b
+[--negative n] [--join TEXT]` replaces one; blocks are joined by a blank line unless
+`--join` says otherwise. Many video prompts are one sentence, for example a style
+opening, the clip's own action and the shared constraints joined by `，`; with a
+clause joiner each block's closing punctuation is dropped, so a subject may end with
+`。`. A template with no negative blocks sends no negative prompt.
+
+`production prompt export FILE [--template T ...]` writes a preset: the templates and
+the current text of the blocks they use, never pose or clip subjects.
+`production prompt import FILE` adds those texts to another workspace as new block
+versions and installs the templates, so a house style is set once per character.
+Prompt texts belong to the user: SpriteForge ships placeholders only.
+
 ## Rendering
 
 `production render --clip C` (or `--stale`, or the page) renders the accepted take:

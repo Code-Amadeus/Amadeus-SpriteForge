@@ -101,6 +101,19 @@ def add_parser(commands) -> None:
     render_prompt = prompt.add_parser("render", help="Show the prompt a pose or clip would use now")
     render_prompt.add_argument("--workspace", type=Path, required=True)
     _owner(render_prompt)
+    set_template = prompt.add_parser("template", help="Create or replace a template (the order of its blocks)")
+    set_template.add_argument("--workspace", type=Path, required=True)
+    set_template.add_argument("template", help="Template id; clips use 'transition' or 'loop', poses 'still'")
+    set_template.add_argument("--blocks", required=True, help="Comma list of block ids; @subject is the clip's or pose's own block")
+    set_template.add_argument("--negative", default="", help="Comma list of negative-prompt block ids")
+    set_template.add_argument("--join", help="Text between blocks (default: a blank line); '，' makes one sentence")
+    export = prompt.add_parser("export", help="Write templates and their shared blocks to a preset file")
+    export.add_argument("--workspace", type=Path, required=True)
+    export.add_argument("file", type=Path)
+    export.add_argument("--template", action="append", help="Template to include (default: all)")
+    imp_preset = prompt.add_parser("import", help="Add a preset's block texts as new versions and install its templates")
+    imp_preset.add_argument("--workspace", type=Path, required=True)
+    imp_preset.add_argument("file", type=Path)
 
     prepare = command("prepare", "Write the exact inputs and prompt for an external generator")
     _owner(prepare)
@@ -247,6 +260,22 @@ def run(args) -> None:
             version = prompts.set_block(library, args.block, text, args.description)
             prompts.save_library(workspace, library)
             print(f"{args.block} is at version {version}")
+        elif args.prompt_action == "template":
+            library = prompts.load_library(workspace)
+            template = prompts.set_template(library, args.template, _ids(args.blocks), _ids(args.negative), args.join)
+            prompts.save_library(workspace, library)
+            print(f"Template {args.template}: {' + '.join(template['blocks'])}")
+        elif args.prompt_action == "export":
+            from ..workspace import atomic_json
+            preset = prompts.export_preset(prompts.load_library(workspace), args.template)
+            atomic_json(args.file, preset)
+            print(f"Wrote {len(preset['templates'])} template(s) and {len(preset['blocks'])} block(s) to {args.file}")
+        elif args.prompt_action == "import":
+            from ..workspace import read_json
+            library = prompts.load_library(workspace)
+            versions = prompts.import_preset(library, read_json(args.file))
+            prompts.save_library(workspace, library)
+            print("Blocks: " + ", ".join(f"{block} v{version}" for block, version in versions.items()))
         else:
             rendered = _render_for(workspace, args)
             print(rendered["text"] + ("\n\nNEGATIVE:\n" + rendered["negative"] if rendered["negative"] else ""))
@@ -340,6 +369,10 @@ def _run_import(args) -> None:
             print(f"edge {labels.get(edge['from'], edge['from'])} -> {labels.get(edge['to'], edge['to'])}: {edge['level']} "
                   f"faceL={edge['faceL']} dHeadTop={edge['dHeadTop']} dHeadCenter={edge['dHeadCenter']}")
     print(f"Imported; graph QA {report['status']}")
+
+
+def _ids(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 def _render_for(workspace: Path, args) -> dict:

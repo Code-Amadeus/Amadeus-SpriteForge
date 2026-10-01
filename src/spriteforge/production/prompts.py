@@ -5,6 +5,13 @@ and never rewrites one that a take may have used. A template is an ordered list
 of block ids, where ``@subject`` stands for the pose or clip's own block. A
 render records the exact text, the version of every block and a hash, and it is
 incomplete while any ``{{PLACEHOLDER: ...}}`` remains.
+
+Blocks are joined as paragraphs unless the template sets ``join``. A clause joiner
+such as "，" builds one sentence, as many video prompts are written, and drops the
+closing punctuation each block may end with.
+
+A preset carries templates and the text of the blocks they use (not the pose or
+clip subjects) from one workspace to another; importing adds block versions.
 """
 from __future__ import annotations
 
@@ -16,7 +23,10 @@ from ..workspace import atomic_json, read_json
 from .records import now, production_dir
 
 PROMPTS_FORMAT = "spriteforge.production.prompts.v1"
+PRESET_FORMAT = "spriteforge.production.prompt-preset.v1"
 SUBJECT = "@subject"
+PARAGRAPH = "\n\n"
+CLAUSE_END = "，。,.;；、 \n"
 PLACEHOLDER = re.compile(r"\{\{\s*PLACEHOLDER\s*:\s*(.*?)\s*\}\}", re.S)
 VARIABLE = re.compile(r"\$\{([a-zA-Z_]+)\}")
 VARIABLES = {"character", "pose", "description", "from", "to", "duration"}
@@ -73,6 +83,8 @@ def validate_library(library: object) -> dict:
         parts = [*(template.get("blocks") or []), *(template.get("negative") or [])] if isinstance(template, dict) else None
         if not parts or any(p != SUBJECT and p not in blocks for p in parts):
             raise ValueError(f"Prompt template {tid!r} references an unknown block")
+        if not isinstance(template.get("join", PARAGRAPH), str) or not template.get("join", PARAGRAPH):
+            raise ValueError(f"Prompt template {tid!r} needs a non-empty join text")
     return library
 
 
@@ -115,11 +127,57 @@ def ensure_subject(library: dict, block_id: str, hint: str) -> None:
         set_block(library, block_id, "{{PLACEHOLDER: " + hint + "}}", f"Subject of {block_id}")
 
 
+def set_template(library: dict, template_id: str, blocks: list[str], negative: list[str] | None = None,
+                 join: str | None = None) -> dict:
+    """Create or replace a template; every block it names must exist (``@subject`` aside)."""
+    if not BLOCK_ID.fullmatch(template_id):
+        raise ValueError("A prompt template needs a valid id")
+    template = {"blocks": list(blocks), "negative": list(negative or [])}
+    if join is not None:
+        template["join"] = join
+    validate_library({**library, "templates": {**library["templates"], template_id: template}})
+    library["templates"][template_id] = template
+    return template
+
+
+def export_preset(library: dict, template_ids: list[str] | None = None) -> dict:
+    """Templates and the current text of the blocks they name, without pose or clip subjects."""
+    ids = template_ids or sorted(library["templates"])
+    unknown = [tid for tid in ids if tid not in library["templates"]]
+    if unknown:
+        raise ValueError(f"Unknown prompt template(s): {', '.join(unknown)}")
+    templates = {tid: library["templates"][tid] for tid in ids}
+    used = sorted({p for t in templates.values() for p in [*t["blocks"], *t.get("negative", [])] if p != SUBJECT})
+    return {"format": PRESET_FORMAT, "templates": templates,
+            "blocks": {bid: {"description": library["blocks"][bid].get("description", ""), "text": current(library, bid)["text"]}
+                       for bid in used}}
+
+
+def import_preset(library: dict, preset: object) -> dict[str, int]:
+    """Add the preset's block texts as new versions and install its templates; returns block versions."""
+    if not isinstance(preset, dict) or preset.get("format") != PRESET_FORMAT:
+        raise ValueError("Not a SpriteForge prompt preset")
+    blocks, templates = preset.get("blocks"), preset.get("templates")
+    if not isinstance(blocks, dict) or not isinstance(templates, dict) or not templates:
+        raise ValueError("A prompt preset needs blocks and templates")
+    versions = {}
+    for block_id, block in blocks.items():
+        if not isinstance(block, dict) or not isinstance(block.get("text"), str):
+            raise ValueError(f"Preset block {block_id!r} needs a text")
+        versions[block_id] = set_block(library, str(block_id), block["text"], block.get("description"))
+    for template_id, template in templates.items():
+        if not isinstance(template, dict):
+            raise ValueError(f"Preset template {template_id!r} is not an object")
+        set_template(library, str(template_id), template.get("blocks") or [], template.get("negative"), template.get("join"))
+    return versions
+
+
 def render(library: dict, template_id: str, subject: str, variables: dict[str, object]) -> dict:
     template = library["templates"].get(template_id)
     if template is None:
         raise ValueError(f"Unknown prompt template: {template_id}")
     used: dict[str, int] = {}
+    join = template.get("join", PARAGRAPH)
 
     def compose(parts: list[str]) -> str:
         texts = []
@@ -128,9 +186,11 @@ def render(library: dict, template_id: str, subject: str, variables: dict[str, o
             version = current(library, block_id)
             used[block_id] = version["version"]
             text = VARIABLE.sub(lambda m: substitute(m.group(1)), version["text"]).strip()
+            if join != PARAGRAPH:
+                text = text.rstrip(CLAUSE_END)
             if text:
                 texts.append(text)
-        return "\n\n".join(texts)
+        return join.join(texts)
 
     def substitute(name: str) -> str:
         if name not in variables:

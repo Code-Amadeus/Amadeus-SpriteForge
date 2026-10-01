@@ -616,9 +616,9 @@ function renderPrompts() {
     h("h2", {}, "Prompt library"),
     h("p", { class: "tiny" }, "Saving a block adds a version; takes keep the exact text and versions they used. " +
       "Prompts containing {{PLACEHOLDER: ...}} are never sent to a paid provider."),
-    h("table", {}, h("tr", {}, h("th", {}, "Template"), h("th", {}, "Blocks"), h("th", {}, "Negative")),
+    h("table", {}, h("tr", {}, h("th", {}, "Template"), h("th", {}, "Blocks"), h("th", {}, "Joined by"), h("th", {}, "Negative")),
       Object.entries(library.templates).map(([id, t]) => h("tr", {}, h("td", {}, id), h("td", {}, t.blocks.join(" + ")),
-        h("td", {}, (t.negative || []).join(" + "))))),
+        h("td", {}, t.join ? `"${t.join}"` : "blank line"), h("td", {}, (t.negative || []).join(" + "))))),
     ids.map((id) => blockCard(id, library.blocks[id], usage)));
 }
 
