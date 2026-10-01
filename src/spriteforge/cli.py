@@ -38,6 +38,8 @@ def main() -> int:
     qa = commands.add_parser("qa", help="Analyze PNG frames (requires the qa extra)")
     qa.add_argument("root", type=Path)
     qa.add_argument("--output", type=Path, required=True)
+    from .production.cli import add_parser as add_production
+    add_production(commands)
     args = parser.parse_args()
     try:
         if args.command == "init":
@@ -98,6 +100,9 @@ def main() -> int:
             atomic_json(args.output, report)
             write_markdown(report, args.output.with_suffix(".md"))
             print(f"QA: {report['summary']['status']} -> {args.output}")
+        elif args.command == "production":
+            from .production.cli import run
+            run(args)
         return 0
     except (OSError, ValueError, ImportError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

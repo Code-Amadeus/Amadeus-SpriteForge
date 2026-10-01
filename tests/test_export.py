@@ -30,6 +30,8 @@ def test_export_preserves_selected_variant_timing_and_graph(workspace, tmp_path,
     assert pack.manifest["frameCount"] == 9
     assert pack.manifest["clips"]["idle"]["frameIntervalMs"] == 160
     assert [Path(c[-1]).name for c in calls[:3]] == ["0000.png", "0001.png", "0002.png"]
+    assert calls[0][1:-2] == ["--t2", "--encode", "uastc", "--uastc_quality", "4", "--zcmp", "18",
+                              "--target_type", "RGBA"]  # the shipped Amadeus packs' settings
     assert Path(calls[0][-1]).parent == workspace / before["nodes"][0]["root"]
     assert all("root" not in n and "x" not in n for n in pack.graph["nodes"])
     assert pack.graph["edges"] == before["edges"]

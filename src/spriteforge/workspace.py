@@ -48,6 +48,13 @@ def discover(workspace: Path) -> list[dict]:
     for directory, dirs, files in os.walk(workspace, followlinks=False):
         dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in {"exports", "__pycache__"}
                          and not (Path(directory) / d).is_symlink())
+        parts = Path(directory).relative_to(workspace).parts
+        if parts[:1] == ("production",):
+            # Production takes hold source media; only clip outputs are bindable frame folders.
+            keep = {1: {"clips"}, 3: {"output"}}.get(len(parts))
+            dirs[:] = [d for d in dirs if keep is None or d in keep]
+            if len(parts) < 4:
+                continue
         if not any(name.endswith(".png") for name in files):
             continue
         path = resolve_asset(workspace, directory)
