@@ -9,7 +9,6 @@ or failing QA, so a character pack only ever contains reviewed renders.
 from __future__ import annotations
 
 import math
-import os
 import shutil
 from pathlib import Path
 
@@ -20,7 +19,7 @@ from .records import (bound_clip, canvas_size, check_id, clip_settings, create_c
                       list_owners, list_takes, load_character, load_owner, output_root, production_dir, read_render,
                       render_freshness, save_character, save_owner, take_status)
 from .mouth import default_set
-from .providers import IMAGE_PROVIDERS, PROVIDERS
+from .providers import IMAGE_PROVIDERS, PROVIDERS, provider_status
 from .tools import default_tools, load_tools, save_tools
 
 CLIP_SETTINGS = {
@@ -170,7 +169,7 @@ def overview(workspace: Path) -> dict:
                       "render": {"state": state, "reasons": reasons, **({k: render.get(k) for k in (
                           "take", "frameCount", "frameIntervalMs", "loopMode", "phase", "renderedAt", "qa", "mouth")} if render else {})}})
     providers = {name: {"kind": "video" if name in PROVIDERS else "image" if name in IMAGE_PROVIDERS else None,
-                        "model": config.get("model"), "keySet": bool(os.environ.get(str(config.get("apiKeyEnv") or "")))}
+                        "model": config.get("model"), **provider_status(name, config)}
                  for name, config in (tools.get("providers") or {}).items()}
     return {"character": character, "prompts": library, "poses": poses, "clips": clips,
             "canvas": canvas_layout(workspace),

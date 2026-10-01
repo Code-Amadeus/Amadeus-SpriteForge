@@ -14,6 +14,12 @@ providers document the first-frame-only request.
   a finished take is downloaded immediately.
 - ``seedance``: Volcengine Ark content generation tasks (first/last frame roles).
   It has no negative prompt; takes record that the negative text was not sent.
+- ``wan-cli``: Wan's own command-line tool (``@wan-ai/cli``, ``wan frame2video``),
+  billed to the wan.video account's credits instead of Model Studio pay-as-you-go.
+  The CLI keeps its own login (``wan auth login``): SpriteForge never reads that
+  AccessKey, and checks ``wan auth status`` before a take is recorded. The CLI
+  uploads the input images and saves the result without the watermark. It has no
+  negative prompt or seed; takes record the account balance before and after.
 
 Image edit (pose stills; input is the flattened base still):
 
@@ -29,13 +35,15 @@ import hashlib
 import json
 import os
 import struct
+import subprocess
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from .media import write_durable
+from .media import copy_durable, write_durable
 
 
 class ProviderError(ValueError):
@@ -127,6 +135,20 @@ class Adapter:
         """('pending' | 'succeeded' | 'failed', video URL, provider detail)."""
         raise NotImplementedError
 
+    def fetch_result(self, task_id: str, url: str | None, target: Path) -> None:
+        """Store a finished task's video at ``target``."""
+        download(url, target)
+
+    def balance(self) -> dict | None:
+        """The account balance, where the provider reports one; recorded with each take."""
+        return None
+
+    credential = "env"
+
+    @classmethod
+    def ready(cls, config: dict) -> bool:
+        return bool(os.environ.get(str(config.get("apiKeyEnv") or "")))
+
 
 class Wan(Adapter):
     name = "wan"
@@ -186,6 +208,111 @@ class Seedance(Adapter):
         if status in {"failed", "cancelled", "expired"}:
             return "failed", None, f"{status}: {(result.get('error') or {}).get('message', '')}".strip()
         return "pending", None, status
+
+
+class WanCli:
+    """``wan frame2video`` through Wan's own CLI; see the module notes."""
+    name = "wan-cli"
+    negative_prompt = False
+    credential = "login"
+    VIDEO_SUFFIXES = {".mp4", ".mov", ".webm"}
+
+    def __init__(self, config: dict) -> None:
+        command = config.get("command") or ["wan"]
+        if not isinstance(command, list) or not all(isinstance(part, str) and part for part in command):
+            raise ProviderError("Provider 'wan-cli' needs a 'command' list in production/tools.json, such as [\"wan\"]")
+        self.command = command
+        self.model = str(config.get("model") or "wan3.0")
+        self.audio = bool(config.get("audioOutput", False))
+        self.site = config.get("site")
+        self.poll_seconds = float(config.get("pollSeconds", 10))
+        self.timeout_seconds = float(config.get("timeoutSeconds", 1800))
+        self.request_seconds = float(config.get("requestSeconds", 300))
+
+    @staticmethod
+    def ready(config: dict) -> bool:
+        """Whether the CLI looks logged in, without running it: its AccessKey variable or its user config."""
+        home = Path(os.environ.get("WAN_CONFIG_DIR") or Path.home() / ".wan")
+        return bool(os.environ.get("WAN_ACCESS_KEY")) or (home / "config.json").is_file()
+
+    def run(self, args: list[str], timeout: float | None = None) -> dict:
+        """One CLI call with JSON output. It runs in an empty folder so no stray .env is read, and with
+        the CLI's agent-skill installation switched off. A JSON error is returned for the caller to judge."""
+        env = {**os.environ, "WAN_SKIP_SKILL_INSTALL": "1", "WAN_LANG": "en", "NO_COLOR": "1"}
+        site = ["--site", str(self.site)] if self.site else []
+        with tempfile.TemporaryDirectory(prefix="spriteforge-wan-") as folder:
+            try:
+                result = subprocess.run([*self.command, *args, *site, "--output", "json", "--quiet"], cwd=folder, env=env,
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                        timeout=timeout or self.request_seconds)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ProviderError(f"wan-cli could not run: {exc}") from exc
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            data = None
+        if not isinstance(data, dict):
+            detail = (result.stderr or result.stdout).strip()[-600:]
+            raise ProviderError(f"wan-cli exited with code {result.returncode}: {detail}")
+        return data
+
+    def key(self) -> None:
+        status = self.run(["auth", "status"], 60)
+        if status.get("ok") is False:
+            raise ProviderError(f"wan-cli is not logged in ({status.get('errorMsg') or 'no account'}); run `wan auth login`")
+
+    def balance(self) -> dict | None:
+        try:
+            return self.run(["credits"], 60)
+        except ProviderError as exc:
+            return {"ok": False, "errorMsg": str(exc)}
+
+    def argv(self, job: VideoJob, first: str, last: str | None) -> list[str]:
+        if job.seed is not None:
+            raise ProviderError("wan-cli has no seed option; clear the clip's seed")
+        args = ["frame2video", "--first-frame", first, *(["--last-frame", last] if last is not None else []),
+                "--prompt", job.prompt, "--duration", str(job.duration), "--resolution", job.resolution.upper(),
+                f"--audio-output={'true' if self.audio else 'false'}"]
+        return args if self.model == "wan3.0" else [*args, "--model", self.model]
+
+    def preview(self, job: VideoJob) -> dict:
+        return {"command": self.argv(job, image_label("first", job.first),
+                                     None if job.last is None else image_label("last", job.last))}
+
+    def submit(self, job: VideoJob) -> str:
+        with tempfile.TemporaryDirectory(prefix="spriteforge-wan-inputs-") as folder:
+            first = Path(folder) / "first.png"
+            first.write_bytes(job.first)
+            last = None
+            if job.last is not None:
+                last = Path(folder) / "last.png"
+                last.write_bytes(job.last)
+            data = self.run(self.argv(job, str(first), None if last is None else str(last)))  # uploads the images
+        if not data.get("taskId"):
+            raise ProviderError(f"wan-cli returned no task id: {json.dumps(data, ensure_ascii=False)[:400]}")
+        return str(data["taskId"])
+
+    def poll(self, task_id: str) -> tuple[str, str | None, str]:
+        data = self.run(["result", "get", task_id], 120)
+        label = data.get("statusLabel")
+        if not label:
+            raise ProviderError(f"wan-cli could not read task {task_id}: {data.get('errorMsg') or json.dumps(data)[:300]}")
+        if label == "succeeded":
+            return "succeeded", None, label
+        if label == "failed":
+            return "failed", None, f"failed: {data.get('errorMsg') or data.get('statusDescription') or ''}".strip()
+        return "pending", None, str(label)
+
+    def fetch_result(self, task_id: str, url: str | None, target: Path) -> None:
+        with tempfile.TemporaryDirectory(prefix="spriteforge-wan-result-") as folder:
+            data = self.run(["result", "get", task_id, "--save", "--save-dir", folder], self.request_seconds)
+            saved = [item for item in data.get("savedFiles") or [] if isinstance(item, dict) and item.get("path")]
+            videos = [item for item in saved if Path(item["path"]).suffix.lower() in self.VIDEO_SUFFIXES]
+            if len(videos) != 1:
+                raise ProviderError(f"wan-cli saved {[Path(i['path']).name for i in saved]} for task {task_id}, not one video")
+            if videos[0].get("watermark") == "with":
+                raise ProviderError(f"wan-cli saved the watermarked video of task {task_id}")
+            copy_durable(Path(videos[0]["path"]), target)
 
 
 class ImageAdapter(Adapter):
@@ -262,14 +389,21 @@ class Seedream(ImageAdapter):
             raise ProviderError("seedream returned invalid base64 image data") from exc
 
 
-PROVIDERS = {"wan": Wan, "seedance": Seedance}
+PROVIDERS = {"wan": Wan, "seedance": Seedance, "wan-cli": WanCli}
 IMAGE_PROVIDERS = {"qwen-image": QwenImage, "seedream": Seedream}
 
 
-def get_provider(name: str, tools: dict) -> Adapter:
+def get_provider(name: str, tools: dict) -> Adapter | WanCli:
     if name not in PROVIDERS:
         raise ProviderError(f"Unknown video provider '{name}'; available: {', '.join(PROVIDERS)} (or 'manual')")
     return PROVIDERS[name]((tools.get("providers") or {}).get(name) or {})
+
+
+def provider_status(name: str, config: dict) -> dict:
+    """How a provider authenticates ('env': an API key variable; 'login': the tool's own login) and
+    whether that looks ready, without contacting the provider."""
+    adapter = PROVIDERS.get(name) or IMAGE_PROVIDERS.get(name)
+    return {"credential": adapter.credential, "keySet": adapter.ready(config)} if adapter else {"credential": None, "keySet": False}
 
 
 def get_image_provider(name: str, tools: dict) -> ImageAdapter:

@@ -112,7 +112,8 @@ function renderTools() {
   const tools = state.tools;
   fill($("tools"),
     ...["ffmpeg", "alpha", "interpolate"].map((k) => badge(`${k} ${tools[k] ? "✓" : "✗"}`, tools[k] ? "yes" : "no")),
-    ...Object.entries(tools.providers).map(([name, p]) => badge(`${name} key ${p.keySet ? "set" : "missing"}`, p.keySet ? "yes" : "missing")));
+    ...Object.entries(tools.providers).map(([name, p]) => badge(p.credential === "login" ? `${name} ${p.keySet ? "logged in" : "not logged in"}`
+      : `${name} key ${p.keySet ? "set" : "missing"}`, p.keySet ? "yes" : "missing")));
 }
 
 // ── Stills ─────────────────────────────────────────────────────────────
@@ -339,7 +340,10 @@ function generateHint(clip, provider) {
   if (stills) return stills;
   if (clip.generation.provider === "manual") return "Manual clips: copy the prompt and inputs into your generator, then import the video";
   if (!clip.promptPreview.complete) return "Write the prompt placeholders first";
-  if (!provider || !provider.keySet) return `Set the API key environment variable for ${clip.generation.provider}`;
+  if (!provider || !provider.keySet) {
+    return provider && provider.credential === "login" ? `Log in to ${clip.generation.provider} first (wan auth login)`
+      : `Set the API key environment variable for ${clip.generation.provider}`;
+  }
   return "";
 }
 

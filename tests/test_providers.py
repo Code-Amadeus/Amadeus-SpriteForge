@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,12 +11,12 @@ import pytest
 cv2 = pytest.importorskip("cv2")
 
 import numpy as np  # noqa: E402
-from synthetic import CANVAS, flatten, mouth_centre, provider_frames, still, write_video  # noqa: E402
+from synthetic import CANVAS, PROCESSORS, flatten, mouth_centre, provider_frames, still, write_video  # noqa: E402
 
 from spriteforge.production import prompts  # noqa: E402
 from spriteforge.production.api import ProductionApi  # noqa: E402
 from spriteforge.production.clips import generate_clip_take, resume_clip_take  # noqa: E402
-from spriteforge.production.project import add_clip, add_pose, set_clip  # noqa: E402
+from spriteforge.production.project import add_clip, add_pose, overview, set_clip  # noqa: E402
 from spriteforge.production.records import list_takes, load_take, take_dir  # noqa: E402
 from spriteforge.production.stills import approve_still, generate_still  # noqa: E402
 from spriteforge.production.tools import load_tools, save_tools  # noqa: E402
@@ -288,4 +289,66 @@ def test_page_job_generates_a_pose_still(studio, providers):
     with pytest.raises(ValueError, match="only generate"):
         api.post("jobs", {"action": "render", "pose": "grin"})
     kinds = {name: p["kind"] for name, p in api.overview()["tools"]["providers"].items()}
-    assert kinds == {"wan": "video", "seedance": "video", "qwen-image": "image", "seedream": "image"}
+    assert kinds == {"wan": "video", "seedance": "video", "wan-cli": "video", "qwen-image": "image", "seedream": "image"}
+
+
+@pytest.fixture
+def wan_cli(studio, monkeypatch, tmp_path):
+    """The wan-cli provider pointed at a fake CLI; returns the fake's state folder."""
+    state = tmp_path / "wan-state"
+    state.mkdir()
+    (state / "credits").write_text("1000")
+    video = write_video(studio.tmp / "cli-result.mp4", provider_frames(still(studio, "idle"), still(studio, "smile"), 24))
+    monkeypatch.setenv("FAKE_WAN_STATE", str(state))
+    monkeypatch.setenv("FAKE_WAN_VIDEO", str(video))
+    tools = load_tools(studio.root)
+    tools["providers"]["wan-cli"].update(command=[sys.executable, str(PROCESSORS / "fake_wan_cli.py")], pollSeconds=0.01)
+    save_tools(studio.root, tools)
+    add_clip(studio.root, "smile_in", "idle", "smile")
+    write_prompts(studio)
+    set_clip(studio.root, "smile_in", provider="wan-cli", resolution="480P")
+    return state
+
+
+def cli_calls(state):
+    return [json.loads(line) for line in (state / "calls.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+def test_wan_cli_needs_its_own_login_before_a_take(studio, wan_cli):
+    with pytest.raises(ValueError, match="wan-cli is not logged in"):
+        generate_clip_take(studio.root, "smile_in", log=quiet)
+    assert list_takes(studio.root, "clip", "smile_in") == []
+    assert [c["args"][:2] for c in cli_calls(wan_cli)] == [["auth", "status"]]
+
+
+def test_wan_cli_generates_from_account_credits(studio, wan_cli):
+    (wan_cli / "logged_in").touch()
+    take = generate_clip_take(studio.root, "smile_in", log=quiet)
+    calls = cli_calls(wan_cli)
+    submit = next(c["args"] for c in calls if c["args"][0] == "frame2video")
+    assert submit[submit.index("--resolution") + 1] == "480P" and submit[submit.index("--duration") + 1] == "2"
+    assert "--audio-output=false" in submit and "--last-frame" in submit and "--model" not in submit
+    assert submit[-3:] == ["--output", "json", "--quiet"] and submit[submit.index("--prompt") + 1].startswith("character: Demo")
+    assert all(c["env"] == {"WAN_SKIP_SKILL_INSTALL": "1", "WAN_LANG": "en"} for c in calls)
+    assert {c["cwd"] for c in calls}.isdisjoint({str(studio.root)})
+    assert (wan_cli / "first.png").read_bytes() == (take_dir(studio.root, "clip", "smile_in", take["id"]) / "first.png").read_bytes()
+    assert (take["state"], take["source"]["taskId"], take["media"]["count"]) == ("ready", "wan-cli-1", 24)
+    assert (take["source"]["balanceBefore"]["credits"], take["source"]["balanceAfter"]["credits"]) == (1000, 990)
+    assert take["prompt"]["negativeSent"] is False and take["source"]["request"]["command"][2].startswith("<first.png sha256=")
+
+    set_clip(studio.root, "smile_in", last_frame="none")
+    preview = generate_clip_take(studio.root, "smile_in", dry_run=True)
+    assert "--last-frame" not in preview["request"]["command"]
+    set_clip(studio.root, "smile_in", seed=7)
+    with pytest.raises(ValueError, match="no seed option"):
+        generate_clip_take(studio.root, "smile_in", dry_run=True)
+
+
+def test_wan_cli_readiness_reads_no_secret(studio, monkeypatch, tmp_path):
+    monkeypatch.delenv("WAN_ACCESS_KEY", raising=False)
+    monkeypatch.setenv("WAN_CONFIG_DIR", str(tmp_path / "wan-home"))
+    status = overview(studio.root)["tools"]["providers"]["wan-cli"]
+    assert (status["credential"], status["keySet"]) == ("login", False)
+    (tmp_path / "wan-home").mkdir()
+    (tmp_path / "wan-home" / "config.json").write_text("{}")
+    assert overview(studio.root)["tools"]["providers"]["wan-cli"]["keySet"] is True

@@ -23,7 +23,7 @@ from . import prompts
 from .geometry import composite
 from .media import VIDEO_SUFFIXES, copy_durable, encode_png, read_bgra, sorted_pngs, video_info, write_durable
 from .prompts import require_complete
-from .providers import VideoJob, download, get_provider
+from .providers import VideoJob, get_provider
 from .records import (canvas_size, clip_settings, load_character, load_owner, load_take, new_take, save_take,
                       still_path, take_dir)
 from .stills import still_input, still_prompt
@@ -152,8 +152,12 @@ def generate_clip_take(workspace: Path, clip_id: str, *, provider: str | None = 
     if dry_run:
         return {"provider": name, "model": adapter.model, "request": request, "prompt": snapshot}
     require_complete(snapshot)
-    adapter.key()  # a missing key fails before a take is recorded
-    take, directory = new_take(workspace, "clip", clip_id, {"provider": name, "model": adapter.model, "request": request})
+    adapter.key()  # a missing key or login fails before a take is recorded
+    source = {"provider": name, "model": adapter.model, "request": request}
+    balance = adapter.balance()
+    if balance is not None:
+        source["balanceBefore"] = balance
+    take, directory = new_take(workspace, "clip", clip_id, source)
     take["prompt"] = {**snapshot, "negativeSent": bool(job.negative)}
     _store_inputs(directory, first, last, inputs)
     take["inputs"] = inputs
@@ -185,8 +189,11 @@ def finish_take(workspace: Path, take: dict, *, log=print) -> dict:
         status, url, detail = adapter.poll(take["source"]["taskId"])
         if status == "succeeded":
             directory = take_dir(workspace, "clip", take["owner"]["id"], take["id"])
-            download(url, directory / "media.mp4")
+            adapter.fetch_result(take["source"]["taskId"], url, directory / "media.mp4")
             take.update(state="ready", media={"video": "media.mp4", **video_info(directory / "media.mp4")})
+            balance = adapter.balance()
+            if balance is not None:
+                take["source"]["balanceAfter"] = balance
             save_take(workspace, take)
             log(f"Take {take['id']} is ready for review")
             return take

@@ -382,6 +382,7 @@ its own per-label mask adjustments.
 | --- | --- | --- | --- |
 | `wan` | `https://dashscope.aliyuncs.com/api/v1`, model `wan2.7-i2v-2026-04-25` | `DASHSCOPE_API_KEY` | `media` = `first_frame` + `last_frame` data URLs (`first_frame` alone for a first-frame-only transition), `duration`, `resolution`, `prompt_extend: false`, optional `seed` and `negative_prompt`; `X-DashScope-Async: enable` |
 | `seedance` | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedance-1-5-pro-251215` | `ARK_API_KEY` | `content` = text + `first_frame` + `last_frame` (no `last_frame` for a first-frame-only transition), `ratio: adaptive`, `duration`, `resolution`; no negative prompt (takes record it was not sent) |
+| `wan-cli` | Wan's CLI (`@wan-ai/cli`), `command` in tools.json; model `wan3.0` (the CLI's default) | the CLI's own login (`wan auth login`) | `wan frame2video --first-frame F [--last-frame L] --prompt P --duration D --resolution R --audio-output=false --output json`; billed to the wan.video account's credits; the result is saved without the watermark; no negative prompt or seed |
 | `qwen-image` (stills) | `https://dashscope.aliyuncs.com/api/v1`, model `qwen-image-edit-plus` | `DASHSCOPE_API_KEY` | one user message with the base still data URL and the prompt; `n: 1`, `prompt_extend: false`, `watermark: false`, optional `negative_prompt` and `size` (`W*H`); synchronous, the result URL is fetched at once |
 | `seedream` (stills) | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedream-4-0-250828` | `ARK_API_KEY` | `prompt`, `image` = base still data URL, `size`, `response_format: b64_json`, `sequential_image_generation: disabled`, `watermark: false`; no negative prompt |
 
@@ -400,6 +401,29 @@ fallbacks. A request without a last frame is sent only for a transition set to
 first-frame-to-video, and Ark takes one `image_url` with role `first_frame`). Wan
 result URLs expire after 24 hours, which is why takes download at once.
 Inputs are flattened onto the character background because Wan does not accept alpha.
+
+### Wan through its CLI (subscription credits)
+
+The `wan` adapter calls Model Studio and is billed pay-as-you-go. To spend a wan.video
+membership's credits instead, use `wan-cli`, which drives Wan's own command-line tool:
+
+1. Install the CLI (Node.js 22 or later). Its install script copies an agent skill into
+   the coding agents it finds (`~/.claude/skills`, `~/.codex/skills` and others); skip
+   that with `--ignore-scripts` or `WAN_SKIP_SKILL_INSTALL=1`. A local install works:
+   `npm install @wan-ai/cli --prefix C:/tools/wan-cli --ignore-scripts`.
+2. Log in once in your own terminal with `wan auth login` and the AccessKey from
+   create.wan.video. The CLI keeps it in `~/.wan`; SpriteForge never reads it.
+3. Point `providers.wan-cli.command` in tools.json at the CLI. On Windows use Node and
+   the package's script, `["node", "C:/tools/wan-cli/node_modules/@wan-ai/cli/dist/index.js"]`:
+   a `.cmd` shim passes multi-line prompts through cmd.exe, which mangles them.
+   `audioOutput` (default false) asks for a soundtrack; `model` other than `wan3.0`
+   adds `--model`; `site` adds `--site`.
+
+Generation checks `wan auth status` before recording a take and records the account's
+`wan credits` before submission and after the result is saved, so each take shows
+what it cost. Every call runs in an empty folder (the CLI reads a `.env` from its
+working directory) with the skill installation switched off. The result is saved
+with `wan result get --save`, which downloads the watermark-free file.
 
 ## Importing an existing character
 

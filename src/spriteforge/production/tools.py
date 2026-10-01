@@ -30,6 +30,10 @@ def default_tools() -> dict:
                 "seedance": {"baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
                              "model": "doubao-seedance-1-5-pro-251215", "apiKeyEnv": "ARK_API_KEY",
                              "pollSeconds": 5, "timeoutSeconds": 1800},
+                # Wan's own CLI, billed to the wan.video account's credits. On Windows point the
+                # command at node and the package's dist/index.js: a .cmd shim mangles prompts.
+                "wan-cli": {"command": ["wan"], "model": "wan3.0", "audioOutput": False,
+                            "pollSeconds": 10, "timeoutSeconds": 1800, "requestSeconds": 300},
                 "qwen-image": {"baseUrl": "https://dashscope.aliyuncs.com/api/v1", "model": "qwen-image-edit-plus",
                                "apiKeyEnv": "DASHSCOPE_API_KEY", "requestSeconds": 300},
                 "seedream": {"baseUrl": "https://ark.cn-beijing.volces.com/api/v3", "model": "doubao-seedream-4-0-250828",
