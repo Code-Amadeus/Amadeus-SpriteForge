@@ -8,15 +8,38 @@ local workspace records and provider configuration are not included.
 | Current reference pair / 推荐起步组合 | Legacy alignment references / 旧管线对齐参考 |
 | --- | --- |
 | ![Idle reference](idle-reference.png) | ![Legacy idle reference](legacy-idle-reference.png) |
-| `idle-reference.png` — neutral idle, normalized from the reference used in the Wan 3.0 trial. | `legacy-idle-reference.png` — approved idle still from the imported legacy production. |
+| `idle-reference.png` — neutral idle from the source artwork of the shipped idle, placed on the shipped pack's framing. | `legacy-idle-reference.png` — approved idle still from the imported legacy production. |
 | ![Closed-eye smile reference](idle-smile-reference.png) | ![Legacy closed-eye reference](legacy-closed-eye-reference.png) |
 | `idle-smile-reference.png` — matching closed-eye smile, registered to the current idle. | `legacy-closed-eye-reference.png` — approved closed-eye pose from the legacy production. |
 
-Start with the **left-hand pair**. The legacy stills preserve a different production's
-framing and tone; use them for comparison, or as a separate character workspace.
+Start with the **left-hand pair**. Both pairs sit on the framing of the shipped Kurisu
+pack, so clips made from either pair line up with the shipped clips. The left-hand pair
+keeps the source artwork's tone, about 2 L* brighter on the face than the shipped video
+frames, which a graph seam check reports as `fix`. Use one pair per workspace, and start
+from the legacy pair to add clips to the shipped pack.
 
-建议新用户先使用左侧的 **idle + 闭眼微笑** 两张图。右侧保留旧管线的构图和色调，
-适合作为对齐参考，或在另一个工作区中使用。不要直接混用两套基准。
+建议新用户先使用左侧的 **idle + 闭眼微笑** 两张图。两组都在已发布 Kurisu 角色包的构图上，
+用任一组做的片段都能和已发布片段对齐。左侧保留原画色调，脸部比已发布的视频帧亮约 2 L*，
+在行为图里和已发布片段直接相连时，接缝检查会报 `fix`。一个工作区只用一组；
+要给已发布的角色包补片段，从右侧旧管线那组开始。
+
+### Comparison with the shipped pack / 与已发布角色包的对比
+
+Each reference compared with the frame of the shipped pack it joins, using SpriteForge's
+own registration and seam check. Head anchors are reference / shipped, in canvas pixels;
+registration maps the reference onto the shipped frame; face L* is reference minus shipped.
+
+| Reference | Shipped frame | Head top / centre | Registration (scale, offset) | Matches | Face L* | Seam |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| `idle-reference.png` | root `idle`, first frame | 21 / 387.66 vs 20 / 387.82 | 0.99987, (+0.20, −0.28) px | 1129 / 1200 | +2.07 | `fix` (tone) |
+| `idle-smile-reference.png` | `trans_smile`, last frame | 21 / 387.96 vs 21 / 385.58 | 1.00371, (−4.22, +0.60) px | 1076 / 1200 | +0.65 | `pass` |
+| `legacy-idle-reference.png` | root `idle`, first frame | 20 / 387.76 vs 20 / 387.82 | 1.00001, (+0.01, −0.08) px | 1186 / 1200 | +0.13 | `pass` |
+| `legacy-closed-eye-reference.png` | `closed_eye_trans`, last frame | 24 / 387.26 vs 24 / 387.14 | 0.99928, (−0.04, +0.79) px | 1049 / 1200 | +1.00 | `pass` |
+
+The shipped smile pose ended where its generated transition stopped, 2.4 px left of the
+idle-registered smile; that is within the 3 px head tolerance.
+
+表中每张参考图都和它在已发布角色包里衔接的那一帧比较。几何都在容差内，左侧 idle 只有色调差异。
 
 ## Start a production workspace / 从参考图开始
 
@@ -269,6 +292,11 @@ Amadeus's speaking/intent label conventions are described in the
 ## Provenance
 
 These are the maintainer's published character reference images, copied from
-approved production stills without resampling. They are separate from the original
+approved production stills without resampling. The left-hand pair comes from the
+source artwork of the shipped default idle: its features register to the shipped idle's
+first frame at 1149 of 1200 matches. It was matted on CPU with the anime-segmentation
+wrapper; the idle was placed with `--place 0.684764,16.716,10.864`, the scale-and-offset
+fit to that frame (median residual 0.87 px), and the smile was imported without
+placement and registered to the idle. They are separate from the original
 geometric demo and are not covered by the project's code/demo AGPL grant. See
 [NOTICE.md](../../../NOTICE.md) for the distinction between code, demo and character artwork.

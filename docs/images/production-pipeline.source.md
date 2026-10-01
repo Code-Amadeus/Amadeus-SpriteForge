@@ -8,7 +8,9 @@
   2026-10-01 with Playwright video capture. It uses the existing neutral idle and
   closed-eye smile stills, plus the Wan 3.0 transition and loop described in
   [the validation record](../validation.md#wan-30-through-the-cli-on-account-credits-2026-10-01).
-  The matching current stills are published under `examples/references/kurisu/`.
+  The same artwork is published under `examples/references/kurisu/`, since re-placed
+  on the shipped pack's framing (8.6 px further right); the recording shows the
+  earlier placement.
 - The recording uses a copy of that workspace with the current prompt library
   switched to `live2d-idle.en.json` and the walkthrough's English action blocks.
   The existing takes keep their original Chinese prompt snapshots; the recording
