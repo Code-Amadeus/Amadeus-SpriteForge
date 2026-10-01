@@ -31,6 +31,10 @@ def add_parser(commands) -> None:
     init.add_argument("--cut-edges", default="bottom", help="Comma list of canvas edges the body may cross")
     status = command("status", "Summarise poses, clips, takes and renders")
     status.add_argument("--json", action="store_true")
+    settings = command("settings", "Show or change Studio's image provider and batch confirmation defaults")
+    settings.add_argument("--concept-provider")
+    settings.add_argument("--still-provider")
+    settings.add_argument("--batch-confirm-threshold", type=int)
 
     pose = sub.add_parser("pose", help="Plan poses").add_subparsers(dest="pose_action", required=True)
     pose_add = pose.add_parser("add")
@@ -221,6 +225,13 @@ def run(args) -> None:
             print(json.dumps(state, ensure_ascii=False, indent=2))
         else:
             _print_status(state)
+    elif action == "settings":
+        from .tools import set_ui_defaults
+        values = {key: value for key, value in {
+            "conceptProvider": args.concept_provider, "stillProvider": args.still_provider,
+            "batchConfirmThreshold": args.batch_confirm_threshold,
+        }.items() if value is not None}
+        print(json.dumps(set_ui_defaults(workspace, values), ensure_ascii=False, indent=2))
     elif action == "pose":
         if args.pose_action == "add":
             project.add_pose(workspace, args.id, args.description)

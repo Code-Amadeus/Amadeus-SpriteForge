@@ -57,6 +57,10 @@ class ProductionApi:
 
     def post(self, route: str, body: dict) -> dict:
         from . import project, prompts
+        if route == "tools-settings":
+            from .tools import set_ui_defaults
+            with self.lock:
+                return {"defaults": set_ui_defaults(self.workspace, body.get("defaults"))}
         if route == "decision":
             kind, owner, take, action = body.get("kind"), body.get("owner"), body.get("take"), body.get("action")
             if kind == "pose" and action == "accept":

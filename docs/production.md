@@ -24,6 +24,46 @@ Everything lives in the authoring workspace under `production/`. The review page
 every operation is also a `spriteforge production ...` command. Production and QA
 need the `qa` extra (OpenCV, NumPy) and FFmpeg for video takes.
 
+## Studio
+
+The staged Studio interface is available at `/studio`. Its shared shell follows
+the dark green HTML prototype: production stages in the left rail, an Overview
+matrix, and Canvas, Prompts, Jobs and Settings tools. During the rollout,
+`/production` and `/` remain available with their existing behavior.
+
+The Overview reads the same pose, take, render and graph records as the CLI.
+Missing statistics are shown as unknown rather than estimated from sample data.
+New renders record `durationS`; historical renders without that field keep their
+original records. The time total covers retained render records from the last
+seven days; overwritten renders have no historical timing record. Versions include
+failed and rejected takes.
+
+Studio starts in English. The top bar and Settings switch to Chinese immediately;
+only language and panel size preferences live in the browser. A hash URL retains
+the current stage and open tool, and browser Back and Forward work normally.
+Prompts, Jobs and Settings open over the current stage. Canvas has a full-page
+`#/canvas` route so a tool drawer can open over it without changing the underlying
+view; the original `?tool=canvas` URL is accepted as an alias. Canvas uses the existing
+card and wire editor, including imports, approvals and generator input preparation.
+
+Settings exposes provider readiness and model names, never credentials. The same
+image provider defaults can be changed from the command line:
+
+```text
+spriteforge production settings --workspace W
+spriteforge production settings --workspace W --concept-provider qwen-image --still-provider seedream
+spriteforge production settings --workspace W --batch-confirm-threshold 3
+```
+
+The confirmation threshold does not authorize generation. Generating media still
+requires an explicit user action; tests use synthetic assets and fake providers.
+Studio does not install character packs into Amadeus or launch it.
+
+Browser acceptance: `node tools/studio_smoke.cjs` uses a synthetic production
+workspace and writes 1440×900 English/Chinese screenshots to `test-results/`.
+Set `SPRITEFORGE_PYTHON` to a Python environment with the QA extras and, on Windows,
+`BROWSER_CHANNEL=msedge` to use an installed Edge browser.
+
 ## Invariants
 
 1. **Approved pose stills are the only geometric authority.** Each clip endpoint is

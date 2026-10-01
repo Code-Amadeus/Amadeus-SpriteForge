@@ -26,10 +26,7 @@ jobs:
         run: choco install ffmpeg -y --no-progress
       - run: python -m pip install -e ".[qa,dev]"
       - run: python -m pytest
-      - run: node --check src/spriteforge/web/review.js
-      - run: node --check src/spriteforge/web/preview-media.js
-      - run: node --check src/spriteforge/web/production.js
-      - run: node --check src/spriteforge/web/production-canvas.js
+      - run: npm run check
       - run: npm ci
       - if: runner.os != 'Windows'
         run: npx playwright install --with-deps chromium

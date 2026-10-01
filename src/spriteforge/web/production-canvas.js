@@ -6,13 +6,59 @@
 //                 frame number) when the pose's approved still was taken from one of its takes
 // The canvas shows production records only; which clip plays when (labels, probabilities) is
 // bound later on the Review & graph page. Card positions are saved in production/canvas.json.
-// Uses the helpers and state of production.js (h, fill, badge, api, run, state, ...).
-(() => {
+// The owning production view supplies state and actions; each mount owns its UI lifecycle.
+window.SFProductionGuide = {
+    en: {
+      title: "Making clips on the canvas",
+      intro: "Each pose has one approved still, and every clip starts and ends on pose stills. That is what keeps clips aligned where they meet.",
+      steps: [
+        ["Approve the base still", "Click the base pose card, import its reference image in the side panel and approve it. Approval measures the head top and head centre that every other still must match."],
+        ["Give poses their stills", "Add a pose with + Pose. Import an image, generate one with an image editor, or take it from a transition (step 6)."],
+        ["Draw clips", "Drag from a pose's right port onto another pose for a transition, back onto the same pose for a loop, or onto empty space for a new pose reached by a first-frame-only transition."],
+        ["Write the clip's prompt", "Type the clip's own text on its card and save it as a new version. Shared text, such as the character and constraints like \"camera unchanged\", lives on the Prompts tab."],
+        ["Make takes", "Generate sends the stills and prompt to the clip's provider after you confirm. To generate by hand on a provider's website, download the generator inputs from the clip's side panel and import the video with Import take. Click a card to use or reject takes; rejected takes stay archived with your reason."],
+        ["Let a transition define the next pose", "On a first-frame-only transition, Last frame → pose still turns a take's last frame into a candidate still for the end pose. Approve it on the pose card; a dashed wire shows which clip and frame it came from. Then continue from that pose."],
+        ["Render and check", "Render the accepted take. Badges show missing or stale renders and the QA level. A render goes stale when its take, its settings or one of its stills changes."],
+      ],
+      wires: "Wires: pose → clip means the still is the clip's first frame. Clip → pose means the clip ends on that pose: solid when the still is sent as the last frame, dotted when the clip is generated from its first frame only, dashed when the pose's still was taken from one of the clip's takes.",
+      note: "Which clip plays when (labels, probabilities) is set later on the Review & graph page.",
+      close: "Close",
+      other: "中文",
+    },
+    zh: {
+      title: "在画布上制作片段",
+      intro: "每个姿态有一张批准的静帧，每个片段都从姿态静帧开始、在姿态静帧结束，片段相接处因此能对齐。",
+      steps: [
+        ["批准基准静帧", "点基准姿态的卡片，在右侧面板导入参考图并批准。批准时会测出头顶和头部中心，其他静帧都要和它对齐。"],
+        ["给姿态配静帧", "用 + Pose 添加姿态，然后导入图片、用图像编辑生成，或者从过渡里取一帧（第 6 步）。"],
+        ["连出片段", "从姿态卡右侧的接口拖出：拖到另一个姿态是过渡，拖回自己是循环，拖到空白处会新建一个姿态，并用只给首帧的过渡连过去。"],
+        ["写片段的 prompt", "在卡片上写这个片段自己的描述，保存为新版本。共用的部分（角色描述、\"镜头不变\"这类约束）在 Prompts 页。"],
+        ["生成 take", "点 Generate 并确认后，会把静帧和 prompt 发给这个片段的服务商。如果要在服务商网站上手动生成，就在片段的右侧面板下载生成器输入图，再用 Import take 导入视频。点卡片可以采用或弃用 take，弃用的会带原因存档。"],
+        ["让过渡定义下一个姿态", "只给首帧的过渡上，Last frame → 姿态 still 会把 take 的最后一帧变成终点姿态的候选静帧。在姿态卡上批准后，虚线会标出它来自哪个片段的第几帧。然后从这个姿态继续。"],
+        ["渲染并检查", "渲染采用的 take。徽标会显示缺渲染、已过期和 QA 等级；take、设置或任一静帧改变后，渲染会过期。"],
+      ],
+      wires: "连线：姿态 → 片段表示这张静帧是片段的首帧。片段 → 姿态表示片段停在这个姿态上：实线表示把它的静帧作为尾帧发送，点线表示只用首帧生成，虚线表示这个姿态的静帧取自该片段的某个 take。",
+      note: "哪个片段什么时候播放（标签、概率）在之后的 Review & graph 页设置。",
+      close: "关闭",
+      other: "English",
+    },
+  };
+
+
+window.SFProductionCanvas = { create(environment) {
+  const GUIDE = window.SFProductionGuide;
+  const { $, h, fill, badge, api, run, toast, media, stillFile, takeFile, acceptedStill, poseStatus,
+    firstFrameOnly, generateHint, stillsHint, uploadFile, generate, startJob, selection, renderPoseDetail,
+    renderClipDetail, addPoseInteractive, tx, captureFields, rememberFields, restoreFields } = environment;
+  let state;
+  let disposed = false;
+  const listeners = new AbortController();
+  const drags = new Set();
   const WIDTH = { pose: 214, clip: 304 };
   const PORT_Y = 21; // ports sit on the card's title row
   const LANE = { pose: 274, clip: 388 }; // auto layout: pose and clip columns alternate
   const GAP = 34;
-  const ui = { view: null, positions: {}, selected: null, drafts: {}, cards: new Map(), saveTimer: null,
+  const ui = { view: null, positions: {}, selected: null, drafts: {}, cards: new Map(),
     viewTimer: null, justDragged: false, loadedFor: null, lang: null };
   let viewport;
   let world;
@@ -26,6 +72,7 @@
   const storage = (action) => { try { return action(window.localStorage); } catch { return null; } };
 
   function setupCanvas() {
+    state = environment.getState();
     viewport = $("canvasViewport");
     world = $("canvasWorld");
     wires = $("canvasWires");
@@ -34,14 +81,15 @@
     $("canvasLayout").onclick = () => { autoLayout(true); placeCards(); drawWires(); fitView(); savePositions(); };
     $("canvasAddPose").onclick = () => addPoseInteractive();
     $("canvasGuideBtn").onclick = () => ($("canvasGuide").hidden ? showGuide() : hideGuide());
-    viewport.addEventListener("wheel", onWheel, { passive: false });
-    viewport.addEventListener("pointerdown", onPanStart);
+    viewport.addEventListener("wheel", onWheel, { passive: false, signal: listeners.signal });
+    viewport.addEventListener("pointerdown", onPanStart, { signal: listeners.signal });
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && activeTab === "canvas" && !event.target.closest("textarea, input")) select(null);
-    });
+      if (event.key === "Escape" && environment.isActive() && !event.target.closest("textarea, input")) select(null);
+    }, { signal: listeners.signal });
   }
 
   function renderCanvas() {
+    state = environment.getState();
     if (!world) return;
     if (ui.loadedFor !== state.character.id) {
       ui.loadedFor = state.character.id;
@@ -57,6 +105,7 @@
     drawWires();
     if (ui.view) applyView(); else fitView();
     renderInspector();
+    if (!$("canvasGuide").hidden) showGuide();
     if (!state.clips.length && !storage((s) => s.getItem("spriteforge.canvas.guideSeen"))) showGuide();
   }
 
@@ -72,8 +121,8 @@
   // ── Cards ────────────────────────────────────────────────────────────
   function stillOrigin(take) {
     const source = take.source || {};
-    if (source.provider === "clip") return `frame ${source.frame} of ${source.clip}`;
-    if (source.provider === "manual") return "imported" + (source.note ? ` · ${source.note}` : "");
+    if (source.provider === "clip") return tx("clipFrameSource", "frame {frame} of {clip}", { frame: source.frame, clip: source.clip });
+    if (source.provider === "manual") return tx("importedLabel", "imported") + (source.note ? ` · ${source.note}` : "");
     return `${source.provider} ${source.model || ""}`.trim();
   }
 
@@ -82,14 +131,14 @@
     const accepted = pose.takes.find((t) => t.status === "accepted");
     const latest = pose.takes.slice().reverse().find((t) => t.state === "ready" && t.media && t.media.still && t.status !== "rejected");
     const shown = accepted || latest;
-    const origin = shown ? (accepted ? "" : "candidate · ") + stillOrigin(shown) : pose.description || "Import, generate or take a still";
+    const origin = shown ? (accepted ? "" : tx("candidatePrefix", "candidate · ")) + stillOrigin(shown) : pose.description || tx("poseImportHint", "Import, generate or take a still");
     return h("div", { class: "node pose", style: `width:${WIDTH.pose}px` },
-      h("div", { class: "node-head" }, h("span", { class: "port in", title: "Clips that end on this pose" }),
+      h("div", { class: "node-head" }, h("span", { class: "port in", title: tx("poseEndPort", "Clips that end on this pose") }),
         h("strong", {}, pose.id), pose.id === state.character.basePose ? badge("base", "candidate") : null, badge(text, kind),
-        h("span", { class: "port out", title: "Drag onto a pose or empty space to make a clip from this pose" })),
+        h("span", { class: "port out", title: tx("poseStartPort", "Drag onto a pose or empty space to make a clip from this pose") })),
       h("div", { class: "node-thumb" }, shown
-        ? h("img", { src: media(stillFile(pose, shown)), alt: `${pose.id} still`, draggable: "false" })
-        : h("span", { class: "tiny" }, "No still yet")),
+        ? h("img", { src: media(stillFile(pose, shown)), alt: tx("stillAlt", "{pose} still", { pose: pose.id }), draggable: "false" })
+        : h("span", { class: "tiny" }, tx("noStill", "No still yet"))),
       h("div", { class: "node-line tiny", title: origin }, origin));
   }
 
@@ -100,14 +149,14 @@
     const draft = ui.drafts[subject];
     const area = h("textarea", { class: "node-prompt", value: draft !== undefined ? draft : current.text, "data-prompt": clip.id,
       spellcheck: "false", "aria-label": `${clip.id} prompt` });
-    const save = h("button", { class: "small", disabled: draft === undefined || draft === current.text }, "Save prompt");
+    const save = h("button", { class: "small", disabled: draft === undefined || draft === current.text }, tx("savePrompt", "Save prompt"));
     area.addEventListener("input", () => { ui.drafts[subject] = area.value; save.disabled = area.value === current.text; });
     save.onclick = async () => {
-      const result = await run(() => api("/api/production/prompt", { block: subject, text: area.value }), `${clip.id}: prompt saved as a new version`);
+      const result = await run(() => api("/api/production/prompt", { block: subject, text: area.value }), tx("promptSaved", "{clip}: prompt saved as a new version", { clip: clip.id }));
       if (result) delete ui.drafts[subject];
     };
     const r = clip.render;
-    const renderText = r.state === "current" ? "rendered" : r.state === "stale" ? "stale" : clip.acceptedTake ? "not rendered" : "no take chosen";
+    const renderText = r.state === "current" ? tx("rendered", "rendered") : r.state === "stale" ? "stale" : clip.acceptedTake ? tx("notRendered", "not rendered") : tx("noTakeChosen", "no take chosen");
     const renderKind = r.state === "current" ? "current" : r.state === "stale" || clip.acceptedTake ? "stale" : "pending";
     const qa = r.qa ? r.qa.status : null;
     const loop = clip.kind === "loop";
@@ -122,28 +171,28 @@
       onchange: (e) => uploadFile("clip", clip.id, e.target.files[0]) });
     const flagged = qa === "fail" ? " fail" : (clip.acceptedTake && r.state !== "current") || qa === "fix" ? " warn" : "";
     return h("div", { class: "node clip" + flagged, style: `width:${WIDTH.clip}px` },
-      h("div", { class: "node-head" }, h("span", { class: "port in", title: `Starts from the ${clip.from} still` }),
-        h("strong", {}, clip.id), h("span", { class: "tiny" }, loop ? "loop" : "transition"),
+      h("div", { class: "node-head" }, h("span", { class: "port in", title: tx("startsFrom", "Starts from the {pose} still", { pose: clip.from }) }),
+        h("strong", {}, clip.id), h("span", { class: "tiny" }, loop ? tx("status.loop", "loop") : tx("status.transition", "transition")),
         badge(renderText, renderKind), qa ? badge("QA " + qa, qa) : null,
-        loop ? null : h("span", { class: "port out", title: `Ends on ${clip.to}` })),
+        loop ? null : h("span", { class: "port out", title: tx("endsOn", "Ends on {pose}", { pose: clip.to }) })),
       h("div", { class: "node-body" },
-        h("div", { class: "tiny" }, loop ? `Loop on the ${clip.from} still (first and last frame)`
-          : `First frame: ${clip.from} still · last frame: ${firstOnly ? `not sent (ends on ${clip.to})` : `${clip.to} still`}`),
+        h("div", { class: "tiny" }, loop ? tx("loopInputs", "Loop on the {pose} still (first and last frame)", { pose: clip.from })
+          : tx("clipInputs", "First frame: {from} still · last frame: {last}", { from: clip.from, last: firstOnly ? tx("notSentEnd", "not sent (ends on {pose})", { pose: clip.to }) : tx("stillAlt", "{pose} still", { pose: clip.to }) })),
         area,
-        h("div", { class: "row" }, save, h("span", { class: "tiny" }, `prompt v${current.version}`),
+        h("div", { class: "row" }, save, h("span", { class: "tiny" }, tx("promptVersion", "prompt v{version}", { version: current.version })),
           /\{\{\s*PLACEHOLDER/.test(current.text) ? badge("placeholder", "watch") : null),
         h("div", { class: "chips" }, [clip.generation.provider === "manual" ? "manual" : `${clip.generation.provider}${provider && provider.model ? " · " + provider.model : ""}`,
-          clip.generation.resolution, `${clip.generation.durationS} s`, firstOnly ? "first frame only" : null].filter(Boolean)
+          clip.generation.resolution, `${clip.generation.durationS} s`, firstOnly ? tx("firstFrameOnly", "first frame only") : null].filter(Boolean)
           .map((text) => h("span", { class: "chip" }, text))),
         h("div", { class: "node-takes" }, live.slice(-4).reverse().map((t) => takeThumb(clip, t)),
-          live.length ? null : h("span", { class: "tiny" }, "No takes yet"),
-          archived ? h("span", { class: "tiny" }, `+${archived} archived`) : null),
+          live.length ? null : h("span", { class: "tiny" }, tx("noTakesShort", "No takes yet")),
+          archived ? h("span", { class: "tiny" }, tx("archivedCount", "+{count} archived", { count: archived })) : null),
         h("div", { class: "row" },
           manual ? null : h("button", { class: "small primary", disabled: Boolean(hint),
-            title: hint || `Generate a new take with ${clip.generation.provider}`, onclick: () => generate(clip) }, "Generate"),
-          h("label", { class: "button small", title: "Import a video made elsewhere as a new take" }, "Import take", upload),
+            title: hint || tx("newTakeHint", "Generate a new take with {provider}", { provider: clip.generation.provider }), onclick: () => generate(clip) }, tx("generate", "Generate")),
+          h("label", { class: "button small", title: tx("importVideoHint", "Import a video made elsewhere as a new take") }, tx("importTakeButton", "Import take"), upload),
           clip.acceptedTake && r.state !== "current"
-            ? h("button", { class: "small", onclick: () => startJob("render", { clip: clip.id }) }, "Render") : null,
+            ? h("button", { class: "small", onclick: () => startJob("render", { clip: clip.id }) }, tx("render", "Render")) : null,
           adoptAction(clip)),
         cardHint ? h("div", { class: "tiny node-hint" }, cardHint) : null));
   }
@@ -159,7 +208,7 @@
     } else if (m.dir) {
       preview = h("img", { src: media(takeFile(clip, take, `${m.dir}/000000.png`)), alt: "", draggable: "false" });
     } else {
-      preview = h("span", { class: "tiny" }, take.state);
+      preview = h("span", { class: "tiny" }, tx(`status.${take.state}`, take.state));
     }
     const source = take.source || {};
     return h("div", { class: "take-thumb" + (take.status === "accepted" ? " accepted" : ""),
@@ -171,8 +220,8 @@
     const ready = clip.takes.filter((t) => t.state === "ready" && t.status !== "rejected");
     const take = ready.find((t) => t.status === "accepted") || ready[ready.length - 1];
     if (!take) return null;
-    return h("button", { class: "small", title: `Make the last frame of take ${take.id} a candidate still for ${clip.to}`,
-      onclick: () => startJob("adopt", { pose: clip.to }, { clip: clip.id, take: take.id, frame: "last" }) }, `Last frame → ${clip.to} still`);
+    return h("button", { class: "small", title: tx("adoptTakeHint", "Make the last frame of take {take} a candidate still for {pose}", { take: take.id, pose: clip.to }),
+      onclick: () => startJob("adopt", { pose: clip.to }, { clip: clip.id, take: take.id, frame: "last" }) }, tx("adopt", "Last frame → {pose} still", { pose: clip.to }));
   }
 
   function addCard(key, el) {
@@ -196,15 +245,19 @@
 
   function renderInspector() {
     const root = $("canvasInspector");
+    const drafts = root.dataset.selection === ui.selected ? captureFields(root) : [];
     const owner = ui.selected ? ownerOf(ui.selected) : null;
     if (!owner) { ui.selected = null; root.hidden = true; fill(root); return; }
     const kind = ui.selected.split(":")[0];
     const body = h("div", { class: "inspector-body" });
-    fill(root, h("div", { class: "inspector-head" }, h("span", { class: "tiny" }, kind === "pose" ? "Pose still and takes" : "Clip settings, takes and render"),
-      h("button", { class: "small", onclick: () => select(null) }, "Close")), body);
+    fill(root, h("div", { class: "inspector-head" }, h("span", { class: "tiny" }, kind === "pose" ? tx("poseInspector", "Pose still and takes") : tx("clipInspector", "Clip settings, takes and render")),
+      h("button", { class: "small", onclick: () => select(null) }, tx("close", "Close"))), body);
     root.hidden = false;
     if (kind === "pose") { selection.pose = owner.id; renderPoseDetail(owner, body); }
     else { selection.clip = owner.id; renderClipDetail(owner, body); }
+    root.dataset.selection = ui.selected;
+    rememberFields(root);
+    restoreFields(root, drafts);
   }
 
   // ── Wires ────────────────────────────────────────────────────────────
@@ -220,13 +273,13 @@
       const adopted = source && source.clip === clip.id;
       if (clip.kind === "loop" && !adopted) continue; // a loop returns to the pose it starts from
       list.push({ from: keyOf("clip", clip.id), to: keyOf("pose", clip.to),
-        kind: adopted ? "adopted" : firstFrameOnly(clip) ? "open" : "end", label: adopted ? `frame ${source.frame}` : null });
+        kind: adopted ? "adopted" : firstFrameOnly(clip) ? "open" : "end", label: adopted ? tx("wireFrame", "frame {index}", { index: source.frame }) : null });
     }
     // A still taken from a clip that does not end on that pose still shows where it came from.
     for (const pose of state.poses) {
       const source = adoptedFrom(pose);
       if (source && !state.clips.some((c) => c.id === source.clip && c.to === pose.id)) {
-        list.push({ from: keyOf("clip", source.clip), to: keyOf("pose", pose.id), kind: "adopted", label: `frame ${source.frame}` });
+        list.push({ from: keyOf("clip", source.clip), to: keyOf("pose", pose.id), kind: "adopted", label: tx("wireFrame", "frame {index}", { index: source.frame }) });
       }
     }
     return list;
@@ -319,10 +372,9 @@
   }
 
   function savePositions() {
-    clearTimeout(ui.saveTimer);
-    ui.saveTimer = setTimeout(() => {
-      api("/api/production/canvas", { positions: ui.positions }).catch((error) => toast(String(error.message || error), true));
-    }, 250);
+    // This is called after a completed drag or layout action, never while moving.
+    // Submit that final layout before a route change can dispose the mount.
+    if (!disposed) api("/api/production/canvas", { positions: ui.positions }).catch((error) => toast(String(error.message || error), true));
   }
 
   const viewKey = () => `spriteforge.canvas.view.${state.character.id}`;
@@ -367,8 +419,11 @@
     const up = (e) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      drags.delete(cancel);
       onEnd(e);
     };
+    const cancel = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    drags.add(cancel);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
@@ -449,11 +504,10 @@
   }
 
   async function connect(from, to, drop) {
-    const target = to || window.prompt(`New pose reached from ${from}. Its transition is generated from the ${from} still alone, `
-      + "and a frame of the result becomes the new pose's still. Pose id (lowercase letters, digits, _ or -):");
+    const target = to || window.prompt(tx("newPoseFrom", "New pose reached from {pose}. Its transition is generated from the {pose} still alone, and a frame of the result becomes the new pose's still. Pose id (lowercase letters, digits, _ or -):", { pose: from }));
     if (!target) return;
     const loop = target === from;
-    const id = window.prompt(loop ? `Loop clip on ${target}: clip id` : `Transition ${from} → ${target}: clip id`,
+    const id = window.prompt(loop ? tx("loopClipId", "Loop clip on {pose}: clip id", { pose: target }) : tx("transitionClipId", "Transition {from} → {to}: clip id", { from, to: target }),
       uniqueClipId(loop ? `${target}_loop` : `${from}_to_${target}`));
     if (!id) return;
     const origin = ui.positions[keyOf("pose", from)];
@@ -469,50 +523,20 @@
         : [Math.round((origin[0] + WIDTH.pose + end[0]) / 2 - WIDTH.clip / 2), Math.round((origin[1] + end[1]) / 2)];
       ui.selected = keyOf("clip", id);
       savePositions();
-    }, to ? `Clip ${id} added` : `Pose ${target} and clip ${id} added: generate a take, then take its last frame as the ${target} still`);
+    }, to ? tx("clipAdded", "Clip {clip} added", { clip: id }) : tx("poseAndClipAdded", "Pose {pose} and clip {clip} added: generate a take, then take its last frame as the {pose} still", { pose: target, clip: id }));
   }
 
   // ── Guide ────────────────────────────────────────────────────────────
-  const GUIDE = {
-    en: {
-      title: "Making clips on the canvas",
-      intro: "Each pose has one approved still, and every clip starts and ends on pose stills. That is what keeps clips aligned where they meet.",
-      steps: [
-        ["Approve the base still", "Click the base pose card, import its reference image in the side panel and approve it. Approval measures the head top and head centre that every other still must match."],
-        ["Give poses their stills", "Add a pose with + Pose. Import an image, generate one with an image editor, or take it from a transition (step 6)."],
-        ["Draw clips", "Drag from a pose's right port onto another pose for a transition, back onto the same pose for a loop, or onto empty space for a new pose reached by a first-frame-only transition."],
-        ["Write the clip's prompt", "Type the clip's own text on its card and save it as a new version. Shared text, such as the character and constraints like \"camera unchanged\", lives on the Prompts tab."],
-        ["Make takes", "Generate sends the stills and prompt to the clip's provider after you confirm. To generate by hand on a provider's website, download the generator inputs from the clip's side panel and import the video with Import take. Click a card to use or reject takes; rejected takes stay archived with your reason."],
-        ["Let a transition define the next pose", "On a first-frame-only transition, Last frame → pose still turns a take's last frame into a candidate still for the end pose. Approve it on the pose card; a dashed wire shows which clip and frame it came from. Then continue from that pose."],
-        ["Render and check", "Render the accepted take. Badges show missing or stale renders and the QA level. A render goes stale when its take, its settings or one of its stills changes."],
-      ],
-      wires: "Wires: pose → clip means the still is the clip's first frame. Clip → pose means the clip ends on that pose: solid when the still is sent as the last frame, dotted when the clip is generated from its first frame only, dashed when the pose's still was taken from one of the clip's takes.",
-      note: "Which clip plays when (labels, probabilities) is set later on the Review & graph page.",
-      close: "Close",
-      other: "中文",
-    },
-    zh: {
-      title: "在画布上制作片段",
-      intro: "每个姿态有一张批准的静帧，每个片段都从姿态静帧开始、在姿态静帧结束，片段相接处因此能对齐。",
-      steps: [
-        ["批准基准静帧", "点基准姿态的卡片，在右侧面板导入参考图并批准。批准时会测出头顶和头部中心，其他静帧都要和它对齐。"],
-        ["给姿态配静帧", "用 + Pose 添加姿态，然后导入图片、用图像编辑生成，或者从过渡里取一帧（第 6 步）。"],
-        ["连出片段", "从姿态卡右侧的接口拖出：拖到另一个姿态是过渡，拖回自己是循环，拖到空白处会新建一个姿态，并用只给首帧的过渡连过去。"],
-        ["写片段的 prompt", "在卡片上写这个片段自己的描述，保存为新版本。共用的部分（角色描述、\"镜头不变\"这类约束）在 Prompts 页。"],
-        ["生成 take", "点 Generate 并确认后，会把静帧和 prompt 发给这个片段的服务商。如果要在服务商网站上手动生成，就在片段的右侧面板下载生成器输入图，再用 Import take 导入视频。点卡片可以采用或弃用 take，弃用的会带原因存档。"],
-        ["让过渡定义下一个姿态", "只给首帧的过渡上，Last frame → 姿态 still 会把 take 的最后一帧变成终点姿态的候选静帧。在姿态卡上批准后，虚线会标出它来自哪个片段的第几帧。然后从这个姿态继续。"],
-        ["渲染并检查", "渲染采用的 take。徽标会显示缺渲染、已过期和 QA 等级；take、设置或任一静帧改变后，渲染会过期。"],
-      ],
-      wires: "连线：姿态 → 片段表示这张静帧是片段的首帧。片段 → 姿态表示片段停在这个姿态上：实线表示把它的静帧作为尾帧发送，点线表示只用首帧生成，虚线表示这个姿态的静帧取自该片段的某个 take。",
-      note: "哪个片段什么时候播放（标签、概率）在之后的 Review & graph 页设置。",
-      close: "关闭",
-      other: "English",
-    },
-  };
 
   function showGuide() {
-    const text = GUIDE[ui.lang] || GUIDE.en;
+    const text = environment.studio ? {
+      title: tx("guide.title", GUIDE.en.title), intro: tx("guide.intro", GUIDE.en.intro),
+      steps: GUIDE.en.steps.map(([title, body], index) => [tx(`guide.step${index}.title`, title), tx(`guide.step${index}.body`, body)]),
+      wires: tx("guide.wires", GUIDE.en.wires), note: tx("guide.note", GUIDE.en.note),
+      close: tx("guide.close", GUIDE.en.close), other: tx("guide.other", GUIDE.en.other),
+    } : GUIDE[ui.lang] || GUIDE.en;
     const swap = () => {
+      if (environment.studio) { environment.setLanguage(environment.language() === "zh-CN" ? "en" : "zh-CN"); return; }
       ui.lang = ui.lang === "zh" ? "en" : "zh";
       storage((s) => s.setItem("spriteforge.canvas.lang", ui.lang));
       showGuide();
@@ -526,12 +550,22 @@
       h("p", { class: "tiny" }, text.wires),
       h("p", { class: "tiny" }, text.note));
     guide.hidden = false;
+    $("canvasGuideBtn").setAttribute("aria-pressed", "true");
   }
 
   function hideGuide() {
     $("canvasGuide").hidden = true;
+    $("canvasGuideBtn").setAttribute("aria-pressed", "false");
     storage((s) => s.setItem("spriteforge.canvas.guideSeen", "1"));
   }
 
-  Object.assign(window, { setupCanvas, renderCanvas, clearCanvas });
-})();
+  return { setupCanvas, renderCanvas, clearCanvas, dispose() {
+    disposed = true;
+    listeners.abort();
+    for (const cancel of drags) cancel();
+    drags.clear();
+    clearTimeout(ui.viewTimer);
+    if (world) world.querySelectorAll("video").forEach((video) => video.pause());
+    clearCanvas();
+  } };
+} };
