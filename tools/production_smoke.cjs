@@ -194,8 +194,16 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.reload();
     await page.locator("#tabs button[data-tab='clips']").click();
     await page.locator("[data-clip='smile_talk']").click();
-    await page.waitForFunction(() => document.querySelector("#renderPreview")?.dataset.frame !== undefined);
-    assert.deepEqual(await page.locator("#renderPreview").evaluate((canvas) => [canvas.width, canvas.height]), widePreview.sourceSize);
+    // A completed-job refresh can replace the canvas between a readiness wait
+    // and a separate size read. Check selection, drawing and published size together.
+    await page.waitForFunction(expected => {
+      const detail = document.querySelector("#clipDetail");
+      const canvas = detail?.querySelector("#renderPreview");
+      return document.querySelector("#clipList .item.active")?.dataset.clip === "smile_talk"
+        && detail.querySelector("h2")?.textContent === "smile_talk"
+        && canvas?.dataset.frame !== undefined
+        && canvas.width === expected[0] && canvas.height === expected[1];
+    }, widePreview.sourceSize);
 
     await page.locator("#tabs button[data-tab='prompts']").click();
     const block = page.locator("textarea[data-block='video.loop']");
