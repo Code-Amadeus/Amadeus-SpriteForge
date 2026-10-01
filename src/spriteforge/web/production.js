@@ -18,6 +18,7 @@ let wasRunning = false;
 let disposed = false;
 let actionPending = false;
 let previewGeneration = 0;
+let maskGeneration = 0;
 let renderedLanguage = context && window.SFStudio.language;
 const fieldBaselines = new WeakMap();
 const tx = (key, fallback, params = {}) => {
@@ -449,7 +450,7 @@ function endpoint(poseId, label) {
     path ? h("img", { src: media(path) }) : badge(tx("stillNotApproved", "still not approved"), "missing"));
 }
 
-function settingsForm(clip) {
+function settingsForm(clip, group = null) {
   const fields = [
     ["provider", tx("provider", "Provider"), "select", clip.generation.provider,
       ["manual", ...Object.keys(state.tools.providers).filter((name) => state.tools.providers[name].kind === "video")]],
@@ -476,8 +477,15 @@ function settingsForm(clip) {
       ["off", ...Object.keys(state.character.mouthSets || {})]]);
     fields.push(["mouth_source", tx("mouthSource", "Closed mouth: shared, still, frame:N or pose:ID"), "text", sourceText(clip.mouth)]);
   }
+  const groups = {
+    generation: ["provider", "duration", "resolution", "seed", "input_scale", "last_frame"],
+    processing: ["register", "margin", "interpolate", "pingpong", "lock_head", "lock_tail", "edge_guard"],
+    playback: ["speed", "loop_mode"], mouth: ["mouth", "mouth_source"],
+  };
+  const visible = group ? fields.filter(([key]) => (groups[group] || []).includes(key)) : fields;
+  if (!visible.length) return h("p", { class: "tiny" }, tx("mouthOnlyLoops", "Mouth settings belong to speaking loops."));
   const inputs = {};
-  const form = h("div", { class: "form" }, fields.map(([key, label, type, value, options]) => {
+  const form = h("div", { class: "form" }, visible.map(([key, label, type, value, options]) => {
     const input = type === "select" ? h("select", {}, options.map((o) => h("option", { value: o }, o)))
       : h("input", { type, step: "any", value: type === "checkbox" ? null : value, checked: type === "checkbox" && value });
     if (type === "select") input.value = value;
@@ -497,6 +505,77 @@ function settingsForm(clip) {
   } }, tx("saveSettings", "Save settings"));
   return h("div", {}, form, h("div", { class: "row actions" }, save,
     h("span", { class: "tiny" }, tx("settingsStale", "Changing processing or playback makes the current render stale."))));
+}
+
+function mouthSetEditor(clip) {
+  const name = clip.mouth && clip.mouth.set;
+  const record = name && (state.character.mouthSets || {})[name];
+  if (!record) return h("p", { class: "tiny" }, tx("mouthChooseSet", "Choose a mouth set and save settings to edit its mask."));
+  const generation = maskGeneration;
+  const inputs = {};
+  const canvas = h("canvas", { class: "mouth-set-preview", id: "mouthSetPreview", width: state.character.canvas.width, height: state.character.canvas.height,
+    "aria-label": tx("mouthMaskPreview", "Mouth set overlay preview") });
+  const still = new Image();
+  const pose = state.poses.find((entry) => entry.id === clip.to);
+  const anchors = state.character.anchors || {};
+  const expected = pose && pose.expected || {};
+  const offsetX = expected.headCenterX === undefined ? 0 : expected.headCenterX - anchors.headCenterX;
+  const offsetY = expected.headTopY === undefined ? 0 : expected.headTopY - anchors.headTopY;
+  const draw = () => {
+    if (disposed || generation !== maskGeneration || !canvas.isConnected) return;
+    const painter = canvas.getContext("2d"); painter.clearRect(0, 0, canvas.width, canvas.height);
+    if (still.complete && still.naturalWidth) painter.drawImage(still, 0, 0);
+    const values = Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, Number(input.value)]));
+    if (!Object.values(values).every(Number.isFinite) || !(values.width > 0) || !(values.height > 0)) return;
+    const cx = canvas.width / 2 + values.cx + offsetX;
+    const cy = canvas.height / 2 + values.cy + offsetY;
+    painter.strokeStyle = "#63E5CA"; painter.fillStyle = "rgba(99,229,202,0.12)";
+    painter.beginPath(); painter.ellipse(cx, cy, values.width / 2, values.height / 2, 0, 0, Math.PI * 2); painter.fill(); painter.stroke();
+    painter.beginPath(); painter.moveTo(cx - values.width / 2, cy); painter.quadraticCurveTo(cx, cy + values.curve * values.height, cx + values.width / 2, cy); painter.stroke();
+    canvas.dataset.cx = String(cx); canvas.dataset.cy = String(cy); canvas.dataset.width = String(values.width); canvas.dataset.height = String(values.height);
+  };
+  const form = h("div", { class: "form" }, ["cx", "cy", "width", "height", "curve"].map((key) => {
+    const input = h("input", { type: "number", step: "any", required: true, min: ["width", "height"].includes(key) ? 0.0001 : null,
+      value: record[key], "data-setting": `mouthSet.${key}`, oninput: draw }); inputs[key] = input;
+    return h("label", {}, tx(`mouthField.${key}`, key), input);
+  }));
+  const save = h("button", { class: "primary", onclick: () => {
+    if (!Object.values(inputs).every((input) => input.reportValidity())) return;
+    const changes = Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, Number(input.value)]));
+    run(() => api("/api/production/mouth-set", { name, changes }), tx("mouthSetSaved", "Mouth set saved; affected renders are now stale."));
+  } }, tx("saveMouthSet", "Save mouth set"));
+  still.onload = draw;
+  const path = acceptedStill(clip.to);
+  if (path) still.src = media(path);
+  requestAnimationFrame(draw);
+  return h("div", { class: "mouth-set-editor" }, h("h3", {}, tx("mouthMaskTitle", "Mouth set: {name}", { name })), form,
+    h("p", { class: "tiny" }, tx("mouthPriorHint", "The ellipse is the expected mouth region. Render tracks the actual mouth movement.")), canvas, save);
+}
+
+function mountClipDetails(root, initialClip, initialTab) {
+  let clip = initialClip;
+  let tab = initialTab;
+  const drafts = new Map();
+  const key = () => `${clip.id}:${tab}`;
+  function paint(next, options = {}) {
+    if (root.childNodes.length) drafts.set(key(), captureFields(root));
+    if (next) { state = next.state; jobs = next.jobs; }
+    clip = options.clip || state.clips.find((entry) => entry.id === clip.id) || clip;
+    tab = options.tab || tab;
+    clearInterval(previewTimer); previewGeneration++; maskGeneration++;
+    if (tab === "qa") fill(root, h("h3", {}, tx("renderTakeQA", "Render QA · take {take}", { take: clip.render.take || "—" })),
+      clip.render.qa ? [qaList(clip.render.qa), seamTable(clip.render.qa)] : h("p", { class: "muted" }, tx("noRenderQA", "Render the accepted take to inspect QA.")));
+    else fill(root, h("h3", {}, tx("currentClipSettings", "Current clip settings")),
+      h("p", { class: "tiny" }, tx("currentClipSettingsHint", "These settings apply to the clip. Each version retains its recorded inputs and prompt.")), settingsForm(clip, tab), tab === "mouth" ? [mouthSetEditor(clip),
+      clip.render.mouth ? [h("h3", {}, tx("renderTakePreview", "Render preview · take {take}", { take: clip.render.take })), renderPanel(clip)] : null] : null);
+    rememberFields(root); restoreFields(root, drafts.get(key()) || []);
+  }
+  function pause() {
+    drafts.set(key(), captureFields(root));
+    previewGeneration++; maskGeneration++; clearInterval(previewTimer);
+  }
+  paint(null);
+  return { update: paint, pause, cleanup() { pause(); disposed = true; root.replaceChildren(); } };
 }
 
 function sourceText(mouth) {
@@ -575,6 +654,7 @@ async function playOutput(clip, canvas, render, silence) {
     let shown = 0;
     let hold = 0;
     frame.onload = () => {
+      if (disposed || generation !== previewGeneration || !canvas.isConnected) return;
       // Use the published frame's canvas, including margins. Clip settings may already
       // have changed while this older render is still being reviewed.
       if (canvas.width !== frame.naturalWidth) canvas.width = frame.naturalWidth;
@@ -847,6 +927,7 @@ canvas = window.SFProductionCanvas.create({ $, h, fill, badge, api, run, toast, 
 ({ setupCanvas, renderCanvas, clearCanvas } = canvas);
 return {
   bootstrapLegacy,
+  mountClipDetails,
   mount(tab) { activeTab = tab; if (tab === "canvas") setupCanvas(); renderActive(); if (tab === "prompts") rememberFields($("promptList")); },
   update(next) {
     const changed = state !== next.state || renderedLanguage !== window.SFStudio.language;
@@ -858,7 +939,7 @@ return {
       renderPrompts(); rememberFields($("promptList")); restoreFields($("promptList"), drafts);
     }
   },
-  dispose() { disposed = true; previewGeneration++; clearTimeout(jobTimer); clearInterval(previewTimer); canvas.dispose(); },
+  dispose() { disposed = true; previewGeneration++; maskGeneration++; clearTimeout(jobTimer); clearInterval(previewTimer); canvas.dispose(); },
 };
 }
 window.SFProduction = { create: createProduction };

@@ -474,9 +474,10 @@
 
   async function poll() {
     try {
-      const hadRunning = runningJobs().length > 0;
+      const previous = new Map(jobs.map((job) => [job.id, job.status]));
       jobs = (await api("/api/production/jobs")).jobs;
-      if (hadRunning && !runningJobs().length) await refresh({ preserveModules: true });
+      const finished = jobs.some((job) => previous.get(job.id) === "running" && job.status !== "running");
+      if (finished) await refresh({ preserveModules: true });
       else { updateMounted(); schedulePoll(); }
     } catch (error) { toast(String(error.message || error), true); }
   }

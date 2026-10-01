@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import math
 import shutil
+from copy import deepcopy
 from pathlib import Path
 
 from ..graph import validate_graph
 from ..workspace import atomic_json, read_json, resolve_asset
 from . import prompts
 from .records import (bound_clip, canvas_size, check_id, clip_settings, create_character, create_clip, create_pose,
-                      list_owners, list_takes, load_character, load_owner, output_root, production_dir, read_render,
+                      list_owners, list_takes, load_character, load_owner, output_root, owner_dir, production_dir, read_render,
                       render_freshness, save_character, save_owner, take_status)
 from .mouth import default_set
 from .providers import IMAGE_PROVIDERS, PROVIDERS, provider_status
@@ -64,6 +65,30 @@ def add_clip(workspace: Path, clip_id: str, source: str, target: str, phase: str
     prompts.ensure_subject(library, clip["prompt"]["subject"], hint)
     prompts.save_library(workspace, library)
     return clip
+
+
+def add_variant(workspace: Path, source_id: str, clip_id: str) -> dict:
+    """Create a sibling clip and subject block; takes and renders stay with their owner."""
+    source = load_owner(workspace, "clip", source_id)
+    path = owner_dir(workspace, "clip", clip_id) / "clip.json"
+    if path.parent.exists():
+        raise ValueError(f"Clip {clip_id} already exists")
+    for pose_id in (source["from"], source["to"]):
+        load_owner(workspace, "pose", pose_id)
+    library = prompts.load_library(workspace)
+    subject = source["prompt"]["subject"]
+    text = prompts.current(library, subject)["text"]
+    clone = {"format": source["format"], "id": clip_id,
+             **deepcopy({key: source[key] for key in ("kind", "from", "to", "phase", "generation", "processing",
+                                                     "playback", "mouth")}),
+             "prompt": {"template": source["prompt"]["template"], "subject": f"clip.{clip_id}"},
+             "acceptedTake": None, "notes": ""}
+    clip_settings(clone)
+    prompts.set_block(library, clone["prompt"]["subject"], text, library["blocks"][subject].get("description"))
+    # Publish the subject first so a visible clip never references a missing block.
+    prompts.save_library(workspace, library)
+    save_owner(workspace, "clip", clone)
+    return clone
 
 
 def set_clip(workspace: Path, clip_id: str, *, mouth: str | None = None, mouth_source: str | None = None,
@@ -134,9 +159,12 @@ def set_closed_mouth(workspace: Path, source_pose: str | None, *, pose_id: str |
 
 
 def _summary(owner: dict, take: dict) -> dict:
+    from .clips import generation_snapshot
     keep = ("id", "createdAt", "state", "source", "prompt", "inputs", "media", "normalization", "qa", "rejected",
-            "history", "error")
-    return {**{k: take.get(k) for k in keep}, "status": take_status(owner, take)}
+            "history", "error", "basedOn")
+    return {**{k: take.get(k) for k in keep}, "status": take_status(owner, take),
+            "note": take.get("note", (take.get("source") or {}).get("note", "")),
+            "generation": generation_snapshot(take)}
 
 
 def _takes(workspace: Path, kind: str, owner: dict) -> list[dict]:
@@ -153,6 +181,7 @@ def _preview(render, library: dict, character: dict, owner: dict) -> dict:
 
 
 def overview(workspace: Path) -> dict:
+    from .clips import clip_cost_estimate
     from .studio import studio_summary
     from .tools import ui_settings
     character = load_character(workspace)
@@ -171,7 +200,8 @@ def overview(workspace: Path) -> dict:
     for clip in list_owners(workspace, "clip"):
         state, reasons = render_freshness(workspace, clip)
         render = read_render(workspace, clip["id"])
-        clips.append({**clip, "takes": _takes(workspace, "clip", clip),
+        takes = _takes(workspace, "clip", clip)
+        clips.append({**clip, "takes": takes, "costEstimate": clip_cost_estimate(takes, clip["generation"]),
                       "promptPreview": _preview(prompts.clip_prompt, library, character, clip), "output": output_root(clip["id"]),
                       "render": {"state": state, "reasons": reasons, **({k: render.get(k) for k in (
                           "take", "frameCount", "frameIntervalMs", "loopMode", "phase", "renderedAt", "durationS", "qa", "mouth")} if render else {})}})

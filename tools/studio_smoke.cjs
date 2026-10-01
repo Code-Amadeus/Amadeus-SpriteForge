@@ -66,7 +66,8 @@ const { spawn, spawnSync } = require("node:child_process");
       await link.click();
       await page.waitForFunction(value => window.SFStudio?.route.stage === value, stage);
       await page.locator("#studioMain h1").waitFor();
-      if (stage !== "overview") assert.ok((await page.locator("#studioMain h1").innerText()).includes(chinese[stage]));
+      if (stage === "clips") assert.ok((await page.locator(".clip-studio").getAttribute("aria-label")).includes(chinese[stage]));
+      else if (stage !== "overview") assert.ok((await page.locator("#studioMain h1").innerText()).includes(chinese[stage]));
       await page.screenshot({ path: path.join(screenshots, `studio-${stage}-zh.png`) });
     }
     await page.locator("#studioTopbar").getByRole("button", { name: "EN", exact: true }).click();
@@ -102,6 +103,24 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.setViewportSize({ width: 1280, height: 800 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Studio should fit its minimum viewport");
     await page.screenshot({ path: path.join(screenshots, "studio-overview-1280.png") });
+    // One completed owner must refresh while a different owner's job still runs.
+    const jobSnapshot = await (await page.request.get(url + "/api/production")).json();
+    let firstFinished = false;
+    const fakeJobs = () => ["smile_in", "idle_loop"].map((owner, index) => ({
+      id: `fixture-${index}`, action: "render", kind: "clip", owner, startedAt: "2026-10-02T00:00:00Z",
+      status: index === 0 && firstFinished ? "succeeded" : "running", log: [], result: null, error: null,
+    }));
+    await page.route("**/api/production/jobs", route => route.fulfill({ json: { ok: true, jobs: fakeJobs() } }));
+    await page.route("**/api/production", route => route.fulfill({ json: {
+      ...jobSnapshot, character: { ...jobSnapshot.character, displayName: firstFinished ? "Updated after one completed job" : "Two running jobs" },
+    } }));
+    await page.reload();
+    await page.getByRole("heading", { name: "Two running jobs", exact: true }).waitFor();
+    firstFinished = true;
+    await page.getByRole("heading", { name: "Updated after one completed job", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.SFStudio.jobs.filter(job => job.status === "running").length), 1);
+    await page.unroute("**/api/production/jobs");
+    await page.unroute("**/api/production");
     await page.route("**/api/production", route => route.fulfill({ json: { ok: true, initialized: false } }));
     await page.reload();
     await page.getByRole("heading", { name: "Initialize a production workspace" }).waitFor();

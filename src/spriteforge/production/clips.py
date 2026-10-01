@@ -12,8 +12,10 @@ first frame only: its end pose has no still yet and takes one from the result
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from pathlib import Path
+from statistics import median
 
 import cv2
 import numpy as np
@@ -25,7 +27,7 @@ from .media import VIDEO_SUFFIXES, copy_durable, encode_png, read_bgra, sorted_p
 from .prompts import require_complete
 from .providers import VideoJob, get_provider
 from .records import (canvas_size, clip_settings, load_character, load_owner, load_take, new_take, save_take,
-                      still_path, take_dir)
+                      still_path, take_dir, recorded_credit_delta)
 from .stills import still_input, still_prompt
 from .tools import load_tools
 
@@ -103,6 +105,10 @@ def prepare(workspace: Path, kind: str, owner_id: str, target: Path) -> list[Pat
 
 def import_clip_take(workspace: Path, clip_id: str, media: Path, *, fps: float | None = None, note: str = "") -> dict:
     character, clip = load_character(workspace), load_owner(workspace, "clip", clip_id)
+    if not isinstance(note, str):
+        raise ValueError("A take note must be text")
+    if fps is not None and (isinstance(fps, bool) or not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps <= 0):
+        raise ValueError("Frame rate must be a finite positive number")
     media = Path(media)
     frames = sorted_pngs(media) if media.is_dir() else []
     if media.is_dir() and (not frames or not fps or fps <= 0):
@@ -136,9 +142,71 @@ def import_clip_take(workspace: Path, clip_id: str, media: Path, *, fps: float |
     return take
 
 
+def generation_snapshot(take: dict) -> dict | None:
+    """Read duration/resolution from the exact request shapes our video adapters record.
+
+    Wan records ``parameters``, Seedance records top-level fields, and Wan CLI
+    records its argument list. Imported media and unknown request shapes stay
+    unknown; current clip settings are never used to reconstruct history.
+    """
+    source = take.get("source") or {}
+    request = source.get("request") or {}
+    if not isinstance(request, dict):
+        return None
+    provider = source.get("provider")
+    if provider == "wan":
+        values = request.get("parameters") or {}
+    elif provider == "seedance":
+        values = request
+    elif provider == "wan-cli":
+        command = request.get("command") or []
+        if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
+            return None
+        values = {part.removeprefix("--"): command[index + 1] for index, part in enumerate(command[:-1])
+                  if part in {"--duration", "--resolution"}}
+    else:
+        return None
+    if not isinstance(values, dict):
+        return None
+    duration, resolution = values.get("duration"), values.get("resolution")
+    if provider == "wan-cli" and isinstance(duration, str) and duration.isdigit():
+        duration = int(duration)
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1 \
+            or not isinstance(resolution, str) or not resolution:
+        return None
+    return {"provider": provider, "durationS": duration, "resolution": resolution.upper(), "seed": values.get("seed")}
+
+
+def clip_cost_estimate(takes: list[dict], generation: dict) -> dict | None:
+    """Median of the last five complete recorded credit deltas for the same request spec."""
+    costs = []
+    for take in sorted(takes, key=lambda take: (take["createdAt"], take["id"]), reverse=True):
+        recorded = take.get("generation")
+        if not recorded or any(recorded.get(key) != value for key, value in (
+                ("provider", generation.get("provider")), ("durationS", generation.get("durationS")),
+                ("resolution", str(generation.get("resolution", "")).upper()))):
+            continue
+        cost = recorded_credit_delta(take.get("source") or {})
+        if cost is None:
+            continue
+        costs.append(cost)
+        if len(costs) == 5:
+            break
+    return {"credits": median(costs), "samples": len(costs)} if costs else None
+
+
+def validate_generation_metadata(workspace: Path, clip_id: str, based_on: str | None, note: object) -> None:
+    """A source version belongs to this clip; metadata is checked before any paid call."""
+    if not isinstance(note, str):
+        raise ValueError("A take note must be text")
+    if based_on is not None:
+        load_take(workspace, "clip", clip_id, based_on)
+
+
 def generate_clip_take(workspace: Path, clip_id: str, *, provider: str | None = None, wait: bool = True,
-                       dry_run: bool = False, log=print) -> dict:
+                       dry_run: bool = False, based_on: str | None = None, note: str = "", log=print) -> dict:
     character, clip, tools = load_character(workspace), load_owner(workspace, "clip", clip_id), load_tools(workspace)
+    validate_generation_metadata(workspace, clip_id, based_on, note)
     name = provider or clip["generation"]["provider"]
     if name == "manual":
         raise ValueError("This clip is generated manually: run 'production prepare', then 'production take import'")
@@ -150,7 +218,8 @@ def generate_clip_take(workspace: Path, clip_id: str, *, provider: str | None = 
                    int(generation["durationS"]), str(generation["resolution"]), generation.get("seed"))
     request = adapter.preview(job)
     if dry_run:
-        return {"provider": name, "model": adapter.model, "request": request, "prompt": snapshot}
+        return {"provider": name, "model": adapter.model, "request": request, "prompt": snapshot,
+                "basedOn": based_on, "note": note}
     require_complete(snapshot)
     adapter.key()  # a missing key or login fails before a take is recorded
     source = {"provider": name, "model": adapter.model, "request": request}
@@ -158,6 +227,7 @@ def generate_clip_take(workspace: Path, clip_id: str, *, provider: str | None = 
     if balance is not None:
         source["balanceBefore"] = balance
     take, directory = new_take(workspace, "clip", clip_id, source)
+    take.update(basedOn=based_on, note=note)
     take["prompt"] = {**snapshot, "negativeSent": bool(job.negative)}
     _store_inputs(directory, first, last, inputs)
     take["inputs"] = inputs

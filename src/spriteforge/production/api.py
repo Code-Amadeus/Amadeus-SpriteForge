@@ -14,8 +14,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..workspace import resolve_asset
-from .records import decide, production_dir
+from ..workspace import png_frames, resolve_asset
+from .records import decide, production_dir, set_take_note
 
 MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
                ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime"}
@@ -87,6 +87,28 @@ class ProductionApi:
         if route == "clip":
             return {"clip": project.add_clip(self.workspace, str(body.get("id")), str(body.get("from")),
                                              str(body.get("to")), body.get("phase") or None)}
+        if route == "variant":
+            with self.lock:
+                return {"clip": project.add_variant(self.workspace, body.get("from"), body.get("id"))}
+        if route == "take-note":
+            with self.lock:
+                return {"take": set_take_note(self.workspace, body.get("kind"), body.get("owner"),
+                                              body.get("take"), body.get("note"))}
+        if route == "mouth-set":
+            changes = body.get("changes")
+            fields = {"cx", "cy", "width", "height", "curve"}
+            if not isinstance(changes, dict) or set(changes) - fields:
+                raise ValueError("Mouth set changes only accept cx, cy, width, height and curve")
+            with self.lock:
+                return {"mouthSet": project.set_mouth_set(self.workspace, body.get("name"), **changes)}
+        if route == "import-frames":
+            from .clips import import_clip_take
+            path = resolve_asset(self.workspace, body.get("path"))
+            if not path.is_dir():
+                raise ValueError("Frame import needs a workspace folder")
+            png_frames(self.workspace, path)  # validate every resolved PNG before copying any source
+            return {"take": import_clip_take(self.workspace, body.get("clip"), path, fps=body.get("fps"),
+                                              note=body.get("note", ""))}
         if route == "graph-sync":
             return project.graph_sync(self.workspace, add_missing=bool(body.get("addMissing")))
         if route == "canvas":
@@ -96,14 +118,16 @@ class ProductionApi:
             kind = "pose" if body.get("pose") else "clip"
             adopt = {"clip": str(body.get("clip")), "frame": body.get("frame") or "last"} if kind == "pose" else None
             return {"job": self.start(str(body.get("action")), kind, str(body.get(kind)), body.get("provider"),
-                                      body.get("take"), adopt)}
+                                      body.get("take"), adopt, based_on=body.get("basedOn"), note=body.get("note", ""))}
         raise KeyError(route)
 
     def start(self, action: str, kind: str, owner: str, provider: str | None = None, take_id: str | None = None,
-              adopt: dict | None = None) -> dict:
+              adopt: dict | None = None, *, based_on: str | None = None, note: str = "") -> dict:
         """``adopt`` names the clip and frame whose take (``take_id``) a pose job takes its still from."""
         from .records import load_owner
         load_owner(self.workspace, kind, owner)
+        if (based_on is not None or note != "") and (kind != "clip" or action != "generate"):
+            raise ValueError("basedOn and note only apply to clip generation jobs")
         if kind == "pose" and action == "adopt" and adopt:
             from .stills import adopt_frame
 
@@ -125,10 +149,12 @@ class ProductionApi:
             def work(log):
                 return render_clip(self.workspace, owner, log=log)["qa"]["status"]
         elif action == "generate":
-            from .clips import generate_clip_take
+            from .clips import generate_clip_take, validate_generation_metadata
+            validate_generation_metadata(self.workspace, owner, based_on, note)
 
             def work(log):
-                return generate_clip_take(self.workspace, owner, provider=provider or None, log=log)["id"]
+                return generate_clip_take(self.workspace, owner, provider=provider or None, based_on=based_on,
+                                          note=note, log=log)["id"]
         elif action == "resume":
             from .clips import resume_clip_take
 

@@ -7,8 +7,10 @@ is no third copy of the decision that could disagree with them.
 """
 from __future__ import annotations
 
+import math
 import re
 import secrets
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,7 @@ OWNERS = {"pose": "poses", "clip": "clips"}
 PHASES = ("in", "loop", "out")
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 TAKE_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
+TAKE_WRITE_LOCK = threading.Lock()
 # Reference framing measured on the shipped Kurisu pack: visible width is 71% of the
 # canvas width and the head top sits at 2% of the canvas height.
 DEFAULT_FRAMING = {"visibleWidth": 0.71, "headTop": 0.02}
@@ -33,6 +36,19 @@ DEFAULT_TOLERANCES = {"headTopPx": 3, "headCenterPx": 3, "areaPct": 15}
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def recorded_credit_delta(source: dict) -> float | int | None:
+    """A balance increase cannot establish generation cost (it may be a top-up)."""
+    balances = [source.get(key) for key in ("balanceBefore", "balanceAfter")]
+    if not all(isinstance(balance, dict) for balance in balances):
+        return None
+    values = [balance.get("credits") for balance in balances]
+    if not all(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+               for value in values):
+        return None
+    delta = values[0] - values[1]
+    return delta if math.isfinite(delta) and delta >= 0 else None
 
 
 def check_id(value: object, what: str) -> str:
@@ -163,6 +179,7 @@ def new_take(workspace: Path, kind: str, owner_id: str, source: dict[str, Any]) 
         take = {"format": TAKE_FORMAT, "id": take_id, "owner": {"kind": kind, "id": owner_id},
                 "createdAt": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
                 "state": "created", "source": source, "prompt": None, "inputs": {}, "media": None,
+                "basedOn": None, "note": source.get("note", ""),
                 "rejected": None, "history": [], "error": None}
         return take, directory
     raise ValueError("Could not allocate a unique take id")
@@ -176,8 +193,31 @@ def load_take(workspace: Path, kind: str, owner_id: str, take_id: str) -> dict:
 
 
 def save_take(workspace: Path, take: dict) -> None:
+    """Producer updates preserve the separately editable on-disk annotation.
+
+    The short lock coordinates threads in this local server. As with existing
+    owner/decision writes, simultaneous separate CLI processes are not managed.
+    """
     owner = take["owner"]
-    atomic_json(take_dir(workspace, owner["kind"], owner["id"], take["id"]) / "take.json", take)
+    path = take_dir(workspace, owner["kind"], owner["id"], take["id"]) / "take.json"
+    with TAKE_WRITE_LOCK:
+        if path.is_file():
+            existing = read_json(path)
+            if "note" in existing:
+                take["note"] = existing["note"]
+        atomic_json(path, take)
+
+
+def set_take_note(workspace: Path, kind: str, owner_id: str, take_id: str, note: object) -> dict:
+    """Change the editable annotation without touching the take's provenance or snapshots."""
+    if not isinstance(note, str):
+        raise ValueError("A take note must be text")
+    load_owner(workspace, kind, owner_id)
+    with TAKE_WRITE_LOCK:
+        take = load_take(workspace, kind, owner_id, take_id)
+        take["note"] = note
+        atomic_json(take_dir(workspace, kind, owner_id, take_id) / "take.json", take)
+    return take
 
 
 def list_takes(workspace: Path, kind: str, owner_id: str) -> list[dict]:
@@ -206,6 +246,8 @@ def decide(workspace: Path, kind: str, owner_id: str, take_id: str, action: str,
     between the owner and take files leaves a plain, unaccepted candidate."""
     owner = load_owner(workspace, kind, owner_id)
     take = load_take(workspace, kind, owner_id, take_id)
+    if action == "reject" and kind == "clip" and (not isinstance(reason, str) or not reason.strip()):
+        raise ValueError("Rejecting a clip take requires a reason")
     reason = str(reason or "").strip()
     if action == "accept":
         if take.get("state") != "ready":

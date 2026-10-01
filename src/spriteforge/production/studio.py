@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..workspace import read_json, resolve_asset
-from .records import bound_clip, output_root, production_dir
+from .records import bound_clip, output_root, production_dir, recorded_credit_delta
 
 ISSUE_LEVELS = ("fail", "fix", "watch")
 
@@ -61,7 +61,7 @@ the sum of retained renders, not a history of overwritten processing runs.
                 if stamp is not None and stamp <= at and balance is not None:
                     balance_records.append((stamp, take["id"], balance))
                 if stamp is not None and since <= stamp <= at:
-                    wan.append(None if before is None or after is None else before - after)
+                    wan.append(recorded_credit_delta(source))
             if stamp is not None and since <= stamp <= at and source.get("provider") == "gpt-image" \
                     and (take.get("media") or {}).get("source"):
                 images += 1
