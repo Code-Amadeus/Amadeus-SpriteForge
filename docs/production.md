@@ -27,8 +27,12 @@ need the `qa` extra (OpenCV, NumPy) and FFmpeg for video takes.
 ## Studio
 
 The staged Studio interface is available at `/studio`. Its shared shell follows
-the dark green HTML prototype: production stages in the left rail, an Overview
-matrix, and Canvas, Prompts, Jobs and Settings tools. During the rollout,
+the dark green HTML prototype. **Generate & QA** and **Edit assets** are separate
+views, following the earlier local tools' division of work. Generate & QA has two
+ways to operate on the same workspace: the guided **Studio** and a **Node workflow**
+view. Generating or importing candidates, processing and per-asset QA happen on
+the production side. Approved assets feed graph editing, playback and export;
+assembly seams and graph timing are checked there. During the rollout,
 `/production` and `/` remain available with their existing behavior.
 
 The Overview reads the same pose, take, render and graph records as the CLI.
@@ -58,6 +62,12 @@ spriteforge production settings --workspace W --batch-confirm-threshold 3
 The confirmation threshold does not authorize generation. Generating media still
 requires an explicit user action; tests use synthetic assets and fake providers.
 Studio does not install character packs into Amadeus or launch it.
+
+The view switch is navigation only. It neither copies a workspace nor creates a
+second acceptance record. The editing Overview lists approved stills with current
+anchors and accepted clips with current, non-failing QA; pending and failed
+candidates remain on the production side. A return-to-QA link opens their existing
+pose or clip. The editing view keeps provider controls out of graph composition.
 
 Browser acceptance: `node tools/studio_smoke.cjs` uses a synthetic production
 workspace and writes 1440×900 English/Chinese screenshots to `test-results/`.
@@ -102,6 +112,47 @@ Credit estimates use the median of at most five recent complete balance deltas
 with the same provider, duration and resolution. Unknown history and balance
 increases do not become a cost estimate. Every generation remains an explicit
 action with its cost type shown, and failed requests are not silently retried.
+
+### Expressions: concepts and final stills
+
+`#/expressions/<pose>` keeps concept selection separate from approved geometry.
+A concept sheet is one image split into a 3×2 or 2×2 grid. Its actual size is
+recorded, a uniform outer border is removed before splitting, and each cell is
+saved as PNG. The original source image is retained. A grid can contain fewer
+poses than cells; an unassigned cell needs a pose before it can be picked.
+
+The newest ready sheet is current. A failed request does not hide the previous
+sheet. Older sheets retain their images and assignments, while their cells can
+still be picked. Re-rolling one current cell requests one image and keeps the
+previous image in that cell's history. Descriptions use the existing versioned
+`pose.<id>` prompt block, shared with final stills.
+
+A final still edits the approved base image with the picked cell as a second
+reference. Its take retains `reference.png`, its hash and sheet/cell provenance.
+The result follows the existing alpha, normalization and QA process. A different
+generated size is normal candidate behavior: the original remains available for
+inspection or external refinement, and approval still depends on geometry QA.
+Concept cells never become approved stills directly.
+
+The panel also retains image import, manual input preparation, expected head
+offsets and shared closed-mouth selection. Failed QA blocks approval; a watch
+result requires confirmation. Planning clips creates records for approved poses
+without generating media. Batch generation lists the count and cost type before
+confirmation and serializes the explicitly requested jobs for each provider.
+
+```text
+spriteforge production concept new --workspace W --poses angry,blink --grid 3x2 --provider qwen-image --dry-run
+spriteforge production concept import --workspace W sheet.png --poses angry,blink --grid 3x2
+spriteforge production concept pick --workspace W SHEET 0
+spriteforge production concept reroll --workspace W SHEET 0 --provider qwen-image
+spriteforge production generate --workspace W --pose angry --provider qwen-image --concept SHEET:0
+```
+
+New pose names retain the prompt-completeness gate. Fill their descriptions and
+the shared concept/reference prompt blocks before requesting paid generation.
+All those edits add ordinary prompt versions; generating a sheet does not invent
+missing subject text. `tools/expressions_smoke.cjs` exercises the complete flow
+against a local fake image provider, including outputs of a different size.
 
 ## Invariants
 
@@ -487,8 +538,9 @@ its own per-label mask adjustments.
 | `wan` | `https://dashscope.aliyuncs.com/api/v1`, model `wan2.7-i2v-2026-04-25` | `DASHSCOPE_API_KEY` | `media` = `first_frame` + `last_frame` data URLs (`first_frame` alone for a first-frame-only transition), `duration`, `resolution`, `prompt_extend: false`, optional `seed` and `negative_prompt`; `X-DashScope-Async: enable` |
 | `seedance` | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedance-1-5-pro-251215` | `ARK_API_KEY` | `content` = text + `first_frame` + `last_frame` (no `last_frame` for a first-frame-only transition), `ratio: adaptive`, `duration`, `resolution`; no negative prompt (takes record it was not sent) |
 | `wan-cli` | Wan's CLI (`@wan-ai/cli`), `command` in tools.json; model `wan3.0` (the CLI's default) | the CLI's own login (`wan auth login`) | `wan frame2video --first-frame F [--last-frame L] --prompt P --duration D --resolution R --audio-output=false --output json`; billed to the wan.video account's credits; the result is saved without the watermark; no negative prompt or seed |
-| `qwen-image` (stills) | `https://dashscope.aliyuncs.com/api/v1`, model `qwen-image-edit-plus` | `DASHSCOPE_API_KEY` | one user message with the base still data URL and the prompt; `n: 1`, `prompt_extend: false`, `watermark: false`, optional `negative_prompt` and `size` (`W*H`); synchronous, the result URL is fetched at once |
-| `seedream` (stills) | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedream-4-0-250828` | `ARK_API_KEY` | `prompt`, `image` = base still data URL, `size`, `response_format: b64_json`, `sequential_image_generation: disabled`, `watermark: false`; no negative prompt |
+| `qwen-image` (images) | `https://dashscope.aliyuncs.com/api/v1`, model `qwen-image-edit-plus` | `DASHSCOPE_API_KEY` | one user message with the base image, optional reference images and the prompt; `n: 1`, `prompt_extend: false`, `watermark: false`, optional `negative_prompt` and `size` (`W*H`); synchronous, the result URL is fetched at once |
+| `seedream` (images) | `https://ark.cn-beijing.volces.com/api/v3`, model `doubao-seedream-4-0-250828` | `ARK_API_KEY` | `prompt`, `image` = base still data URL or an array of base plus references, `size`, `response_format: b64_json`, `sequential_image_generation: disabled`, `watermark: false`; no negative prompt |
+| `gpt-image` (images) | Codex CLI `command` in tools.json; native image tool | the CLI's own login; checked on request | one isolated CLI call with the base and optional references, billed to plan quota; actual PNG output is validated and retained |
 
 An image provider's `size` in tools.json is omitted (the provider's default; Qwen keeps
 the input's aspect ratio), `match` (the canvas aspect ratio at a 2048 px long side; the
@@ -528,6 +580,33 @@ Generation checks `wan auth status` before recording a take and records the acco
 what it cost. Every call runs in an empty folder (the CLI reads a `.env` from its
 working directory) with the skill installation switched off. The result is saved
 with `wan result get --save`, which downloads the watermark-free file.
+
+### GPT Image through Codex (plan quota)
+
+Configure `providers.gpt-image.command` in the workspace's `production/tools.json`
+to point to a Codex CLI executable. Image generation uses the CLI's own login and
+plan quota. SpriteForge does not read or write Codex configuration or credentials.
+Each explicit request runs once in an empty temporary directory with
+`--ignore-user-config`, `--ephemeral` and `--skip-git-repo-check`; there is no
+automatic retry. The timeout is configurable. Tests use a fake CLI and never
+consume quota.
+
+The authorized local spike used Codex CLI 0.159.2 for two image calls. One produced
+a 1536×1024 concept sheet. The second accepted a base image plus an expression
+reference, returning a valid 1086×1448 image when 768×1024 was requested. Exact
+output dimensions are therefore a request, not an acceptance guarantee. The
+adapter verifies the image bytes and records their actual size. A structured
+final response identifies the output file, restricted to the generated-image
+directory of the native `thread.started` event from that invocation.
+
+This CLI version does not accept `--ignore-user-config` on `login status`.
+Consequently the readiness indicator means **CLI available**, with login and
+quota unverified until the explicit request. Authentication or quota failure is
+reported by that request and retained as a failed attempt, following the existing
+take lifecycle. This is the bounded specification deviation needed to preserve
+configuration isolation without an extra model call or credential-file reads.
+No quota-exhaustion or logged-out real call was attempted; those error paths are
+covered by fake-CLI tests.
 
 ## Importing an existing character
 

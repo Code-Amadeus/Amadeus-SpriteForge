@@ -1,6 +1,7 @@
 "use strict";
 (() => {
   const stages = ["overview", "expressions", "clips", "workflows", "review", "behavior", "export"];
+  const modeStages = { produce: ["overview", "expressions", "clips", "review"], edit: ["overview", "behavior", "export"] };
   const tools = ["canvas", "prompts", "jobs", "settings"];
   const renderers = new Map();
   const toolRenderers = new Map();
@@ -10,6 +11,8 @@
   let state = null;
   let jobs = [];
   let route = readRoute();
+  const lastModeRoute = { produce: null, edit: null };
+  let lastGuidedRoute = null;
   let language = preference("spriteforge.lang") === "zh-CN" ? "zh-CN" : "en";
   let mainMount = null;
   let drawerMount = null;
@@ -96,14 +99,32 @@
     let stage = [...stages, "canvas"].includes(parts[0]) ? parts[0] : "overview";
     let id = null;
     try { id = parts[1] ? decodeURIComponent(parts[1]) : null; } catch (_) { /* An invalid id selects the stage without a detail. */ }
-    const tool = new URLSearchParams(query).get("tool");
+    const parameters = new URLSearchParams(query);
+    const tool = parameters.get("tool");
     // Canvas has its own full-main route so a drawer can overlay it and reload there.
     if (tool === "canvas") { stage = "canvas"; id = null; }
-    return { stage, id: stage === "behavior" ? (id === "stats" ? "stats" : "graph") : id, tool: tool !== "canvas" && tools.includes(tool) ? tool : null };
+    const mode = ["behavior", "export"].includes(stage) || stage === "overview" && parameters.get("mode") === "edit" ? "edit" : "produce";
+    return { stage, mode, id: stage === "behavior" ? (id === "stats" ? "stats" : "graph") : id, tool: tool !== "canvas" && tools.includes(tool) ? tool : null };
   }
 
   function routeHash(value = route, tool = value.tool) {
-    return "#/" + value.stage + (value.id ? "/" + encodeURIComponent(value.id) : "") + (tool ? "?tool=" + encodeURIComponent(tool) : "");
+    const query = new URLSearchParams();
+    if (value.stage === "overview" && value.mode === "edit") query.set("mode", "edit");
+    if (tool) query.set("tool", tool);
+    return "#/" + value.stage + (value.id ? "/" + encodeURIComponent(value.id) : "") + (query.size ? "?" + query : "");
+  }
+
+  function setMode(mode) {
+    if (!["produce", "edit"].includes(mode) || mode === route.mode) return;
+    lastModeRoute[route.mode] = { ...route, tool: null };
+    navigate(routeHash(lastModeRoute[mode] || { stage: mode === "edit" ? "behavior" : "overview", id: mode === "edit" ? "graph" : null, mode }, null));
+  }
+
+  function setGenerationView(view) {
+    if (view === "workflow") {
+      if (route.mode === "produce" && route.stage !== "workflows") lastGuidedRoute = { ...route, tool: null };
+      navigate("#/workflows");
+    } else if (view === "studio" && route.stage === "workflows") navigate(routeHash(lastGuidedRoute || { stage: "overview", mode: "produce" }, null));
   }
 
   function navigate(hash) {
@@ -120,7 +141,7 @@
   }
 
   function context(root) {
-    return { root, state, jobs, route: { ...route }, t, h, api, refresh, navigate, toast, run };
+    return { root, state, jobs, route: { ...route }, mode: route.mode, setMode, t, h, api, refresh, navigate, toast, run };
   }
 
   function unmount(mount) {
@@ -181,7 +202,7 @@
   function renderChrome() {
     const focused = document.activeElement;
     const focusData = focused instanceof HTMLElement && (byId("studioSidebar").contains(focused) || byId("studioTopbar").contains(focused))
-      ? ["stage", "tool", "lang"].map((key) => focused.dataset[key] ? [key, focused.dataset[key]] : null).find(Boolean) : null;
+      ? ["stage", "tool", "lang", "mode", "generationView"].map((key) => focused.dataset[key] ? [key, focused.dataset[key]] : null).find(Boolean) : null;
     document.documentElement.lang = language;
     document.title = t("shell.title");
     document.querySelector(".skip-link").textContent = t("shell.skip");
@@ -193,18 +214,21 @@
       const character = state.character;
       const base = state.poses.find((pose) => pose.id === character.basePose);
       const src = base && stillUrl(base);
-      sidebar.append(h("a", { class: "item character-card", href: "#/overview" }, src ? h("img", { class: "thumb checker", src, alt: "" }) : h("span", { class: "character-placeholder", "aria-hidden": "true" }),
+      sidebar.append(h("a", { class: "item character-card", href: routeHash({ stage: "overview", mode: route.mode }, null) }, src ? h("img", { class: "thumb checker", src, alt: "" }) : h("span", { class: "character-placeholder", "aria-hidden": "true" }),
         h("span", { class: "character-meta" }, h("strong", {}, character.displayName), h("span", { class: "tiny mono" }, `${character.canvas.width} × ${character.canvas.height}`))));
-      sidebar.append(h("div", { class: "tiny rail-label" }, t("shell.stages")));
+      sidebar.append(h("div", { class: "tabs mode-switch", role: "group", "aria-label": t("shell.mode") }, ["produce", "edit"].map(mode => h("button", {
+        type: "button", "data-mode": mode, class: route.mode === mode ? "active" : "", "aria-pressed": String(route.mode === mode), onclick: () => setMode(mode)
+      }, t("shell.mode." + mode)))));
+      sidebar.append(h("div", { class: "tiny rail-label" }, t("shell.mode." + route.mode)));
       const expressionCount = state.poses.filter((pose) => undecided(pose).length).length;
-      for (const stage of stages) {
+      for (const stage of route.stage === "workflows" ? ["workflows"] : modeStages[route.mode]) {
         const current = route.stage === stage;
         const count = stage === "expressions" ? expressionCount : stage === "review" ? blockingIssues().length : 0;
-        sidebar.append(h("a", { class: "rail" + (current ? " on" : ""), href: "#/" + stage + (stage === "behavior" ? "/graph" : ""), "data-stage": stage, "aria-current": current ? "page" : null },
+        sidebar.append(h("a", { class: "rail" + (current ? " on" : ""), href: routeHash({ stage, mode: route.mode, id: stage === "behavior" ? "graph" : null }, null), "data-stage": stage, "aria-current": current ? "page" : null },
           icon(stage), t("stage." + stage), count ? badge(String(count), stage === "review" ? "fail" : "info") : null));
       }
       sidebar.append(h("div", { class: "spacer" }));
-      for (const tool of tools) {
+      for (const tool of route.mode === "produce" ? tools : ["jobs", "settings"]) {
         const current = tool === "canvas" ? route.stage === "canvas" : route.tool === tool;
         sidebar.append(h("a", { class: "rail" + (current ? " on" : ""), href: tool === "canvas" ? "#/canvas" : routeHash(route, tool), "data-tool": tool,
           "aria-expanded": tool === "canvas" ? null : String(current), "aria-current": tool === "canvas" && current ? "page" : null,
@@ -217,11 +241,17 @@
       h("strong", {}, ready ? t((route.stage === "canvas" ? "tool.canvas" : "stage." + route.stage)) : t("shell.studio")));
     topbar.replaceChildren(crumb, h("div", { class: "spacer" }));
     if (ready) {
-      for (const service of activeServices()) topbar.append(badge(service));
+      if (route.mode === "produce") {
+        topbar.append(h("div", { class: "tabs", role: "group", "aria-label": t("shell.generationView") }, ["studio", "workflow"].map(view => h("button", {
+          type: "button", "data-generation-view": view, class: (route.stage === "workflows") === (view === "workflow") ? "active" : "",
+          "aria-pressed": String((route.stage === "workflows") === (view === "workflow")), onclick: () => setGenerationView(view)
+        }, t("shell.generationView." + view)))));
+        for (const service of activeServices()) topbar.append(badge(service));
+      }
       if (runningJobs().length) topbar.append(h("a", { class: "cell-link", href: routeHash(route, "jobs") }, badge(t("shell.jobsRunning", { count: runningJobs().length }), "info")));
     }
     topbar.append(languageButtons());
-    if (focusData) document.querySelector(`[data-${focusData[0]}="${focusData[1]}"]`)?.focus({ preventScroll: true });
+    if (focusData) document.querySelector(`[data-${focusData[0].replace(/[A-Z]/g, letter => "-" + letter.toLowerCase())}="${focusData[1]}"]`)?.focus({ preventScroll: true });
   }
 
   function activeServices() {
@@ -256,7 +286,7 @@
     }
     if (!state) { main.append(h("p", { role: "status", class: "tiny" }, t("shell.loading"))); return; }
     if (!state.initialized) { renderEmpty(main); return; }
-    const nextKey = route.stage === "canvas" ? "canvas" : route.stage + "/" + (route.id || "");
+    const nextKey = route.mode + "/" + route.stage + "/" + (route.id || "");
     const changedLanguage = mainMount && mainMount.language !== language;
     if (mainMount && mainKey === nextKey && (!changedLanguage || mainMount.update)) {
       if (mainMount.update) mainMount.update(context(main));
@@ -387,6 +417,7 @@
   }
 
   function renderOverview(ctx) {
+    if (ctx.mode === "edit") { renderAssetOverview(ctx); return; }
     const root = ctx.root;
     const focused = document.activeElement;
     const focusHref = focused instanceof HTMLAnchorElement && root.contains(focused) ? focused.getAttribute("href") : null;
@@ -415,6 +446,26 @@
             h("div", { class: "step-footer" }, step.hint ? h("span", { class: "tiny" }, step.hint) : h("span"), h("a", { class: "btn small", href: step.href }, step.button)))) : h("p", { class: "tiny" }, t("overview.noNextSteps"))),
           renderUsage()))));
     if (focusHref) [...root.querySelectorAll("a")].find((link) => link.getAttribute("href") === focusHref && link.getAttribute("aria-label") === focusLabel)?.focus({ preventScroll: true });
+  }
+
+  function renderAssetOverview(ctx) {
+    const poses = state.poses.filter(pose => accepted(pose)?.qa && !pose.needsRecheck && accepted(pose).qa.status !== "fail");
+    const clips = state.clips.filter(clip => accepted(clip) && clip.render?.state === "current" && clip.render.qa && clip.render.qa.status !== "fail");
+    ctx.root.replaceChildren(h("div", { class: "page-head" }, h("h1", {}, t("assets.title")), h("div", { class: "spacer" }),
+      h("a", { class: "btn primary", href: "#/behavior/graph" }, t("assets.graph"))),
+    h("p", { class: "tiny" }, t("assets.hint")),
+    h("h2", { class: "h3" }, t("assets.stills", { count: poses.length })),
+    h("div", { class: "asset-grid" }, poses.map(pose => h("article", { class: "item", "data-library-pose": pose.id },
+      h("img", { class: "checker", src: stillUrl(pose), alt: pose.id, loading: "lazy" }), h("strong", {}, pose.id),
+      badge(t("status.approved", { version: version(pose, accepted(pose)) }), "pass"), h("a", { class: "btn small", href: "#/expressions/" + encodeURIComponent(pose.id) }, t("assets.returnQA"))))),
+    h("h2", { class: "h3" }, t("assets.clips", { count: clips.length })),
+    h("div", { class: "asset-grid" }, clips.map(clip => h("article", { class: "item", "data-library-clip": clip.id },
+      h("strong", {}, clip.id), h("span", { class: "tiny" }, `${clip.from} → ${clip.to}`),
+      badge("QA " + clip.render.qa.status, clip.render.qa.status),
+      h("span", { class: "tiny mono" }, `${clip.render.frameCount} × ${clip.render.frameIntervalMs} ms`),
+      h("a", { class: "btn small", href: "#/behavior/graph" }, t("assets.graph")),
+      h("a", { class: "btn small", href: "#/clips/" + encodeURIComponent(clip.id) }, t("assets.returnQA"))))),
+    !poses.length && !clips.length ? h("p", {}, t("assets.empty")) : null);
   }
 
   function nextSteps() {
@@ -493,7 +544,8 @@
       }
     },
     addTranslations(lang, entries) { window.SF_I18N[lang] = Object.assign(window.SF_I18N[lang] || {}, entries); },
-    setLanguage, t, h, api, refresh, navigate, toast, run,
+    setLanguage, setMode, setGenerationView, t, h, api, refresh, navigate, toast, run,
+    get mode() { return route.mode; },
     get language() { return language; },
     get state() { return state; },
     get jobs() { return jobs; },

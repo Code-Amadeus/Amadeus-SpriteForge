@@ -36,6 +36,26 @@ def add_parser(commands) -> None:
     settings.add_argument("--still-provider")
     settings.add_argument("--batch-confirm-threshold", type=int)
 
+    concept = sub.add_parser("concept", help="Generate, import, pick and reroll expression reference sheets").add_subparsers(
+        dest="concept_action", required=True)
+    for name in ("new", "import", "pick", "reroll"):
+        step = concept.add_parser(name)
+        step.add_argument("--workspace", type=Path, required=True)
+        if name in {"new", "import"}:
+            step.add_argument("--poses", required=True, help="Comma-separated unique pose ids, at most one per cell")
+            step.add_argument("--grid", default="3x2", help="3x2 (default) or 2x2")
+        if name == "import":
+            step.add_argument("file", type=Path)
+        if name in {"pick", "reroll"}:
+            step.add_argument("sheet")
+            step.add_argument("cell", type=int, help="Zero-based row-major cell index")
+        if name == "pick":
+            step.add_argument("--pose")
+            step.add_argument("--unpick", action="store_true")
+        if name in {"new", "reroll"}:
+            step.add_argument("--provider", required=True)
+            step.add_argument("--dry-run", action="store_true")
+
     pose = sub.add_parser("pose", help="Plan poses").add_subparsers(dest="pose_action", required=True)
     pose_add = pose.add_parser("add")
     pose_add.add_argument("--workspace", type=Path, required=True)
@@ -58,6 +78,9 @@ def add_parser(commands) -> None:
     variant.add_argument("--workspace", type=Path, required=True)
     variant.add_argument("source")
     variant.add_argument("id")
+    clip_plan = clip.add_parser("plan", help="Create only the clip records in a JSON plan for approved stills")
+    clip_plan.add_argument("--workspace", type=Path, required=True)
+    clip_plan.add_argument("--file", type=Path, required=True, help="JSON list of {id,from,to,phase?}")
     clip_set = clip.add_parser("set", help="Change generation, processing or playback settings")
     clip_set.add_argument("--workspace", type=Path, required=True)
     clip_set.add_argument("id")
@@ -165,6 +188,7 @@ def add_parser(commands) -> None:
     generate.add_argument("--no-wait", action="store_true", help="Clips: return after submission; resume later")
     generate.add_argument("--based-on", help="Clip take whose version this generation is based on")
     generate.add_argument("--note", default="", help="Clip version annotation")
+    generate.add_argument("--concept", help="Pose generation: expression reference SHEET:CELL")
     render = command("render", "Render accepted takes into graph-bindable frames")
     target = render.add_mutually_exclusive_group(required=True)
     target.add_argument("--clip")
@@ -243,6 +267,17 @@ def run(args) -> None:
             "batchConfirmThreshold": args.batch_confirm_threshold,
         }.items() if value is not None}
         print(json.dumps(set_ui_defaults(workspace, values), ensure_ascii=False, indent=2))
+    elif action == "concept":
+        from .concepts import generate_sheet, import_sheet, reroll_cell, set_cell
+        if args.concept_action == "new":
+            result = generate_sheet(workspace, _ids(args.poses), args.grid, args.provider, dry_run=args.dry_run)
+        elif args.concept_action == "import":
+            result = import_sheet(workspace, args.file.resolve(), _ids(args.poses), args.grid)
+        elif args.concept_action == "pick":
+            result = set_cell(workspace, args.sheet, args.cell, picked=not args.unpick, pose=args.pose)
+        else:
+            result = reroll_cell(workspace, args.sheet, args.cell, args.provider, dry_run=args.dry_run)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     elif action == "pose":
         if args.pose_action == "add":
             project.add_pose(workspace, args.id, args.description)
@@ -258,6 +293,11 @@ def run(args) -> None:
         elif args.clip_action == "variant":
             clip = project.add_variant(workspace, args.source, args.id)
             print(f"Variant {clip['id']} created from {args.source}; no takes copied")
+        elif args.clip_action == "plan":
+            from ..workspace import read_json
+            entries = read_json(args.file)
+            clips = project.plan_clips(workspace, entries.get("clips") if isinstance(entries, dict) else entries)
+            print("Planned clips: " + ", ".join(clip["id"] for clip in clips))
         else:
             changes = {k: getattr(args, k) for k in project.CLIP_SETTINGS}
             clip = project.set_clip(workspace, args.id, mouth=args.mouth, mouth_source=args.mouth_source, **changes)
@@ -322,13 +362,21 @@ def run(args) -> None:
             raise ValueError("--based-on and --note only apply to clip generation")
         if not args.provider:
             raise ValueError(f"Choose an image-edit provider with --provider: {', '.join(IMAGE_PROVIDERS)}")
-        result = generate_still(workspace, args.pose, args.provider, dry_run=args.dry_run)
+        concept = None
+        if args.concept:
+            sheet, separator, cell = args.concept.partition(":")
+            if not separator or not cell.isdigit():
+                raise ValueError("--concept needs SHEET:CELL")
+            concept = {"sheet": sheet, "cell": int(cell)}
+        result = generate_still(workspace, args.pose, args.provider, dry_run=args.dry_run, concept=concept)
         if args.dry_run:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             _print_still_qa(result)
     elif action == "generate":
         from .clips import generate_clip_take
+        if args.concept:
+            raise ValueError("--concept only applies to pose generation")
         result = generate_clip_take(workspace, args.clip, provider=args.provider, wait=not args.no_wait,
                                     dry_run=args.dry_run, based_on=args.based_on, note=args.note)
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.dry_run else f"Take {result['id']}: {result['state']}")

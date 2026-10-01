@@ -40,13 +40,36 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.screenshot({ path: path.join(screenshots, "studio-overview-en.png") });
 
     const routes = ["overview", "expressions", "clips", "workflows", "review", "behavior", "export"];
-    for (const stage of routes) {
+    async function openStage(stage) {
+      const mode = ["behavior", "export"].includes(stage) ? "edit" : "produce";
+      await page.locator(`[data-mode='${mode}']`).click();
+      await page.waitForFunction(value => window.SFStudio.mode === value, mode);
+      if (mode === "produce") {
+        const view = stage === "workflows" ? "workflow" : "studio";
+        await page.locator(`[data-generation-view='${view}']`).click();
+        await page.waitForFunction(value => (window.SFStudio.route.stage === "workflows") === value, view === "workflow");
+      }
       await page.locator(`[data-stage='${stage}']`).click();
       await page.waitForFunction(value => window.SFStudio?.route.stage === value, stage);
+    }
+    await page.locator("[data-mode='edit']").click();
+    await page.waitForFunction(() => window.SFStudio.mode === "edit");
+    assert.equal(await page.locator("[data-stage='clips']").count(), 0);
+    assert.equal(await page.locator("[data-generation-view]").count(), 0);
+    await page.locator("[data-stage='overview']").click();
+    await page.locator("[data-library-pose]").first().waitFor();
+    assert.equal(await page.locator("[data-library-pose]").count(), 2);
+    assert.ok(await page.locator("[data-library-clip]").count() > 0);
+    await page.reload();
+    await page.waitForFunction(() => window.SFStudio.state?.initialized && window.SFStudio.mode === "edit");
+    assert.equal(await page.locator("[data-clip-action='generate']").count(), 0);
+    await page.screenshot({ path: path.join(screenshots, "studio-edit-assets-en.png") });
+    for (const stage of routes) {
+      await openStage(stage);
       await page.locator("#studioMain h1").waitFor();
       await page.screenshot({ path: path.join(screenshots, `studio-${stage}-en.png`) });
     }
-    await page.locator("[data-stage='overview']").click();
+    await openStage("overview");
     await page.locator("[data-stage='clips']").click();
     await page.goBack();
     assert.ok((await page.evaluate(() => location.hash)).startsWith("#/overview"));
@@ -61,17 +84,16 @@ const { spawn, spawnSync } = require("node:child_process");
     assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
     const chinese = { overview: "总览", expressions: "表情", clips: "片段", workflows: "工作流", review: "审阅", behavior: "行为", export: "导出" };
     for (const stage of routes) {
+      await openStage(stage);
       const link = page.locator(`[data-stage='${stage}']`);
       assert.ok((await link.innerText()).includes(chinese[stage]));
-      await link.click();
-      await page.waitForFunction(value => window.SFStudio?.route.stage === value, stage);
       await page.locator("#studioMain h1").waitFor();
       if (stage === "clips") assert.ok((await page.locator(".clip-studio").getAttribute("aria-label")).includes(chinese[stage]));
       else if (stage !== "overview") assert.ok((await page.locator("#studioMain h1").innerText()).includes(chinese[stage]));
       await page.screenshot({ path: path.join(screenshots, `studio-${stage}-zh.png`) });
     }
     await page.locator("#studioTopbar").getByRole("button", { name: "EN", exact: true }).click();
-    await page.locator("[data-stage='overview']").click();
+    await openStage("overview");
     for (const tool of ["prompts", "jobs", "settings"]) {
       await page.locator(`[data-tool='${tool}']`).click();
       await page.locator("#studioDrawer").waitFor({ state: "visible" });

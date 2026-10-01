@@ -33,14 +33,17 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .media import copy_durable, write_durable
@@ -55,6 +58,8 @@ class ImageJob:
     prompt: str
     negative: str
     image: bytes
+    references: list[bytes] = field(default_factory=list)
+    size: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -77,7 +82,7 @@ def image_label(name: str, png: bytes) -> str:
 
 
 def png_size(png: bytes) -> tuple[int, int]:
-    if png[:8] != b"\x89PNG\r\n\x1a\n" or png[12:16] != b"IHDR":
+    if len(png) < 24 or png[:8] != b"\x89PNG\r\n\x1a\n" or png[12:16] != b"IHDR":
         raise ProviderError("Provider input must be a PNG image")
     width, height = struct.unpack(">II", png[16:24])
     return width, height
@@ -87,6 +92,7 @@ class Adapter:
     name = ""
     negative_prompt = True
     submit_path = ""
+    cost_type = "metered"
 
     def __init__(self, config: dict) -> None:
         self.base_url = str(config.get("baseUrl") or "").rstrip("/")
@@ -215,6 +221,7 @@ class WanCli:
     name = "wan-cli"
     negative_prompt = False
     credential = "login"
+    cost_type = "credits"
     VIDEO_SUFFIXES = {".mp4", ".mov", ".webm"}
 
     def __init__(self, config: dict) -> None:
@@ -315,27 +322,60 @@ class WanCli:
             copy_durable(Path(videos[0]["path"]), target)
 
 
+def image_dimensions(size: tuple[int, int], *, minimum_pixels: int = 0, maximum_pixels: int | None = None,
+                     minimum_edge: int = 1, maximum_edge: int | None = None, ratio: float | None = None,
+                     multiple: int = 1) -> tuple[int, int]:
+    """Raise a requested size to the provider's legal minimum, preserving its aspect ratio.
+
+    Maximums fail before submission. A smaller output would silently change the user's
+    sheet/cell request; actual provider output is recorded separately, never resized here.
+    """
+    if not isinstance(size, (tuple, list)) or len(size) != 2 or any(isinstance(v, bool) or not isinstance(v, int) or v < 1 for v in size):
+        raise ProviderError("Image size needs two positive integer dimensions")
+    width, height = size
+    if ratio and max(width, height) / min(width, height) > ratio:
+        raise ProviderError(f"Image aspect ratio must be no greater than {ratio:g}:1")
+    scale = max(1, minimum_edge / min(width, height), math.sqrt(minimum_pixels / (width * height)))
+    width, height = (math.ceil(v * scale / multiple) * multiple for v in (width, height))
+    if maximum_edge and max(width, height) > maximum_edge or maximum_pixels and width * height > maximum_pixels:
+        raise ProviderError("Requested image dimensions exceed this provider's supported size")
+    return width, height
+
+
 class ImageAdapter(Adapter):
     size_separator = "x"
     match_long_side = 2048
+    supports_reference = False
+    minimum_pixels = 0
+    maximum_pixels = None
+    minimum_edge = 1
+    maximum_edge = None
+    maximum_ratio = None
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
         self.size = str(config["size"]) if config.get("size") else None
 
-    def output_size(self, image: bytes) -> str | None:
+    def output_size(self, image: bytes, requested: tuple[int, int] | None = None) -> str | None:
         """None leaves the size to the provider; 'match' keeps the input's aspect ratio at a 2048 px long side."""
+        if requested is not None:
+            width, height = image_dimensions(requested, minimum_pixels=self.minimum_pixels, maximum_pixels=self.maximum_pixels,
+                                            minimum_edge=self.minimum_edge, maximum_edge=self.maximum_edge, ratio=self.maximum_ratio)
+            return f"{width}{self.size_separator}{height}"
         if self.size != "match":
             return self.size
         width, height = png_size(image)
         scale = self.match_long_side / max(width, height)
         return f"{round(width * scale)}{self.size_separator}{round(height * scale)}"
 
-    def payload(self, job: ImageJob, image: str) -> dict:
+    def payload(self, job: ImageJob, image: str, references: list[str] | None = None) -> dict:
         raise NotImplementedError
 
     def preview(self, job: ImageJob) -> dict:
-        return self.payload(job, image_label("input", job.image))
+        return self.payload(job, image_label("input", job.image), [image_label(f"reference-{index + 1}", image) for index, image in enumerate(job.references)])
+
+    def request(self, job: ImageJob) -> dict:
+        return self.payload(job, data_url(job.image), [data_url(image) for image in job.references])
 
     def edit(self, job: ImageJob) -> bytes:
         """The edited image, fetched or decoded before returning."""
@@ -345,19 +385,25 @@ class ImageAdapter(Adapter):
 class QwenImage(ImageAdapter):
     name = "qwen-image"
     size_separator = "*"
+    supports_reference = True
+    minimum_edge = 512
+    maximum_edge = 2048
 
-    def payload(self, job: ImageJob, image: str) -> dict:
+    def payload(self, job: ImageJob, image: str, references: list[str] | None = None) -> dict:
+        images = [image, *(references or [])]
+        if len(images) > 3:
+            raise ProviderError("qwen-image-edit-plus supports at most three input images")
         parameters: dict = {"n": 1, "watermark": False, "prompt_extend": False}
         if job.negative:
             parameters["negative_prompt"] = job.negative
-        size = self.output_size(job.image)
+        size = self.output_size(job.image, job.size)
         if size:
             parameters["size"] = size
         return {"model": self.model, "parameters": parameters,
-                "input": {"messages": [{"role": "user", "content": [{"image": image}, {"text": job.prompt}]}]}}
+                "input": {"messages": [{"role": "user", "content": [*({"image": value} for value in images), {"text": job.prompt}]}]}}
 
     def edit(self, job: ImageJob) -> bytes:
-        result = self.call("POST", "/services/aigc/multimodal-generation/generation", self.payload(job, data_url(job.image)))
+        result = self.call("POST", "/services/aigc/multimodal-generation/generation", self.request(job))
         choices = (result.get("output") or {}).get("choices") or []
         images = [part["image"] for choice in choices for part in (choice.get("message") or {}).get("content") or []
                   if isinstance(part, dict) and part.get("image")]
@@ -369,17 +415,21 @@ class QwenImage(ImageAdapter):
 class Seedream(ImageAdapter):
     name = "seedream"
     negative_prompt = False
+    supports_reference = True
+    minimum_pixels = 921600
+    maximum_pixels = 16777216
+    maximum_ratio = 16
 
-    def payload(self, job: ImageJob, image: str) -> dict:
-        payload = {"model": self.model, "prompt": job.prompt, "image": image, "response_format": "b64_json",
+    def payload(self, job: ImageJob, image: str, references: list[str] | None = None) -> dict:
+        payload = {"model": self.model, "prompt": job.prompt, "image": [image, *references] if references else image, "response_format": "b64_json",
                    "watermark": False, "sequential_image_generation": "disabled"}
-        size = self.output_size(job.image)
+        size = self.output_size(job.image, job.size)
         if size:
             payload["size"] = size
         return payload
 
     def edit(self, job: ImageJob) -> bytes:
-        result = self.call("POST", "/images/generations", self.payload(job, data_url(job.image)))
+        result = self.call("POST", "/images/generations", self.request(job))
         data = [item for item in result.get("data") or [] if isinstance(item, dict) and item.get("b64_json")]
         if not data:
             raise ProviderError(f"seedream returned no image: {json.dumps(result.get('error') or result)[:400]}")
@@ -389,8 +439,137 @@ class Seedream(ImageAdapter):
             raise ProviderError("seedream returned invalid base64 image data") from exc
 
 
+class GptImageCli:
+    """One isolated Codex request, using its own login and a native thread-bound image.
+
+    Availability is only an executable check, never a claim about authentication.
+    Codex checks login/quota during the explicit request; failures retain the caller's
+    existing failed-take lifecycle. No auth/config files or global image directory scans.
+    """
+    name = "gpt-image"
+    credential = "command"
+    cost_type = "planQuota"
+    negative_prompt = False
+    supports_reference = True
+
+    def __init__(self, config: dict) -> None:
+        command = config.get("command") or ["codex"]
+        if not isinstance(command, list) or not command or not all(isinstance(value, str) and value for value in command):
+            raise ProviderError("Provider 'gpt-image' needs a non-empty 'command' list in production/tools.json")
+        self.command = command
+        self.model = str(config.get("model") or "gpt-image-2")
+        self.timeout_seconds = float(config.get("timeoutSeconds", 600))
+        self.size = str(config.get("size") or "match")
+
+    @staticmethod
+    def ready(config: dict) -> bool:
+        command = config.get("command") or ["codex"]
+        return bool(isinstance(command, list) and command and isinstance(command[0], str) and
+                    (shutil.which(command[0]) or Path(command[0]).is_file()))
+
+    def key(self) -> None:
+        if not self.ready({"command": self.command}):
+            raise ProviderError("Configure the Codex CLI command for 'gpt-image'; its login is checked by Codex when requested")
+
+    def output_size(self, image: bytes, requested: tuple[int, int] | None = None) -> str:
+        if requested is None:
+            if self.size == "match":
+                requested = png_size(image)
+            else:
+                try:
+                    requested = tuple(int(value) for value in self.size.split("x"))
+                except ValueError as exc:
+                    raise ProviderError("gpt-image size must be 'match' or WIDTHxHEIGHT") from exc
+        width, height = image_dimensions(requested, minimum_pixels=655360, maximum_pixels=8294400,
+                                        maximum_edge=3840, ratio=3, multiple=16)
+        return f"{width}x{height}"
+
+    def preview(self, job: ImageJob) -> dict:
+        return {"model": self.model, "size": self.output_size(job.image, job.size), "prompt": job.prompt,
+                "input": image_label("input", job.image),
+                "references": [image_label(f"reference-{index + 1}", image) for index, image in enumerate(job.references)],
+                "credential": self.credential, "costType": self.cost_type,
+                "options": ["--ignore-user-config", "--ephemeral", "--skip-git-repo-check", "--json"]}
+
+    def edit(self, job: ImageJob) -> bytes:
+        self.key()
+        size = self.output_size(job.image, job.size)
+        # The configured process owns authentication. API-key environment overrides
+        # are omitted so this plan-quota provider does not silently switch billing.
+        env = dict(os.environ)
+        for name in ("OPENAI_API_KEY", "CODEX_API_KEY"):
+            env.pop(name, None)
+        native_root = Path(env.get("CODEX_HOME") or Path.home() / ".codex") / "generated_images"
+        schema = {"type": "object", "properties": {"image_path": {"type": ["string", "null"]}, "width": {"type": ["integer", "null"]},
+                  "height": {"type": ["integer", "null"]}, "error": {"type": ["string", "null"]}},
+                  "required": ["image_path", "width", "height", "error"], "additionalProperties": False}
+        with tempfile.TemporaryDirectory(prefix="spriteforge-gpt-image-") as temporary:
+            folder = Path(temporary)
+            images = [folder / "input.png", *(folder / f"reference-{index + 1}.png" for index in range(len(job.references))) ]
+            for target, content in zip(images, [job.image, *job.references]):
+                png_size(content)
+                write_durable(target, content)
+            schema_file, result_file = folder / "schema.json", folder / "result.json"
+            schema_file.write_text(json.dumps(schema), encoding="utf-8")
+            prompt = (f"Invoke the built-in imagegen tool exactly once to edit the attached images with {self.model}. "
+                      f"Request one PNG at {size}. Image 1 is the approved base; later images are references. "
+                      "Do not retry. Do not use shell, exec, other image tools, or skills. "
+                      "Do not read or write configuration, authentication, or credential files. "
+                      "Keep the native generated image bytes untouched even if its dimensions differ. "
+                      "Return its native generated_images path and actual width/height, without copying or moving it. "
+                      "When no image exists, return null image_path/width/height and the error.\n\n"
+                      + job.prompt)
+            command = [*self.command, "exec", "--ignore-user-config", "--ephemeral", "--skip-git-repo-check", "--json",
+                       "--sandbox", "workspace-write", "--cd", str(folder), "--output-schema", str(schema_file),
+                       "--output-last-message", str(result_file), *[value for image in images for value in ("--image", str(image))], "-"]
+            try:
+                result = subprocess.run(command, cwd=folder, env=env, input=prompt, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=self.timeout_seconds)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ProviderError(f"gpt-image CLI could not run: {exc}") from exc
+            if result.returncode:
+                detail = (result.stderr or result.stdout).strip()[-600:]
+                raise ProviderError(f"gpt-image CLI exited with code {result.returncode}: {detail}")
+            events = []
+            for line in result.stdout.splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict) and event.get("type") == "thread.started":
+                    events.append(event.get("thread_id"))
+            if len(events) != 1 or not isinstance(events[0], str):
+                raise ProviderError("gpt-image CLI did not identify exactly one native thread")
+            try:
+                thread_id = str(uuid.UUID(events[0]))
+                thread_root = native_root.resolve() / thread_id
+                if thread_root.resolve(strict=True) != thread_root:
+                    raise ProviderError("gpt-image native thread path escaped generated_images")
+                answer = json.loads(result_file.read_text(encoding="utf-8"))
+                raw_path = answer.get("image_path") if isinstance(answer, dict) else None
+                if not isinstance(raw_path, str) or not raw_path:
+                    raise ProviderError("gpt-image CLI returned no native image path")
+                output = Path(raw_path)
+                if not output.is_absolute():
+                    output = thread_root / output
+                output = output.resolve(strict=True)
+                if not output.is_relative_to(thread_root) or not output.is_file():
+                    raise ProviderError("gpt-image output must belong to this invocation's native thread")
+                content = output.read_bytes()
+                png_size(content)
+                from .media import read_bgra
+                decoded, _ = read_bgra(output)
+                if decoded.shape[0] < 1 or decoded.shape[1] < 1:
+                    raise ProviderError("gpt-image returned an empty image")
+                return content
+            except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                if isinstance(exc, ProviderError):
+                    raise
+                raise ProviderError(f"gpt-image CLI returned no valid thread-bound PNG: {exc}") from exc
+
+
 PROVIDERS = {"wan": Wan, "seedance": Seedance, "wan-cli": WanCli}
-IMAGE_PROVIDERS = {"qwen-image": QwenImage, "seedream": Seedream}
+IMAGE_PROVIDERS = {"qwen-image": QwenImage, "seedream": Seedream, "gpt-image": GptImageCli}
 
 
 def get_provider(name: str, tools: dict) -> Adapter | WanCli:
@@ -403,10 +582,12 @@ def provider_status(name: str, config: dict) -> dict:
     """How a provider authenticates ('env': an API key variable; 'login': the tool's own login) and
     whether that looks ready, without contacting the provider."""
     adapter = PROVIDERS.get(name) or IMAGE_PROVIDERS.get(name)
-    return {"credential": adapter.credential, "keySet": adapter.ready(config)} if adapter else {"credential": None, "keySet": False}
+    return {"credential": adapter.credential, "keySet": adapter.ready(config),
+            "supportsReference": bool(getattr(adapter, "supports_reference", False)), "costType": adapter.cost_type} if adapter else {
+                "credential": None, "keySet": False, "supportsReference": False, "costType": None}
 
 
-def get_image_provider(name: str, tools: dict) -> ImageAdapter:
+def get_image_provider(name: str, tools: dict) -> ImageAdapter | GptImageCli:
     if name not in IMAGE_PROVIDERS:
         raise ProviderError(f"Unknown image provider '{name}'; available: {', '.join(IMAGE_PROVIDERS)}")
     return IMAGE_PROVIDERS[name]((tools.get("providers") or {}).get(name) or {})

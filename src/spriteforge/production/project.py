@@ -16,7 +16,7 @@ from pathlib import Path
 from ..graph import validate_graph
 from ..workspace import atomic_json, read_json, resolve_asset
 from . import prompts
-from .records import (bound_clip, canvas_size, check_id, clip_settings, create_character, create_clip, create_pose,
+from .records import (accepted_take, bound_clip, canvas_size, check_id, clip_settings, create_character, create_clip, create_pose,
                       list_owners, list_takes, load_character, load_owner, output_root, owner_dir, production_dir, read_render,
                       render_freshness, save_character, save_owner, take_status)
 from .mouth import default_set
@@ -89,6 +89,25 @@ def add_variant(workspace: Path, source_id: str, clip_id: str) -> dict:
     prompts.save_library(workspace, library)
     save_owner(workspace, "clip", clone)
     return clone
+
+
+def plan_clips(workspace: Path, entries: object) -> list[dict]:
+    """Plan explicit clips for approved stills without generating, approving or binding them."""
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("Clip plan needs a non-empty list")
+    ids = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) - {"id", "from", "to", "phase"} or not {"id", "from", "to"} <= set(entry):
+            raise ValueError("Planned clips need id, from, to and optional phase")
+        clip_id = check_id(entry["id"], "Clip")
+        if clip_id in ids or owner_dir(workspace, "clip", clip_id).exists():
+            raise ValueError(f"Clip {clip_id} already exists or is repeated")
+        ids.add(clip_id)
+        if entry.get("phase") is not None and entry["phase"] not in {"in", "loop", "out"}:
+            raise ValueError("Clip phase must be in, loop or out")
+        for pose_id in (entry["from"], entry["to"]):
+            accepted_take(workspace, "pose", pose_id)
+    return [add_clip(workspace, entry["id"], entry["from"], entry["to"], entry.get("phase")) for entry in entries]
 
 
 def set_clip(workspace: Path, clip_id: str, *, mouth: str | None = None, mouth_source: str | None = None,
@@ -195,7 +214,8 @@ def overview(workspace: Path) -> dict:
         recheck = bool(accepted and pose["id"] != character["basePose"]
                        and (accepted.get("qa") or {}).get("anchorsTake") != anchors_take)
         poses.append({**pose, "takes": takes, "needsRecheck": recheck,
-                      "promptPreview": _preview(prompts.pose_prompt, library, character, pose)})
+                      "promptPreview": _preview(prompts.pose_prompt, library, character, pose),
+                      "referencePromptPreview": _preview(prompts.still_reference_prompt, library, character, pose)})
     clips = []
     for clip in list_owners(workspace, "clip"):
         state, reasons = render_freshness(workspace, clip)

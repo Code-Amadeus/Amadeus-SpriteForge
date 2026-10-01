@@ -27,6 +27,7 @@ class ProductionApi:
         self.workspace = workspace
         self.jobs: dict[str, dict] = {}
         self.lock = threading.Lock()
+        self.provider_locks: dict[str, threading.Lock] = {}
 
     def available(self) -> bool:
         return (production_dir(self.workspace) / "character.json").is_file()
@@ -47,6 +48,13 @@ class ProductionApi:
         if end == "last" and last is None:
             raise ValueError(f"Clip {clip_id} is generated from its first frame only")
         return first if end == "first" else last
+
+    def pose_input(self, pose_id: str) -> bytes:
+        """The approved base image used by prepare and still generation, without a write."""
+        from .records import load_character, load_owner
+        from .stills import still_input
+        load_owner(self.workspace, "pose", pose_id)
+        return still_input(self.workspace, load_character(self.workspace))[0]
 
     def media(self, raw: str) -> tuple[Path, str]:
         path = resolve_asset(self.workspace, raw)
@@ -84,12 +92,28 @@ class ProductionApi:
                                                       pose_id=str(pose) if pose else None)}
         if route == "pose":
             return {"pose": project.add_pose(self.workspace, str(body.get("id")), str(body.get("description") or ""))}
+        if route == "pose-expect":
+            from .stills import set_expected
+            return {"pose": set_expected(self.workspace, body.get("pose"), body.get("headTopY"), body.get("headCenterX"))}
         if route == "clip":
             return {"clip": project.add_clip(self.workspace, str(body.get("id")), str(body.get("from")),
                                              str(body.get("to")), body.get("phase") or None)}
         if route == "variant":
             with self.lock:
                 return {"clip": project.add_variant(self.workspace, body.get("from"), body.get("id"))}
+        if route == "plan-clips":
+            with self.lock:
+                return {"clips": project.plan_clips(self.workspace, body.get("clips"))}
+        if route == "concepts":
+            return {"job": self.start_concept(body.get("poses"), body.get("grid", "3x2"), body.get("provider"))}
+        if route == "concept-cell":
+            from .concepts import set_cell
+            with self.lock:
+                if body.get("pose") is not None and any(job["kind"] == "concept" and job["owner"] == body.get("sheet")
+                                                       and job["status"] == "running" for job in self.jobs.values()):
+                    raise ValueError("Cannot reassign a cell while a job for its sheet is running")
+                return {"sheet": set_cell(self.workspace, body.get("sheet"), body.get("cell"),
+                                          picked=body.get("picked"), pose=body.get("pose"))}
         if route == "take-note":
             with self.lock:
                 return {"take": set_take_note(self.workspace, body.get("kind"), body.get("owner"),
@@ -115,19 +139,24 @@ class ProductionApi:
             with self.lock:
                 return {"positions": project.save_canvas_layout(self.workspace, body.get("positions"))}
         if route == "jobs":
+            if body.get("action") == "concept-reroll":
+                return {"job": self.start_reroll(body.get("sheet"), body.get("cell"), body.get("provider"))}
             kind = "pose" if body.get("pose") else "clip"
             adopt = {"clip": str(body.get("clip")), "frame": body.get("frame") or "last"} if kind == "pose" else None
             return {"job": self.start(str(body.get("action")), kind, str(body.get(kind)), body.get("provider"),
-                                      body.get("take"), adopt, based_on=body.get("basedOn"), note=body.get("note", ""))}
+                                      body.get("take"), adopt, based_on=body.get("basedOn"), note=body.get("note", ""),
+                                      concept=body.get("concept"))}
         raise KeyError(route)
 
     def start(self, action: str, kind: str, owner: str, provider: str | None = None, take_id: str | None = None,
-              adopt: dict | None = None, *, based_on: str | None = None, note: str = "") -> dict:
+              adopt: dict | None = None, *, based_on: str | None = None, note: str = "", concept: dict | None = None) -> dict:
         """``adopt`` names the clip and frame whose take (``take_id``) a pose job takes its still from."""
         from .records import load_owner
         load_owner(self.workspace, kind, owner)
         if (based_on is not None or note != "") and (kind != "clip" or action != "generate"):
             raise ValueError("basedOn and note only apply to clip generation jobs")
+        if concept is not None and (kind != "pose" or action != "generate"):
+            raise ValueError("Concept references only apply to pose generation jobs")
         if kind == "pose" and action == "adopt" and adopt:
             from .stills import adopt_frame
 
@@ -139,9 +168,16 @@ class ProductionApi:
             if action != "generate":
                 raise ValueError("A pose job can only generate a still or adopt a clip frame")
             from .stills import generate_still
+            from .tools import load_tools
+            provider = provider or load_tools(self.workspace)["defaults"]["stillProvider"]
+            if concept is not None:
+                from .concepts import concept_reference
+                if not isinstance(concept, dict) or set(concept) != {"sheet", "cell"}:
+                    raise ValueError("Concept reference needs sheet and cell")
+                concept_reference(self.workspace, concept["sheet"], concept["cell"], owner)
 
             def work(log):
-                take = generate_still(self.workspace, owner, str(provider or ""), log=log)
+                take = generate_still(self.workspace, owner, provider, concept=concept, log=log)
                 return f"{take['id']} QA {take['qa']['status']}"
         elif action == "render":
             from .render import render_clip
@@ -162,19 +198,55 @@ class ProductionApi:
                 return resume_clip_take(self.workspace, owner, str(take_id), log=log)["state"]
         else:
             raise ValueError("Job action must be render, generate or resume")
+        return self._launch(action, kind, owner, work, provider=provider if kind == "pose" and action == "generate" else None)
+
+    def start_concept(self, poses: object, grid: object, provider: str | None) -> dict:
+        from .concepts import generate_sheet, grid_spec
+        from .records import new_take_id
+        from .tools import load_tools
+        grid = grid_spec(grid)
+        provider = provider or load_tools(self.workspace)["defaults"]["conceptProvider"]
+        sheet_id = new_take_id()
+
+        def work(log):
+            return generate_sheet(self.workspace, poses, grid, provider, sheet_id=sheet_id, log=log)["id"]
+
+        return self._launch("concept", "concept", sheet_id, work, provider=provider, details={"poses": poses, "sheet": sheet_id})
+
+    def start_reroll(self, sheet: str, cell: object, provider: str | None) -> dict:
+        from .concepts import reroll_cell
+        from .tools import load_tools
+        provider = provider or load_tools(self.workspace)["defaults"]["conceptProvider"]
+
+        def work(log):
+            return reroll_cell(self.workspace, sheet, cell, provider, log=log)["id"]
+
+        return self._launch("concept-reroll", "concept", sheet, work, provider=provider, details={"sheet": sheet, "cell": cell})
+
+    def _launch(self, action: str, kind: str, owner: str, work, *, provider: str | None = None,
+                details: dict | None = None) -> dict:
+        if provider is not None and not isinstance(provider, str):
+            raise ValueError("Provider must be a provider id")
         with self.lock:
             if any((j["kind"], j["owner"]) == (kind, owner) and j["status"] == "running" for j in self.jobs.values()):
                 raise ValueError(f"A job for {kind} {owner} is already running")
             job = {"id": uuid.uuid4().hex[:12], "action": action, "kind": kind, "owner": owner, "status": "running", "log": [],
-                   "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "result": None, "error": None}
+                   "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "result": None, "error": None,
+                   **(details or {}), **({"provider": provider} if provider else {})}
             self.jobs[job["id"]] = job
+            provider_lock = self.provider_locks.setdefault(provider, threading.Lock()) if provider else None
 
         def run() -> None:
             def log(message: object) -> None:
                 with self.lock:
                     job["log"] = [*job["log"], str(message)][-300:]
             try:
-                result = work(log)
+                if provider_lock:
+                    log(f"Queued for {provider}; this job sends one requested image call")
+                    with provider_lock:
+                        result = work(log)
+                else:
+                    result = work(log)
                 with self.lock:
                     job.update(status="succeeded", result=result)
             except Exception as exc:  # the job reports every failure to the page
@@ -187,7 +259,8 @@ class ProductionApi:
         with self.lock:
             return sorted((dict(j) for j in self.jobs.values()), key=lambda j: j["startedAt"], reverse=True)
 
-    def upload(self, kind: str, owner: str, name: str, stream, length: int, fps: float | None, note: str) -> dict:
+    def upload(self, kind: str, owner: str, name: str, stream, length: int, fps: float | None, note: str,
+               *, poses: list[str] | None = None, grid: object = "3x2") -> dict:
         if not 0 < length <= UPLOAD_LIMIT:
             raise ValueError("Upload size is missing or too large")
         suffix = Path(name).suffix.lower()
@@ -211,4 +284,8 @@ class ProductionApi:
             if kind == "clip":
                 from .clips import import_clip_take
                 return {"take": import_clip_take(self.workspace, owner, target, fps=fps, note=note or f"uploaded {name}")}
-        raise ValueError("Uploads belong to a pose or a clip")
+            if kind == "concept":
+                from .concepts import import_sheet
+                with self.lock:
+                    return {"sheet": import_sheet(self.workspace, target, poses, grid)}
+        raise ValueError("Uploads belong to a pose, clip or concept sheet")
