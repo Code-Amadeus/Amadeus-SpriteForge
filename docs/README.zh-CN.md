@@ -35,7 +35,8 @@ python -m venv .venv
 Graph 的 `Preview selected clip` 与导出共用帧选择、时间和循环配置。
 普通队列播放器的 FPS 是人工检视速度，不改变节点的导出间隔。
 
-导出需独立安装 KTX-Software，传入 `--toktx`，命令见根 README。
+导出需独立安装 KTX-Software，传入 `--toktx`，命令见根 README。编码参数和已发布的 Amadeus 包一致
+（KTX-Software 4.4.2，UASTC 4 级，zstd 18），同一帧编出来的字节相同；4 级较慢，764×1028 一帧约 1.8 秒（CPU）。
 生产管线里开启了口型集的说话循环会导出静音闭嘴叠加层（见下方"口型叠加层"）；
 旧的作者端 `spriteforge_mouth_config.json` 仍会阻止导出，除非明确选择 `--no-mouth`。
 不会偷偷套用旧 Kurisu 专属的帧选择、口型修正或说话策略。

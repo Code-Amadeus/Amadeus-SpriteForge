@@ -256,3 +256,19 @@ Both outputs adapt to the input's aspect (550×742 for a 764×1028 canvas) and r
 at scale 1.387. Contact sheets show the measurements are real motion: the transition
 tilts the head slightly mid-way (25 px), and the loop adds a visible head tilt despite
 asking for "only slight breathing", then returns to its first frame.
+
+## Export encoding matches the shipped pack (2026-10-01)
+
+- Every sampled texture of the shipped Kurisu pack (426 of 7568, mouth overlays
+  included) records `toktx v4.4.2` with `--encode uastc --uastc_quality 4 --zcmp 18`,
+  one level and zstd supercompression. The earlier tools' encoder and the Amadeus
+  packaging script default to the same settings. The exporter used level 2, so the
+  subset export above was encoded at level 2.
+- The exporter now passes level 4. Its arguments, applied to the legacy source PNGs of
+  14 shipped frames (the first and middle frames of 7 clips), reproduced the shipped
+  textures byte for byte.
+- Level 4 took 1.76 s per 764×1028 frame, against 0.24 s at level 2 (toktx 4.4.2 on
+  CPU). A full Kurisu export (7552 frames) therefore needs about 3.7 hours of encoding.
+- A real level-4 export of the demo workspace passed this repository's validator and
+  Amadeus `tools/validate_character_pack.py`. All 9 of its textures record the new
+  settings.

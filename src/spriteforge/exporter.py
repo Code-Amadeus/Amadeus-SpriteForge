@@ -60,7 +60,8 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
     def encode(source: Path, relative: Path) -> str:
         target = staging / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run([encoder, "--t2", "--encode", "uastc", "--uastc_quality", "2",
+        # The shipped packs' settings: KTX-Software 4.4.2 reproduces their textures byte for byte.
+        result = subprocess.run([encoder, "--t2", "--encode", "uastc", "--uastc_quality", "4",
                                  "--zcmp", "18", "--target_type", "RGBA", str(target), str(source)],
                                 capture_output=True, text=True)
         if result.returncode:

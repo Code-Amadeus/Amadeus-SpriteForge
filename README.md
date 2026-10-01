@@ -166,7 +166,9 @@ rebuilt around the shipped frames, which stay unchanged. See [the production gui
 
 Install [KTX-Software](https://github.com/KhronosGroup/KTX-Software) separately.
 `toktx` is needed only for export and is not bundled. The reference export uses
-KTX-Software 4.4.2 and its UASTC KTX2 encoder.
+KTX-Software 4.4.2 with the settings of the shipped Amadeus packs (UASTC level 4,
+zstd 18), so a frame encodes to the same bytes as in those packs. Level 4 is slow:
+about 1.8 s per 764×1028 frame on the reference machine's CPU.
 
 ```powershell
 spriteforge validate-graph --workspace workspace
