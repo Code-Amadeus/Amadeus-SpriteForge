@@ -96,3 +96,35 @@ Installed packs are read-only comparison inputs. Texture changes are compared
 using encoded hashes from a recorded export with matching source hashes. Without
 that evidence, the UI reports a comparison awaiting encoding rather than treating
 PNG and KTX2 hashes as interchangeable.
+
+## Workflow execution boundary
+
+`production/workflow_ops.py` owns the fixed typed operation registry and reuses
+provider, normalization, QA and configured-processor primitives.
+`production/workflows.py` owns graph validation, durable documents, planning,
+execution and cache receipts. The browser displays and edits that registry; it
+does not execute imported node classes. Groups and coordinates are presentation
+metadata. Runtime graph and package formats are unchanged.
+
+Planning uses dependency cache identities: source fingerprints include actual
+bytes and relevant prompt versions, model/tool settings and canvas/anchor facts;
+downstream keys include validated upstream operation keys. No future generated
+pixels are guessed to calculate the paid count. Explicit reruns change one key
+and downstream keys. Artifact hashes and host provenance are retained separately
+in durable receipts, and completed paid results never expire automatically.
+
+A paid request is checkpointed before submission and its result is committed
+before downstream work. Its receipt is the single usage ledger for that workflow
+request, including fanout and resumed downloads. The host checks the exact current
+uncached paid count and imported-workflow disclosure before dispatch. A later
+local failure cannot silently submit the completed request again.
+
+Source authority remains with production records and exact approved bytes.
+Concept provenance persists through transforms and cache reuse, so normalization
+cannot grant it permission to become a formal pose. A legitimate image edit uses
+the approved normal base and may use a concept reference. Save operations create
+candidates only; decisions, published rendering and export have no workflow node.
+The server's existing job lock serializes workflows and reserves affected owners.
+It does not add a cross-process scheduler for separate CLI invocations.
+Guided and workflow image requests reuse the same provider locks, initialized
+under the API job lock. Local operations execute outside those provider queues.

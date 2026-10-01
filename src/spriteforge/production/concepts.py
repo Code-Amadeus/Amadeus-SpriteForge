@@ -176,17 +176,23 @@ def generate_sheet(workspace: Path, poses: object, grid: object, provider: str, 
     return sheet
 
 
-def import_sheet(workspace: Path, source: Path, poses: object, grid: object) -> dict:
+def import_sheet(workspace: Path, source: Path, poses: object, grid: object, *, source_facts: dict | None = None,
+                 prompt_snapshot: dict | None = None, source_inputs: dict | None = None) -> dict:
     source, grid = Path(source), grid_spec(grid)
     if not source.is_file() or source.suffix.lower() not in IMAGE_SUFFIXES:
         raise ValueError("Concept import needs an image file")
     split_grid(read_bgra(source)[0], grid)  # invalid sources fail before creating records
     character, records, library = _poses(workspace, poses, grid, create=True)
     image, base = still_input(workspace, character)
-    sheet = _new_sheet(workspace, grid, records, provider="manual", model=None, request=None,
-                       prompt=prompts.concept_prompt(library, character, records, grid),
-                       inputs={"base": {"take": base["still"], "sha256": base["sha256"], "file": "input.png"}, "assumed": True})
+    source_facts = source_facts or {"provider":"manual","model":None,"request":None}
+    sheet = _new_sheet(workspace, grid, records, provider=source_facts["provider"], model=source_facts.get("model"), request=source_facts.get("request"),
+                       prompt=prompt_snapshot if prompt_snapshot is not None else prompts.concept_prompt(library, character, records, grid),
+                       inputs={"base": {"take": base["still"], "sha256": base["sha256"], "file": "input.png"}, "assumed": True},
+                       **({"source":source_facts} if source_facts.get("workflow") else {}))
     write_durable(sheet_dir(workspace, sheet["id"]) / "input.png", image)
+    if source_inputs:
+        from .stills import copy_source_inputs
+        sheet["inputs"] = copy_source_inputs(workspace, sheet_dir(workspace,sheet["id"]),source_inputs)
     try:
         _store_image(workspace, sheet, source.read_bytes(), source.suffix.lower())
     except Exception as exc:

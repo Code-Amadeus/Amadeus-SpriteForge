@@ -1,28 +1,24 @@
-# Production preview recording
+# Studio preview recording
 
-- `production-pipeline.gif`: 960x648, 96 frames, approximately 12 seconds, looping,
-  approximately 5.8 MB. The 48 px title strip labels the four scenes.
-- `production-pipeline-poster.png`: original 1440x900 browser screenshot of the
-  production canvas, offered as a static alternative and for reading the UI text.
-- Source: the real SpriteForge `/production` page in Microsoft Edge, recorded on
-  2026-10-01 with Playwright video capture. It uses the existing neutral idle and
-  closed-eye smile stills, plus the Wan 3.0 transition and loop described in
-  [the validation record](../validation.md#wan-30-through-the-cli-on-account-credits-2026-10-01).
-  The same artwork is published under `examples/references/kurisu/`, since re-placed
-  on the shipped pack's framing (8.6 px further right); the recording shows the
-  earlier placement.
-- The recording uses a copy of that workspace with the current prompt library
-  switched to `live2d-idle.en.json` and the walkthrough's English action blocks.
-  The existing takes keep their original Chinese prompt snapshots; the recording
-  does not claim that the English template generated those earlier videos.
-- Views: production canvas (2 s), still comparison (4 s), transition preview (3 s),
-  loop preview and QA (3 s). Comparison switches between base, take and overlay.
-  The transition passes QA; the loop's head-motion `watch` remains visible.
-- Processing: trim the captures to these scenes, scale, add the scene title strip,
-  and encode with FFmpeg at 8 fps using a shared 224-color palette and Bayer
-  dithering. The source media and QA results are not regenerated or replaced.
-- This records review of already generated takes. It does not show generation
-  happening in 12 seconds, and no provider calls were made for the recording.
+- `production-pipeline.gif`: 1070 × 800, 96 frames at 8 fps, approximately
+  12 seconds and 1.3 MB, looping.
+- `production-pipeline-poster.png`: full Studio clip view. `studio-preview.png`
+  crops to the working panel so the character and text remain readable.
+- Source: the actual `/studio` interface in Microsoft Edge through Playwright,
+  using only the public stills in `examples/references/kurisu/`. The short frame
+  sequences blend those stills; they are demonstration inputs, not model output.
+- Scenes: clip comparison (3 s), processed candidate and QA (2 s), adopted
+  material library (1.5 s), graph and exact clip player (2.5 s), and a local
+  reverse/preview/save-candidate node workflow (3 s).
+- The recording really adopts the processed candidate through the UI. The
+  workflow confirms zero paid requests and leaves the destination's previously
+  adopted take unchanged. No provider, private legacy video or account is used.
+- Capture uses a 1280 × 800 CSS viewport at 1.5 device scale. The animation crops
+  the sidebar, retains the breadcrumb/view switch, and uses a shared 224-color
+  palette with Bayer dithering. Scene timing is edited for a short walkthrough.
+- Reproduce with `tools/studio_docs_demo.py` and `tools/record_studio_docs.cjs`.
+  They create an isolated workspace under ignored `test-results/` and replace
+  the documentation media. Set `SPRITEFORGE_PYTHON` and, on Windows,
+  `BROWSER_CHANNEL=msedge`; FFmpeg must be available.
 
-The captured character artwork follows the same provenance distinction as the
-other reviewer screenshots and published reference stills; see [NOTICE.md](../../NOTICE.md).
+Character artwork retains the provenance described in [NOTICE.md](../../NOTICE.md).

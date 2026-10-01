@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import urllib.parse
 import webbrowser
@@ -23,7 +24,13 @@ STATIC = {"review.js": "text/javascript", "review.css": "text/css", "preview-med
           "studio-review.js": "text/javascript", "studio-review.css": "text/css",
           "studio-behavior.js": "text/javascript", "studio-behavior.css": "text/css",
           "studio-export.js": "text/javascript", "studio-export.css": "text/css",
+          "studio-workflows.js": "text/javascript", "studio-workflows.css": "text/css",
           "i18n/en.js": "text/javascript", "i18n/zh-CN.js": "text/javascript"}
+
+
+class EditorHTTPServer(ThreadingHTTPServer):
+    # Let the OS size the pending connection queue for a page's static-resource burst.
+    request_queue_size = socket.SOMAXCONN
 
 
 def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = None) -> ThreadingHTTPServer:
@@ -111,7 +118,14 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
             qs = urllib.parse.parse_qs(parsed.query)
             try:
                 if parsed.path in {"/", "/production", "/studio"}:
-                    page = {"/": "review.html", "/production": "production.html", "/studio": "studio.html"}[parsed.path]
+                    if parsed.path == "/production" or (parsed.path == "/" and production is not None and production.available()):
+                        self.send_response(302)
+                        self.send_header("Location", "/studio")
+                        self.send_header("Content-Length", "0")
+                        self.send_header("Cache-Control", "no-store")
+                        self.end_headers()
+                        return
+                    page = "studio.html" if parsed.path == "/studio" else "review.html"
                     self.send(200, (WEB_ROOT / page).read_bytes(), "text/html; charset=utf-8")
                 elif parsed.path == "/favicon.ico":
                     self.send(204, b"", "image/x-icon")
@@ -121,6 +135,8 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                     self.json(200, self.production_api().overview())
                 elif parsed.path == "/api/production/jobs":
                     self.json(200, {"ok": True, "jobs": self.production_api().job_list()})
+                elif parsed.path == "/api/production/workflows" or parsed.path.startswith("/api/production/workflows/"):
+                    self.json(200, {"ok": True, **self.production_api().workflow_get(parsed.path.removeprefix("/api/production/workflows"))})
                 elif parsed.path == "/api/behavior/stats":
                     self.json(200, {"ok": True, **self.production_api().behavior_stats(
                         (qs.get("minutes") or ["10"])[0], (qs.get("seed") or ["1"])[0])})
@@ -138,7 +154,7 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                     self.send(200, data, "image/png")
                 elif parsed.path.startswith("/static/vendor/"):
                     name = parsed.path.rsplit("/", 1)[-1]
-                    if name not in {"pixi.min.js", "pixi-basis-ktx2.global.js", "basis_transcoder.js", "basis_transcoder.wasm"}:
+                    if name not in {"pixi.min.js", "pixi-basis-ktx2.global.js", "basis_transcoder.js", "basis_transcoder.wasm", "litegraph.core.js"}:
                         raise ValueError("Unknown browser dependency")
                     self.send(200, (WEB_ROOT / "vendor" / name).read_bytes(), "application/wasm" if name.endswith(".wasm") else "text/javascript")
                 elif parsed.path == "/api/projects":
@@ -325,7 +341,7 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
         def log_message(self, *args) -> None:
             pass
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return EditorHTTPServer(("127.0.0.1", port), Handler)
 
 
 def serve(workspace: Path, port: int, no_browser: bool, layout_path: Path | None = None) -> None:

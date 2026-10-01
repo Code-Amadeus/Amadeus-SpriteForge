@@ -42,7 +42,7 @@ def call(url, path, body=None, *, raw=None, content_type="application/json", hea
 
 def test_page_overview_decisions_and_prompt_versions(editor, studio):
     status, page, _ = call(editor, "/production")
-    assert status == 200 and b"/static/production.js" in page
+    assert status == 200 and b"/static/studio.js" in page
     assert call(editor, "/static/production.js")[0] == 200
     add_clip(studio.root, "smile_in", "idle", "smile")
     take = import_clip_take(studio.root, "smile_in", frame_folder(studio, "t", "idle", "smile", 20), fps=30)

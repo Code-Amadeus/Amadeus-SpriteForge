@@ -1,5 +1,7 @@
 "use strict";
-// Browser check of the production page against a synthetic workspace (needs the qa extra).
+// Legacy component fixture against a synthetic workspace (needs the qa extra).
+// Studio owns the public production route; retain these component regressions
+// while its native factories still share the old controls.
 const { chromium } = require("playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -33,7 +35,10 @@ const { spawn, spawnSync } = require("node:child_process");
     fs.mkdirSync("test-results", { recursive: true });
 
     // Canvas: cards, wires, the guide, a prompt version saved from a card, the side panel, a moved card.
-    await page.goto(url + "/production");
+    await page.route(url + "/__production_fixture", route => route.fulfill({
+      contentType: "text/html", body: fs.readFileSync(path.join(__dirname, "..", "src", "spriteforge", "web", "production.html"), "utf8")
+    }));
+    await page.goto(url + "/__production_fixture");
     await page.locator(".node[data-card='clip:smile_in']").waitFor();
     assert.equal(await page.locator(".node.pose").count(), 2);
     assert.equal(await page.locator(".node.clip").count(), 3);

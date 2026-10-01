@@ -103,7 +103,9 @@ def prepare(workspace: Path, kind: str, owner_id: str, target: Path) -> list[Pat
     return [*written, target / "prompt.json"]
 
 
-def import_clip_take(workspace: Path, clip_id: str, media: Path, *, fps: float | None = None, note: str = "") -> dict:
+def import_clip_take(workspace: Path, clip_id: str, media: Path, *, fps: float | None = None, note: str = "",
+                     source_facts: dict | None = None, prompt_snapshot: dict | None = None,
+                     source_inputs: dict | None = None) -> dict:
     character, clip = load_character(workspace), load_owner(workspace, "clip", clip_id)
     if not isinstance(note, str):
         raise ValueError("A take note must be text")
@@ -118,11 +120,15 @@ def import_clip_take(workspace: Path, clip_id: str, media: Path, *, fps: float |
     if not media.exists():
         raise ValueError(f"Clip media not found: {media}")
     first, last, inputs = clip_inputs(workspace, character, clip)
-    take, directory = new_take(workspace, "clip", clip_id, {"provider": "manual", "file": media.name, "note": note})
+    take, directory = new_take(workspace, "clip", clip_id, source_facts or {"provider": "manual", "file": media.name, "note": note})
     try:
-        take["prompt"] = clip_prompt(workspace, character, clip)
+        take["prompt"] = prompt_snapshot if prompt_snapshot is not None else clip_prompt(workspace, character, clip)
         _store_inputs(directory, first, last, inputs)
-        take["inputs"] = {**inputs, "assumed": True}
+        if source_inputs:
+            from .stills import copy_source_inputs
+            take["inputs"] = copy_source_inputs(workspace, directory, source_inputs)
+        else:
+            take["inputs"] = {**inputs, "assumed": True}
         if frames:
             for index, frame in enumerate(frames):
                 copy_durable(frame, directory / "frames" / f"{index:06d}.png")

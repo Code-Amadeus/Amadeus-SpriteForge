@@ -19,21 +19,22 @@ idle master ──measure──► character contract (canvas, head anchors, tol
         behavior graph (review page) ─► KTX2 character pack for Amadeus
 ```
 
-Everything lives in the authoring workspace under `production/`. The review page
-(`spriteforge review --workspace W`) gains a **Production** page at `/production`;
-every operation is also a `spriteforge production ...` command. Production and QA
+Everything lives in the authoring workspace under `production/`. Open Studio with
+`spriteforge review --workspace W`; initialized production workspaces open Studio
+by default, and `/production` redirects to `/studio`. Every operation is also a
+`spriteforge production ...` command. Production and QA
 need the `qa` extra (OpenCV, NumPy) and FFmpeg for video takes.
 
 ## Studio
 
-The staged Studio interface is available at `/studio`. Its shared shell follows
+The Studio interface is available at `/studio`. Its shared shell follows
 the dark green HTML prototype. **Generate & QA** and **Edit assets** are separate
 views, following the earlier local tools' division of work. Generate & QA has two
 ways to operate on the same workspace: the guided **Studio** and a **Node workflow**
 view. Generating or importing candidates, processing and per-asset QA happen on
 the production side. Approved assets feed graph editing, playback and export;
-assembly seams and graph timing are checked there. During the rollout,
-`/production` and `/` remain available with their existing behavior.
+assembly seams and graph timing are checked there. Uninitialized authoring
+workspaces and runtime packs retain the original reviewer at `/`.
 
 The Overview reads the same pose, take, render and graph records as the CLI.
 Missing statistics are shown as unknown rather than estimated from sample data.
@@ -76,8 +77,8 @@ candidate preview remains available. Processing a different take does not replac
 the current graph material. Changing its recipe or approved endpoint stills marks
 the processed result stale and requires another local processing pass.
 The Studio Canvas sends clip adoption to Clip Studio so its inspector shares the
-same review gate. The standalone legacy page and CLI retain their existing
-accept-then-render commands for compatibility.
+same review gate. The CLI retains its existing accept-then-render commands for
+compatibility; the shared legacy controls remain covered by a browser fixture.
 
 Behavior embeds the existing graph editor and exact node player, with a separate
 Stats tab for seeded automatic playback and first-hop intent tests. The editor's
@@ -682,3 +683,75 @@ Not migrated: clip-specific effects such as the front-to-side ghost trail (impor
 clips keep the frames that already have it). The
 earlier scripts write into a workspace path that no longer exists and extract with the
 removed FFmpeg option `-vsync`, silently falling back to OpenCV's colour conversion.
+
+## Candidate workflows
+
+Studio's Workflows page stores `spriteforge.workflow.v1` documents in
+`production/workflows/<id>.json`. Nodes use a fixed typed registry; imported JSON
+cannot define code, commands, approvals, published renders or exports. A configured
+external processor is selected by its name in `tools.json`. Its command stays in
+the machine's tool configuration. Workflow file paths resolve inside the selected
+workspace, including symlinks.
+
+The built-in templates are `transition`, `loop`, `speaking`, `final-still` and
+`concept-still`. Opening a guided pose or clip prefills its current settings.
+Opening a formal still with an existing concept reference keeps that reference
+and schedules no extra concept-sheet generation. A manual clip template copies
+an existing ready take into a new candidate without a paid request.
+
+```powershell
+spriteforge production workflow template loop --workspace studio --clip idle_loop `
+    --id idle-local --output idle-local.json
+spriteforge production workflow save --workspace studio idle-local.json
+spriteforge production workflow plan --workspace studio idle-local
+spriteforge production workflow run --workspace studio idle-local --yes-paid 0
+spriteforge production workflow export --workspace studio idle-local shared-workflow.json
+```
+
+`workflow run FILE_OR_ID --yes-paid N` requires the exact paid count reported by
+the current plan. A changed workflow, source, model or cache requires a new plan
+and confirmation. Running an imported file additionally requires `--ack-import`,
+after the plan lists its paid nodes and configured processor names. The page shows
+the same disclosure before its first run. Cost types are credits, plan quota, or
+metered billing; an unavailable price remains unavailable.
+
+Each run writes a workflow snapshot and node receipts under
+`production/workflows/runs/<run>/<node>/`. The execution order follows the validated
+acyclic graph. A failed node stops the run and later nodes remain unexecuted.
+Image/video artifacts, exact prompts, input hashes and source provenance stay
+with the receipts and resulting candidates. Concept origin survives local
+transformations and reroutes: a concept cell cannot become a pose take by being
+normalized. Image edits use an approved normal base with an optional concept
+reference. Generated dimensions may drift; returned pixels remain candidates
+for ordinary refinement, normalization and review.
+
+Cache keys combine the operation, its validated parameters, current source facts
+and upstream dependency identities. They include actual source bytes, selected
+prompt block versions, model settings, canvas/anchor facts and configured
+processor settings where those facts affect the result. View coordinates do not
+invalidate results. A dependency identity describes a validated operation; it
+does not pretend to know the future bytes of a provider output. Completed receipts
+also verify the actual artifact hashes and preserve their provenance.
+
+Paid cache entries do not expire automatically. `--rerun NODE` or the node's
+Re-run button changes that node's cache identity and its downstream identities.
+A completed paid result is committed before downstream normalization or saving,
+so retrying a later local failure reuses it. A submitted video task can resume
+downloading without another submission. An ambiguous or failed paid attempt,
+or damaged paid cached artifacts, requires an explicit rerun rather than a hidden
+retry. Request time is retained when a download resumes.
+
+The paid node receipt owns its recorded provider request and balance facts.
+Seven-day usage counts that receipt once, even when its artifact fans out to
+multiple Save nodes. Candidate `source.workflow` references the immutable run;
+copied provider facts remain available for details and matching cost history.
+No additional billing store or inferred price is created.
+
+Save nodes produce candidate pose/clip takes or concept sheets. A Still QA node
+only reports existing checks. Acceptance, rejection, clip processing, graph
+publication and export remain explicit Studio operations. The local server runs
+one workflow at a time and reserves its pose/clip owners against overlapping jobs
+or adoption. This scheduling boundary covers threads in that server; independent
+CLI processes remain outside it.
+Uncached workflow image edits and concept generation share the guided pages'
+existing provider lock; local nodes do not hold that queue.
