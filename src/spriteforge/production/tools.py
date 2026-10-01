@@ -17,13 +17,15 @@ import subprocess
 from pathlib import Path
 
 from ..workspace import atomic_json, read_json
-from .records import production_dir
+from .records import load_character, production_dir
 
 TOOLS_FORMAT = "spriteforge.production.tools.v1"
+UI_DEFAULTS = {"conceptProvider": "qwen-image", "stillProvider": "qwen-image", "batchConfirmThreshold": 3}
 
 
 def default_tools() -> dict:
     return {"format": TOOLS_FORMAT, "ffmpeg": "ffmpeg", "alpha": None, "interpolate": None,
+            "defaults": dict(UI_DEFAULTS),
             "providers": {
                 "wan": {"baseUrl": "https://dashscope.aliyuncs.com/api/v1", "model": "wan2.7-i2v-2026-04-25",
                         "apiKeyEnv": "DASHSCOPE_API_KEY", "pollSeconds": 10, "timeoutSeconds": 1800},
@@ -47,6 +49,7 @@ def load_tools(workspace: Path) -> dict:
         raise ValueError("Unsupported production/tools.json format")
     # Adapters added later appear with their defaults; entries in the file always win.
     tools["providers"] = {**default_tools()["providers"], **(tools.get("providers") or {})}
+    tools["defaults"] = {**UI_DEFAULTS, **(tools.get("defaults") or {})}
     for name in ("alpha", "interpolate"):
         spec = tools.get(name)
         if spec is not None and (not isinstance(spec, dict) or not isinstance(spec.get("command"), list)
@@ -57,6 +60,34 @@ def load_tools(workspace: Path) -> dict:
 
 def save_tools(workspace: Path, tools: dict) -> None:
     atomic_json(production_dir(workspace) / "tools.json", tools)
+
+
+def ui_settings(tools: dict) -> dict:
+    """Expose only documented UI settings, never provider credentials or commands."""
+    defaults = tools.get("defaults") or {}
+    return {"defaults": {key: defaults.get(key, value) for key, value in UI_DEFAULTS.items()},
+            "amadeus": {"packDir": (tools.get("amadeus") or {}).get("packDir")}}
+
+
+def set_ui_defaults(workspace: Path, changes: object) -> dict:
+    """Update the three UI defaults while retaining machine-local tool configuration."""
+    from .providers import IMAGE_PROVIDERS
+
+    if not isinstance(changes, dict) or set(changes) - UI_DEFAULTS.keys():
+        raise ValueError("Settings only accept conceptProvider, stillProvider and batchConfirmThreshold")
+    for key, value in changes.items():
+        if key == "batchConfirmThreshold":
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError("batchConfirmThreshold must be a positive integer")
+        elif not isinstance(value, str) or value not in IMAGE_PROVIDERS:
+            raise ValueError(f"{key} must name a supported image provider: {', '.join(IMAGE_PROVIDERS)}")
+    tools = load_tools(workspace)
+    if not changes:
+        return ui_settings(tools)["defaults"]
+    load_character(workspace)
+    tools["defaults"].update(changes)
+    save_tools(workspace, tools)
+    return ui_settings(tools)["defaults"]
 
 
 def run_processor(tools: dict, name: str, source: Path, target: Path, **values: object) -> None:

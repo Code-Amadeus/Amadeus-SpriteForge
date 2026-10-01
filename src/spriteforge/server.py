@@ -15,7 +15,9 @@ from .workspace import atomic_json, clip_frames, discover, png_frames, read_json
 
 WEB_ROOT = Path(__file__).parent / "web"
 STATIC = {"review.js": "text/javascript", "review.css": "text/css", "preview-media.js": "text/javascript",
-          "production.js": "text/javascript", "production-canvas.js": "text/javascript", "production.css": "text/css"}
+          "production.js": "text/javascript", "production-canvas.js": "text/javascript", "production.css": "text/css",
+          "studio.js": "text/javascript", "studio-tools.js": "text/javascript", "studio.css": "text/css",
+          "i18n/en.js": "text/javascript", "i18n/zh-CN.js": "text/javascript"}
 
 
 def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = None) -> ThreadingHTTPServer:
@@ -102,8 +104,8 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
             parsed = urllib.parse.urlparse(self.path)
             qs = urllib.parse.parse_qs(parsed.query)
             try:
-                if parsed.path in {"/", "/production"}:
-                    page = "review.html" if parsed.path == "/" else "production.html"
+                if parsed.path in {"/", "/production", "/studio"}:
+                    page = {"/": "review.html", "/production": "production.html", "/studio": "studio.html"}[parsed.path]
                     self.send(200, (WEB_ROOT / page).read_bytes(), "text/html; charset=utf-8")
                 elif parsed.path == "/favicon.ico":
                     self.send(204, b"", "image/x-icon")

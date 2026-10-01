@@ -139,6 +139,11 @@ def _summary(owner: dict, take: dict) -> dict:
     return {**{k: take.get(k) for k in keep}, "status": take_status(owner, take)}
 
 
+def _takes(workspace: Path, kind: str, owner: dict) -> list[dict]:
+    takes = sorted(list_takes(workspace, kind, owner["id"]), key=lambda take: (take["createdAt"], take["id"]))
+    return [{**_summary(owner, take), "version": index} for index, take in enumerate(takes, 1)]
+
+
 def _preview(render, library: dict, character: dict, owner: dict) -> dict:
     """A prompt preview that reports a template error instead of failing the whole overview."""
     try:
@@ -148,13 +153,15 @@ def _preview(render, library: dict, character: dict, owner: dict) -> dict:
 
 
 def overview(workspace: Path) -> dict:
+    from .studio import studio_summary
+    from .tools import ui_settings
     character = load_character(workspace)
     tools = load_tools(workspace)
     library = prompts.load_library(workspace)
     anchors_take = (character.get("anchors") or {}).get("take")
     poses = []
     for pose in list_owners(workspace, "pose"):
-        takes = [_summary(pose, t) for t in list_takes(workspace, "pose", pose["id"])]
+        takes = _takes(workspace, "pose", pose)
         accepted = next((t for t in takes if t["status"] == "accepted"), None)
         recheck = bool(accepted and pose["id"] != character["basePose"]
                        and (accepted.get("qa") or {}).get("anchorsTake") != anchors_take)
@@ -164,17 +171,18 @@ def overview(workspace: Path) -> dict:
     for clip in list_owners(workspace, "clip"):
         state, reasons = render_freshness(workspace, clip)
         render = read_render(workspace, clip["id"])
-        clips.append({**clip, "takes": [_summary(clip, t) for t in list_takes(workspace, "clip", clip["id"])],
+        clips.append({**clip, "takes": _takes(workspace, "clip", clip),
                       "promptPreview": _preview(prompts.clip_prompt, library, character, clip), "output": output_root(clip["id"]),
                       "render": {"state": state, "reasons": reasons, **({k: render.get(k) for k in (
-                          "take", "frameCount", "frameIntervalMs", "loopMode", "phase", "renderedAt", "qa", "mouth")} if render else {})}})
+                          "take", "frameCount", "frameIntervalMs", "loopMode", "phase", "renderedAt", "durationS", "qa", "mouth")} if render else {})}})
     providers = {name: {"kind": "video" if name in PROVIDERS else "image" if name in IMAGE_PROVIDERS else None,
                         "model": config.get("model"), **provider_status(name, config)}
                  for name, config in (tools.get("providers") or {}).items()}
     return {"character": character, "prompts": library, "poses": poses, "clips": clips,
             "canvas": canvas_layout(workspace),
+            **studio_summary(workspace, character, poses, clips),
             "tools": {"ffmpeg": bool(shutil.which(tools.get("ffmpeg") or "ffmpeg")), "alpha": bool(tools.get("alpha")),
-                      "interpolate": bool(tools.get("interpolate")), "providers": providers}}
+                      "interpolate": bool(tools.get("interpolate")), "providers": providers, **ui_settings(tools)}}
 
 
 def canvas_layout(workspace: Path) -> dict[str, list[float]]:

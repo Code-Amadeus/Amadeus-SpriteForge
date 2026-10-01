@@ -1,17 +1,32 @@
 "use strict";
+(() => {
+function createProduction(context = null) {
 // Production page: the canvas of poses and clips, still approval, video takes, prompt versions and jobs.
 // Only the visible tab is drawn: detail views share element ids (render preview, uploads).
-const $ = (id) => document.getElementById(id);
+const $ = (id) => context ? context.root.querySelector(`#${id}`) : document.getElementById(id);
 const TABS = ["canvas", "stills", "clips", "prompts", "jobs"];
 let activeTab = "canvas";
 const media = (path) => "/api/production/media?path=" + encodeURIComponent(path);
 const frameUrl = (path) => "/frame?path=" + encodeURIComponent(path);
 const selection = { pose: null, poseTake: null, clip: null };
-let state = null;
-let jobs = [];
+let state = context ? context.state : null;
+let jobs = context ? context.jobs : [];
+let jobFilter = "all";
 let jobTimer = null;
 let previewTimer = null;
 let wasRunning = false;
+let disposed = false;
+let actionPending = false;
+let previewGeneration = 0;
+let renderedLanguage = context && window.SFStudio.language;
+const fieldBaselines = new WeakMap();
+const tx = (key, fallback, params = {}) => {
+  const translated = context && context.t(`production.${key}`, params);
+  return (translated && translated !== `production.${key}` ? translated : fallback)
+    .replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? `{${name}}`));
+};
+let canvas;
+let setupCanvas, renderCanvas, clearCanvas;
 
 function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
@@ -40,12 +55,39 @@ function fill(el, ...children) {
   return append(el, children);
 }
 
-const badge = (text, kind) => h("span", { class: `badge ${kind || text}` }, text);
+// A remounted record may change while the user is editing it. Preserve only local
+// edits, keyed by the existing field contract; authoritative unedited values refresh.
+const fieldKey = (el) => el.id || (el.dataset.setting ? `setting:${el.dataset.setting}` : el.dataset.block ? `block:${el.dataset.block}`
+  : el.dataset.diffFrom ? `diff-from:${el.dataset.diffFrom}` : el.dataset.diffTo ? `diff-to:${el.dataset.diffTo}` : null);
+const fieldValue = (el) => el.type === "checkbox" ? el.checked : el.value;
+function rememberFields(root) {
+  root.querySelectorAll("input:not([type=file]), select, textarea").forEach((el) => fieldBaselines.set(el, fieldValue(el)));
+}
+function captureFields(root) {
+  return [...root.querySelectorAll("input:not([type=file]), select, textarea")].filter((el) => fieldKey(el) && fieldBaselines.has(el) && fieldBaselines.get(el) !== fieldValue(el))
+    .map((el) => [fieldKey(el), fieldValue(el)]);
+}
+function restoreFields(root, drafts) {
+  const fields = [...root.querySelectorAll("input:not([type=file]), select, textarea")];
+  for (const [key, value] of drafts) {
+    const el = fields.find((field) => fieldKey(field) === key);
+    if (!el) continue;
+    if (el.type === "checkbox") el.checked = value;
+    else el.value = value;
+    // These handlers update local editor controls only; select change handlers may
+    // write records, so restoring a field must never dispatch a change event.
+    if (el.oninput) el.oninput();
+  }
+}
+
+const badge = (text, kind) => h("span", { class: `badge ${kind || text}` }, String(text).startsWith("QA ")
+  ? tx("qaStatus", "QA {status}", { status: tx(`status.${text.slice(3)}`, text.slice(3)) }) : tx(`status.${text}`, text));
 const blockVersions = (blocks) => Object.entries(blocks || {}).map(([b, v]) => `${b} v${v}`).join(", ");
 const stillFile = (pose, take) => `production/poses/${pose.id}/takes/${take.id}/${take.media.still}`;
 const takeFile = (clip, take, name) => `production/clips/${clip.id}/takes/${take.id}/${name}`;
 
 async function api(path, body) {
+  if (context) return context.api(path, body);
   const options = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
   const response = await fetch(path, options);
   const data = await response.json();
@@ -54,6 +96,7 @@ async function api(path, body) {
 }
 
 function toast(message, error = false) {
+  if (context) return context.toast(message, error);
   const el = $("toast");
   el.textContent = message;
   el.className = error ? "error" : "";
@@ -63,6 +106,12 @@ function toast(message, error = false) {
 }
 
 async function run(action, message) {
+  if (context) {
+    if (disposed || actionPending) return null;
+    actionPending = true;
+    try { return await context.run(action, message); }
+    finally { actionPending = false; }
+  }
   try {
     const result = await action();
     if (message) toast(message);
@@ -75,6 +124,7 @@ async function run(action, message) {
 }
 
 async function refresh() {
+  if (context) return context.refresh();
   state = await api("/api/production");
   render();
 }
@@ -97,6 +147,13 @@ function render() {
 function renderActive() {
   if (!state || !state.initialized) return;
   clearInterval(previewTimer);
+  previewGeneration++;
+  if (context) {
+    if (activeTab === "canvas") renderCanvas();
+    else if (activeTab === "prompts") renderPrompts();
+    else if (activeTab === "jobs") renderJobs();
+    return;
+  }
   if (activeTab !== "stills") { fill($("poseList")); fill($("poseDetail")); }
   if (activeTab !== "clips") { fill($("clipList")); fill($("clipDetail")); }
   if (activeTab !== "prompts") fill($("promptList"));
@@ -143,7 +200,7 @@ function renderPoses() {
 }
 
 function renderPoseDetail(pose, root = $("poseDetail")) {
-  if (!pose) { fill(root, h("p", { class: "muted" }, "Add a pose to start.")); return; }
+  if (!pose) { fill(root, h("p", { class: "muted" }, tx("addPoseHint", "Add a pose to start."))); return; }
   const ready = pose.takes.filter((t) => t.state === "ready" && t.media && t.media.still);
   const current = ready.find((t) => t.id === selection.poseTake) || ready.find((t) => t.status === "accepted") || ready[ready.length - 1];
   selection.poseTake = current ? current.id : null;
@@ -152,23 +209,23 @@ function renderPoseDetail(pose, root = $("poseDetail")) {
   const expected = pose.expected || {};
   fill(root,
     h("div", { class: "row" }, h("h2", {}, pose.id), pose.description ? h("span", { class: "muted" }, pose.description) : null,
-      Object.keys(expected).length ? badge("intended offset " + JSON.stringify(expected), "watch") : null,
-      pose.needsRecheck ? badge("base anchors changed: approve again", "watch") : null),
+      Object.keys(expected).length ? badge(tx("offset", "intended offset {offset}", { offset: JSON.stringify(expected) }), "watch") : null,
+      pose.needsRecheck ? badge(tx("anchorsChanged", "base anchors changed: approve again"), "watch") : null),
     h("div", { class: "row", style: "margin:8px 0" }, stillGenerateControl(pose),
-      h("label", { class: "tiny" }, "Import a generated still ", upload), closedMouthControl(pose)),
-    current ? comparePanel(pose, current) : h("p", { class: "muted" }, "No normalised still yet. Import a generated or edited image."),
-    h("h3", {}, "Takes"),
+      h("label", { class: "tiny" }, tx("importStill", "Import a generated still "), upload), closedMouthControl(pose)),
+    current ? comparePanel(pose, current) : h("p", { class: "muted" }, tx("noNormalizedStill", "No normalised still yet. Import a generated or edited image.")),
+    h("h3", {}, tx("takes", "Takes")),
     h("div", { class: "grid" }, pose.takes.slice().reverse().map((t) => poseTakeCard(pose, t, t.id === selection.poseTake))),
-    h("h3", {}, pose.id === state.character.basePose ? "Prompt" : "Prompt for the still editor (input: the base still)"),
+    h("h3", {}, pose.id === state.character.basePose ? tx("prompt", "Prompt") : tx("stillPrompt", "Prompt for the still editor (input: the base still)")),
     promptView(pose.promptPreview));
 }
 
 function stillGenerateHint(pose, name) {
   const provider = state.tools.providers[name];
-  if (!acceptedStill(state.character.basePose)) return `Approve the ${state.character.basePose} still first`;
-  if (!pose.promptPreview.complete) return "Write the prompt placeholders first";
-  if (!state.tools.alpha) return "Configure the alpha processor: provider images are opaque";
-  if (!provider.keySet) return `Set the API key environment variable for ${name}`;
+  if (!acceptedStill(state.character.basePose)) return tx("approveBase", "Approve the {pose} still first", { pose: state.character.basePose });
+  if (!pose.promptPreview.complete) return tx("writePlaceholders", "Write the prompt placeholders first");
+  if (!state.tools.alpha) return tx("alphaRequired", "Configure the alpha processor: provider images are opaque");
+  if (!provider.keySet) return tx("apiKey", "Set the API key environment variable for {provider}", { provider: name });
   return "";
 }
 
@@ -176,20 +233,20 @@ function stillGenerateControl(pose) {
   const names = Object.keys(state.tools.providers).filter((name) => state.tools.providers[name].kind === "image");
   if (pose.id === state.character.basePose || !names.length) return null;
   const select = h("select", { id: "stillProvider" }, names.map((name) => h("option", { value: name }, name)));
-  const button = h("button", { class: "primary", id: "generateStillBtn" }, "Generate still");
+  select.value = state.tools.defaults && state.tools.defaults.stillProvider || names[0];
+  const button = h("button", { class: "primary", id: "generateStillBtn" }, tx("generateStill", "Generate still"));
   const update = () => {
     const hint = stillGenerateHint(pose, select.value);
     button.disabled = Boolean(hint);
-    button.title = hint || `Edit the approved ${state.character.basePose} still with ${select.value}`;
+    button.title = hint || tx("editBase", "Edit the approved {pose} still with {provider}", { pose: state.character.basePose, provider: select.value });
   };
   select.onchange = update;
   button.onclick = () => {
     const model = state.tools.providers[select.value].model;
-    if (window.confirm(`Submit a paid image edit of the ${state.character.basePose} still into ${pose.id} ` +
-      `to ${select.value} (${model})?`)) startJob("generate", { pose: pose.id }, { provider: select.value });
+    if (window.confirm(tx("confirmStill", "Submit a paid image edit of the {base} still into {pose} to {provider} ({model})?", { base: state.character.basePose, pose: pose.id, provider: select.value, model }))) startJob("generate", { pose: pose.id }, { provider: select.value });
   };
   update();
-  return h("span", { class: "row" }, h("label", { class: "tiny" }, "Image editor ", select), button);
+  return h("span", { class: "row" }, h("label", { class: "tiny" }, tx("imageEditor", "Image editor "), select), button);
 }
 
 function closedMouthControl(pose) {
@@ -198,18 +255,18 @@ function closedMouthControl(pose) {
   const shared = character.closedMouth || character.basePose;
   const options = base ? state.poses.map((p) => p.id) : ["", ...state.poses.map((p) => p.id)];
   const select = h("select", { id: "closedMouthSelect" }, options.map((id) =>
-    h("option", { value: id }, id || `shared (${shared})`)));
+    h("option", { value: id }, id || tx("sharedMouth", "shared ({pose})", { pose: shared }))));
   select.value = base ? shared : (pose.closedMouth || "");
   select.onchange = () => run(() => api("/api/production/closed-mouth", base ? { source: select.value }
-    : { pose: pose.id, source: select.value || null }), "Closed mouth updated; affected speaking loops are now stale");
-  return h("label", { class: "tiny" }, base ? "Shared closed mouth for speaking loops " : "Closed mouth for this pose's speaking loops ", select);
+    : { pose: pose.id, source: select.value || null }), tx("closedMouthChanged", "Closed mouth updated; affected speaking loops are now stale"));
+  return h("label", { class: "tiny" }, base ? tx("sharedClosedMouth", "Shared closed mouth for speaking loops ") : tx("poseClosedMouth", "Closed mouth for this pose's speaking loops "), select);
 }
 
 function comparePanel(pose, take) {
   const { width, height } = state.character.canvas;
   const canvas = h("canvas", { width, height, id: "compareCanvas" });
-  const mode = h("select", { id: "compareMode" }, ["overlay", "difference", "take only", "base only"].map((m) => h("option", { value: m }, m)));
-  const opacity = h("input", { type: "range", min: 0, max: 100, value: 50 });
+  const mode = h("select", { id: "compareMode" }, [tx("overlay", "overlay"), tx("difference", "difference"), tx("takeOnly", "take only"), tx("baseOnly", "base only")].map((m) => h("option", { value: m }, m)));
+  const opacity = h("input", { id: "compareOpacity", type: "range", min: 0, max: 100, value: 50 });
   const images = {};
   const load = (key, path) => new Promise((resolve) => {
     if (!path) { resolve(); return; }
@@ -221,10 +278,10 @@ function comparePanel(pose, take) {
   const draw = () => {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, width, height);
-    if (images.base && mode.value !== "take only") ctx.drawImage(images.base, 0, 0);
-    if (images.take && mode.value !== "base only") {
-      ctx.globalCompositeOperation = mode.value === "difference" ? "difference" : "source-over";
-      ctx.globalAlpha = mode.value === "overlay" && images.base ? opacity.value / 100 : 1;
+    if (images.base && mode.value !== tx("takeOnly", "take only")) ctx.drawImage(images.base, 0, 0);
+    if (images.take && mode.value !== tx("baseOnly", "base only")) {
+      ctx.globalCompositeOperation = mode.value === tx("difference", "difference") ? tx("difference", "difference") : "source-over";
+      ctx.globalAlpha = mode.value === tx("overlay", "overlay") && images.base ? opacity.value / 100 : 1;
       ctx.drawImage(images.take, 0, 0);
       ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = 1;
@@ -237,9 +294,8 @@ function comparePanel(pose, take) {
   Promise.all([load("base", base), load("take", stillFile(pose, take))]).then(draw);
   return h("div", { class: "compare" }, canvas,
     h("div", {},
-      h("div", { class: "row" }, "View", mode, "Opacity", opacity),
-      h("p", { class: "tiny" }, "Cyan: base head top and head centre. Amber: this pose's intended offset. " +
-        "Only the character's cut edges (" + state.character.cutEdges.join(", ") + ") may touch the canvas."),
+      h("div", { class: "row" }, tx("view", "View"), mode, tx("opacity", "Opacity"), opacity),
+      h("p", { class: "tiny" }, tx("guideLines", "Cyan: base head top and head centre. Amber: this pose's intended offset. Only the character's cut edges ({edges}) may touch the canvas.", { edges: state.character.cutEdges.join(", ") })),
       take.qa ? metricsTable(pose, take.qa.metrics) : null,
       qaList(take.qa)));
 }
@@ -264,11 +320,11 @@ function metricsTable(pose, metrics) {
   const expected = { ...anchors, ...(pose.expected || {}) };
   const row = (name, value, target) => h("tr", {}, h("td", {}, name), h("td", {}, value),
     h("td", {}, target === undefined ? "—" : target), h("td", {}, target === undefined ? "—" : (value - target).toFixed(2)));
-  return h("table", {}, h("tr", {}, h("th", {}, "Metric"), h("th", {}, "This still"), h("th", {}, "Expected"), h("th", {}, "Δ")),
-    row("head top (px)", metrics.headTopY, expected.headTopY),
-    row("head centre (px)", metrics.headCenterX, expected.headCenterX),
-    row("visible area", metrics.area, anchors.area),
-    h("tr", {}, h("td", {}, "edges touched"), h("td", { colspan: 3 }, metrics.edges.join(", ") || "none")));
+  return h("table", {}, h("tr", {}, h("th", {}, tx("metric", "Metric")), h("th", {}, tx("thisStill", "This still")), h("th", {}, tx("expected", "Expected")), h("th", {}, "Δ")),
+    row(tx("headTop", "head top (px)"), metrics.headTopY, expected.headTopY),
+    row(tx("headCenter", "head centre (px)"), metrics.headCenterX, expected.headCenterX),
+    row(tx("visibleArea", "visible area"), metrics.area, anchors.area),
+    h("tr", {}, h("td", {}, tx("edgesTouched", "edges touched")), h("td", { colspan: 3 }, metrics.edges.join(", ") || tx("status.none", "none"))));
 }
 
 function poseTakeCard(pose, take, selected) {
@@ -279,14 +335,14 @@ function poseTakeCard(pose, take, selected) {
       h("span", { class: "tiny" }, take.id)),
     h("div", { class: "tiny" }, [stillSource(take.source), take.normalization && take.normalization.method].filter(Boolean).join(" · ")),
     take.error ? h("div", { class: "tiny", style: "color:var(--bad)" }, take.error) : null,
-    take.rejected ? h("div", { class: "tiny" }, "Rejected: " + (take.rejected.reason || "no reason given")) : null,
+    take.rejected ? h("div", { class: "tiny" }, tx("rejectedReason", "Rejected: {reason}", { reason: take.rejected.reason || tx("noReason", "no reason given") })) : null,
     h("div", { class: "row actions" }, decisionButtons("pose", pose.id, take)));
 }
 
 function stillSource(source) {
   if (!source) return "";
   if (source.provider === "manual") return source.note;
-  if (source.provider === "clip") return `frame ${source.frame} of ${source.clip} take ${source.take}`;
+  if (source.provider === "clip") return tx("frameSource", "frame {frame} of {clip} take {take}", { frame: source.frame, clip: source.clip, take: source.take });
   return `${source.provider} ${source.model}`;
 }
 
@@ -295,16 +351,16 @@ function decisionButtons(kind, owner, take) {
   const decide = (action) => async () => {
     let reason = "";
     if (action === "reject") {
-      reason = window.prompt("Why is this take rejected? It stays in the archive with this note.", "");
+      reason = window.prompt(tx("rejectReason", "Why is this take rejected? It stays in the archive with this note."), "");
       if (reason === null) return;
     }
     await run(() => api("/api/production/decision", { kind, owner, take: take.id, action, reason }),
-      `${action === "accept" ? "Accepted" : action === "reject" ? "Archived" : "Restored"} ${take.id}`);
+      tx(action === "accept" ? "decisionAccepted" : action === "reject" ? "decisionArchived" : "decisionRestored", `${action === "accept" ? "Accepted" : action === "reject" ? "Archived" : "Restored"} {take}`, { take: take.id }));
   };
   return [
-    take.status === "candidate" ? h("button", { class: "primary", onclick: decide("accept") }, kind === "pose" ? "Approve still" : "Use this take") : null,
-    take.status !== "rejected" ? h("button", { class: "danger", onclick: decide("reject") }, "Reject & archive") : null,
-    take.status === "rejected" ? h("button", { onclick: decide("restore") }, "Restore") : null,
+    take.status === "candidate" ? h("button", { class: "primary", onclick: decide("accept") }, kind === "pose" ? tx("approveStill", "Approve still") : tx("useTake", "Use this take")) : null,
+    take.status !== "rejected" ? h("button", { class: "danger", onclick: decide("reject") }, tx("rejectArchive", "Reject & archive")) : null,
+    take.status === "rejected" ? h("button", { onclick: decide("restore") }, tx("restore", "Restore")) : null,
   ];
 }
 
@@ -328,9 +384,9 @@ function firstFrameOnly(clip) {
 
 // What blocks generating or importing a take: a missing still at either end.
 function stillsHint(clip) {
-  if (!acceptedStill(clip.from)) return `Approve a still for ${clip.from} first`;
+  if (!acceptedStill(clip.from)) return tx("approvePose", "Approve a still for {pose} first", { pose: clip.from });
   if (!firstFrameOnly(clip) && !acceptedStill(clip.to)) {
-    return `Approve a still for ${clip.to}, or set the last frame input to none and adopt a frame of a take as that still`;
+    return tx("approveEnd", "Approve a still for {pose}, or set the last frame input to none and adopt a frame of a take as that still", { pose: clip.to });
   }
   return "";
 }
@@ -338,18 +394,18 @@ function stillsHint(clip) {
 function generateHint(clip, provider) {
   const stills = stillsHint(clip);
   if (stills) return stills;
-  if (clip.generation.provider === "manual") return "Manual clips: copy the prompt and inputs into your generator, then import the video";
-  if (!clip.promptPreview.complete) return "Write the prompt placeholders first";
+  if (clip.generation.provider === "manual") return tx("manualHint", "Manual clips: copy the prompt and inputs into your generator, then import the video");
+  if (!clip.promptPreview.complete) return tx("writePlaceholders", "Write the prompt placeholders first");
   if (!provider || !provider.keySet) {
-    return provider && provider.credential === "login" ? `Log in to ${clip.generation.provider} first (wan auth login)`
-      : `Set the API key environment variable for ${clip.generation.provider}`;
+    return provider && provider.credential === "login" ? tx("loginRequired", "Log in to {provider} first (wan auth login)", { provider: clip.generation.provider })
+      : tx("apiKey", "Set the API key environment variable for {provider}", { provider: clip.generation.provider });
   }
   return "";
 }
 
 function renderClipDetail(clip, root = $("clipDetail")) {
   clearInterval(previewTimer);
-  if (!clip) { fill(root, h("p", { class: "muted" }, "Add a clip between two approved poses.")); return; }
+  if (!clip) { fill(root, h("p", { class: "muted" }, tx("addClipHint", "Add a clip between two approved poses."))); return; }
   const provider = state.tools.providers[clip.generation.provider];
   const hint = generateHint(clip, provider);
   const upload = h("input", { type: "file", accept: "video/mp4,video/webm,video/quicktime", id: "takeUpload",
@@ -357,23 +413,23 @@ function renderClipDetail(clip, root = $("clipDetail")) {
   const active = clip.takes.filter((t) => t.status !== "rejected").reverse();
   const archived = clip.takes.filter((t) => t.status === "rejected").reverse();
   fill(root,
-    h("div", { class: "row" }, h("h2", {}, clip.id), h("span", { class: "muted" }, `${clip.from} → ${clip.to} · ${clip.kind} · phase ${clip.phase}`)),
-    h("div", { class: "inputs", style: "max-width:320px" }, endpoint(clip.from, "first frame"),
-      endpoint(clip.to, firstFrameOnly(clip) ? "last frame (not sent)" : "last frame")),
+    h("div", { class: "row" }, h("h2", {}, clip.id), h("span", { class: "muted" }, tx("clipSummary", "{from} → {to} · {kind} · phase {phase}", { from: clip.from, to: clip.to, kind: tx(`status.${clip.kind}`, clip.kind), phase: clip.phase }))),
+    h("div", { class: "inputs", style: "max-width:320px" }, endpoint(clip.from, tx("firstFrame", "first frame")),
+      endpoint(clip.to, firstFrameOnly(clip) ? tx("lastNotSent", "last frame (not sent)") : tx("lastFrame", "last frame"))),
     inputLinks(clip),
-    h("h3", {}, "Settings"), settingsForm(clip),
-    h("h3", {}, "Prompt"), promptView(clip.promptPreview),
+    h("h3", {}, tx("settings", "Settings")), settingsForm(clip),
+    h("h3", {}, tx("prompt", "Prompt")), promptView(clip.promptPreview),
     h("div", { class: "row", style: "margin-top:8px" },
       h("button", { class: "primary", id: "generateBtn", disabled: Boolean(hint), title: hint, onclick: () => generate(clip) },
-        clip.generation.provider === "manual" ? "Manual provider" : `Generate with ${clip.generation.provider}`),
-      h("label", { class: "tiny" }, "Import a take ", upload),
-      h("button", { id: "renderBtn", disabled: !clip.acceptedTake, onclick: () => startJob("render", { clip: clip.id }) }, "Render accepted take")),
+        clip.generation.provider === "manual" ? tx("manualProvider", "Manual provider") : tx("generateWith", "Generate with {provider}", { provider: clip.generation.provider })),
+      h("label", { class: "tiny" }, tx("importTake", "Import a take "), upload),
+      h("button", { id: "renderBtn", disabled: !clip.acceptedTake, onclick: () => startJob("render", { clip: clip.id }) }, tx("renderAccepted", "Render accepted take"))),
     hint ? h("div", { class: "tiny" }, hint) : null,
-    h("h3", {}, "Takes"),
-    active.length ? h("div", { class: "grid" }, active.map((t) => clipTakeCard(clip, t))) : h("p", { class: "muted" }, "No takes yet."),
-    archived.length ? h("details", {}, h("summary", {}, `Archive (${archived.length} rejected)`),
+    h("h3", {}, tx("takes", "Takes")),
+    active.length ? h("div", { class: "grid" }, active.map((t) => clipTakeCard(clip, t))) : h("p", { class: "muted" }, tx("noTakes", "No takes yet.")),
+    archived.length ? h("details", {}, h("summary", {}, tx("archive", "Archive ({count} rejected)", { count: archived.length })),
       h("div", { class: "grid" }, archived.map((t) => clipTakeCard(clip, t)))) : null,
-    h("h3", {}, "Render"), renderPanel(clip));
+    h("h3", {}, tx("render", "Render")), renderPanel(clip));
 }
 
 // The exact images a generator receives (flattened on the background, input scale applied), for
@@ -383,48 +439,49 @@ function inputLinks(clip) {
     download: `${clip.id}-${end}.png`, class: "input-link" }, `${end}.png`);
   const ends = [acceptedStill(clip.from) ? "first" : null, !firstFrameOnly(clip) && acceptedStill(clip.to) ? "last" : null].filter(Boolean);
   if (!ends.length) return null;
-  return h("div", { class: "row tiny", style: "margin-top:6px" }, "Generator inputs:", ends.map(link),
-    h("span", {}, "· import the video you make from them as a take"));
+  return h("div", { class: "row tiny", style: "margin-top:6px" }, tx("generatorInputs", "Generator inputs:"), ends.map(link),
+    h("span", {}, tx("importInputsHint", "· import the video you make from them as a take")));
 }
 
 function endpoint(poseId, label) {
   const path = acceptedStill(poseId);
   return h("div", {}, h("div", { class: "tiny" }, `${label}: ${poseId}`),
-    path ? h("img", { src: media(path) }) : badge("still not approved", "missing"));
+    path ? h("img", { src: media(path) }) : badge(tx("stillNotApproved", "still not approved"), "missing"));
 }
 
 function settingsForm(clip) {
   const fields = [
-    ["provider", "Provider", "select", clip.generation.provider,
+    ["provider", tx("provider", "Provider"), "select", clip.generation.provider,
       ["manual", ...Object.keys(state.tools.providers).filter((name) => state.tools.providers[name].kind === "video")]],
-    ["duration", "Duration (s)", "number", clip.generation.durationS],
-    ["resolution", "Resolution", "text", clip.generation.resolution],
-    ["seed", "Seed", "number", clip.generation.seed ?? ""],
-    ["input_scale", "Input scale", "number", clip.generation.inputScale],
-    ["register", "Register ends to the stills", "checkbox", clip.processing.register !== false],
-    ["margin", "Canvas margin each side (px)", "number", clip.processing.marginPx || 0],
-    ["interpolate", "Interpolate ×", "number", clip.processing.interpolate],
-    ["lock_head", "Lock head frames", "number", clip.processing.lockHeadFrames],
-    ["lock_tail", "Lock tail frames", "number", clip.processing.lockTailFrames],
-    ["edge_guard", "Edge guard (px)", "number", clip.processing.edgeGuardPx],
-    ["speed", "Playback speed", "number", clip.playback.speed],
-    ["loop_mode", "Playback", "select", clip.playback.loopMode, ["loop", "once_then_hold"]],
+    ["duration", tx("duration", "Duration (s)"), "number", clip.generation.durationS],
+    ["resolution", tx("resolution", "Resolution"), "text", clip.generation.resolution],
+    ["seed", tx("seed", "Seed"), "number", clip.generation.seed ?? ""],
+    ["input_scale", tx("inputScale", "Input scale"), "number", clip.generation.inputScale],
+    ["register", tx("register", "Register ends to the stills"), "checkbox", clip.processing.register !== false],
+    ["margin", tx("margin", "Canvas margin each side (px)"), "number", clip.processing.marginPx || 0],
+    ["interpolate", tx("interpolate", "Interpolate ×"), "number", clip.processing.interpolate],
+    ["lock_head", tx("lockHead", "Lock head frames"), "number", clip.processing.lockHeadFrames],
+    ["lock_tail", tx("lockTail", "Lock tail frames"), "number", clip.processing.lockTailFrames],
+    ["edge_guard", tx("edgeGuard", "Edge guard (px)"), "number", clip.processing.edgeGuardPx],
+    ["speed", tx("playbackSpeed", "Playback speed"), "number", clip.playback.speed],
+    ["loop_mode", tx("playback", "Playback"), "select", clip.playback.loopMode, ["loop", "once_then_hold"]],
   ];
   if (clip.kind === "transition") {
-    fields.splice(5, 0, ["last_frame", "Last frame input (none: first frame only)", "select", clip.generation.lastFrame || "still",
+    fields.splice(5, 0, ["last_frame", tx("lastFrameInput", "Last frame input (none: first frame only)"), "select", clip.generation.lastFrame || "still",
       ["still", "none"]]);
   }
   if (clip.kind === "loop") {
-    fields.push(["pingpong", "Pingpong loop", "checkbox", clip.processing.pingpong]);
-    fields.push(["mouth", "Mouth set (silence overlay)", "select", clip.mouth ? clip.mouth.set : "off",
+    fields.push(["pingpong", tx("pingpong", "Pingpong loop"), "checkbox", clip.processing.pingpong]);
+    fields.push(["mouth", tx("mouthSet", "Mouth set (silence overlay)"), "select", clip.mouth ? clip.mouth.set : "off",
       ["off", ...Object.keys(state.character.mouthSets || {})]]);
-    fields.push(["mouth_source", "Closed mouth: shared, still, frame:N or pose:ID", "text", sourceText(clip.mouth)]);
+    fields.push(["mouth_source", tx("mouthSource", "Closed mouth: shared, still, frame:N or pose:ID"), "text", sourceText(clip.mouth)]);
   }
   const inputs = {};
   const form = h("div", { class: "form" }, fields.map(([key, label, type, value, options]) => {
     const input = type === "select" ? h("select", {}, options.map((o) => h("option", { value: o }, o)))
       : h("input", { type, step: "any", value: type === "checkbox" ? null : value, checked: type === "checkbox" && value });
     if (type === "select") input.value = value;
+    input.dataset.setting = key;
     inputs[key] = [input, type];
     return h("label", {}, label, input);
   }));
@@ -436,10 +493,10 @@ function settingsForm(clip) {
       else changes[key] = input.value;
     }
     if (changes.mouth === "off" || !changes.mouth_source) delete changes.mouth_source;
-    run(() => api("/api/production/clip-settings", { clip: clip.id, changes }), "Settings saved");
-  } }, "Save settings");
+    run(() => api("/api/production/clip-settings", { clip: clip.id, changes }), tx("settingsSaved", "Settings saved"));
+  } }, tx("saveSettings", "Save settings"));
   return h("div", {}, form, h("div", { class: "row actions" }, save,
-    h("span", { class: "tiny" }, "Changing processing or playback makes the current render stale.")));
+    h("span", { class: "tiny" }, tx("settingsStale", "Changing processing or playback makes the current render stale."))));
 }
 
 function sourceText(mouth) {
@@ -452,41 +509,41 @@ function clipTakeCard(clip, take) {
   const m = take.media || {};
   const preview = m.video ? h("video", { src: media(takeFile(clip, take, m.video)), controls: true, loop: true, muted: true, preload: "metadata" })
     : m.dir ? h("img", { class: "thumb", src: media(takeFile(clip, take, `${m.dir}/000000.png`)) })
-    : h("div", { class: "tiny" }, take.state);
+    : h("div", { class: "tiny" }, tx(`status.${take.state}`, take.state));
   const source = take.source || {};
   return h("div", { class: "card" + (take.status === "accepted" ? " selected" : ""), "data-take": take.id }, preview,
     h("div", { class: "row" }, badge(take.status), h("span", { class: "tiny" }, take.id)),
-    h("div", { class: "tiny" }, [source.provider, source.model, source.taskId, m.count && `${m.count} frames @ ${m.fps} fps`,
+    h("div", { class: "tiny" }, [source.provider, source.model, source.taskId, m.count && tx("frameCount", "{count} frames @ {fps} fps", { count: m.count, fps: m.fps }),
       m.width && `${m.width}×${m.height}`, source.note].filter(Boolean).join(" · ")),
     take.error ? h("div", { class: "tiny", style: "color:var(--bad)" }, take.error) : null,
-    take.rejected ? h("div", { class: "tiny" }, "Rejected: " + (take.rejected.reason || "no reason given")) : null,
-    take.prompt ? h("details", {}, h("summary", {}, "Prompt snapshot"), promptView(take.prompt, true)) : null,
+    take.rejected ? h("div", { class: "tiny" }, tx("rejectedReason", "Rejected: {reason}", { reason: take.rejected.reason || tx("noReason", "no reason given") })) : null,
+    take.prompt ? h("details", {}, h("summary", {}, tx("promptSnapshot", "Prompt snapshot")), promptView(take.prompt, true)) : null,
     take.inputs && take.inputs.first && take.inputs.first.file ? h("details", {},
-      h("summary", {}, (take.inputs.last ? "First / last frame inputs" : "First frame input (no last frame)")
-        + (take.inputs.assumed ? " (handed to an external tool)" : "")),
+      h("summary", {}, (take.inputs.last ? tx("firstLastInputs", "First / last frame inputs") : tx("firstOnlyInput", "First frame input (no last frame)"))
+        + (take.inputs.assumed ? tx("externalTool", " (handed to an external tool)") : "")),
       h("div", { class: "inputs" }, h("img", { src: media(takeFile(clip, take, take.inputs.first.file)) }),
         take.inputs.last ? h("img", { src: media(takeFile(clip, take, take.inputs.last.file)) }) : null)) : null,
-    take.state === "submitted" ? h("button", { onclick: () => startJob("resume", { clip: clip.id }, { take: take.id }) }, "Resume download") : null,
+    take.state === "submitted" ? h("button", { onclick: () => startJob("resume", { clip: clip.id }, { take: take.id }) }, tx("resume", "Resume download")) : null,
     h("div", { class: "row actions" }, decisionButtons("clip", clip.id, take), adoptButton(clip, take)));
 }
 
 function adoptButton(clip, take) {
   if (clip.kind !== "transition" || take.state !== "ready" || take.status === "rejected") return null;
-  return h("button", { class: "adopt", title: `Make the last frame of this take a candidate still for ${clip.to}; approve it on its pose`,
-    onclick: () => startJob("adopt", { pose: clip.to }, { clip: clip.id, take: take.id, frame: "last" }) }, `Last frame → ${clip.to} still`);
+  return h("button", { class: "adopt", title: tx("adoptHint", "Make the last frame of this take a candidate still for {pose}; approve it on its pose", { pose: clip.to }),
+    onclick: () => startJob("adopt", { pose: clip.to }, { clip: clip.id, take: take.id, frame: "last" }) }, tx("adopt", "Last frame → {pose} still", { pose: clip.to }));
 }
 
 function renderPanel(clip) {
   const r = clip.render;
   const box = h("div", {}, h("div", { class: "row" }, badge(r.state),
     r.state !== "current" ? h("span", { class: "tiny" }, (r.reasons || []).join("; ")) : null,
-    r.frameCount ? h("span", { class: "tiny" }, `${r.frameCount} frames · ${r.frameIntervalMs} ms/frame · ${r.loopMode} · take ${r.take}`) : null));
+    r.frameCount ? h("span", { class: "tiny" }, tx("renderSummary", "{count} frames · {interval} ms/frame · {mode} · take {take}", { count: r.frameCount, interval: r.frameIntervalMs, mode: r.loopMode, take: r.take })) : null));
   if (r.frameCount) {
     const { width, height } = state.character.canvas;
     const canvas = h("canvas", { class: "player", id: "renderPreview", width, height });
     const silence = r.mouth ? h("input", { type: "checkbox", id: "silencePreview" }) : null;
-    append(box, [h("div", { class: "tiny" }, "Preview is capped at 30 fps; runtime timing is shown above."),
-      silence ? h("label", { class: "tiny" }, silence, " Simulate silence: paste the closed mouth inside the tracked mask") : null,
+    append(box, [h("div", { class: "tiny" }, tx("previewCapped", "Preview is capped at 30 fps; runtime timing is shown above.")),
+      silence ? h("label", { class: "tiny" }, silence, tx("simulateSilence", " Simulate silence: paste the closed mouth inside the tracked mask")) : null,
       canvas, r.mouth ? mouthSummary(r.mouth) : null, qaList(r.qa), seamTable(r.qa)]);
     playOutput(clip, canvas, r, silence);
   }
@@ -499,15 +556,15 @@ function closedMouthUrl(clip, mouth) {
 
 function mouthSummary(mouth) {
   const source = mouth.closedSource;
-  const from = source.kind === "frame" ? `output frame ${source.index}` : `${source.pose} still (${source.kind})`;
-  return h("div", { class: "tiny" }, `Mouth set ${mouth.set} · closed mouth from ${from} · mask ${mouth.roi.width}×${mouth.roi.height}px · `
-    + `tracking ${mouth.qa.trackMean} (min ${mouth.qa.trackMin}) · movement ${mouth.qa.span}px · most closed frame ${mouth.closedFrame}`
-    + ` · tone shift L*a*b* ${mouth.toneShift.join(" / ")}`);
+  const from = source.kind === "frame" ? tx("outputFrame", "output frame {index}", { index: source.index }) : tx("mouthStill", "{pose} still ({kind})", { pose: source.pose, kind: source.kind });
+  return h("div", { class: "tiny" }, tx("mouthSummary", "Mouth set {set} · closed mouth from {from} · mask {width}×{height}px · tracking {mean} (min {min}) · movement {span}px · most closed frame {frame} · tone shift L*a*b* {tone}", { set: mouth.set, from, width: mouth.roi.width, height: mouth.roi.height, mean: mouth.qa.trackMean, min: mouth.qa.trackMin, span: mouth.qa.span, frame: mouth.closedFrame, tone: mouth.toneShift.join(" / ") }));
 }
 
 async function playOutput(clip, canvas, render, silence) {
+  const generation = ++previewGeneration;
   try {
     const data = await api("/api/clips?root=" + encodeURIComponent(clip.output));
+    if (disposed || generation !== previewGeneration || !canvas.isConnected) return;
     const frames = (Object.values(data.clips)[0] || {}).frames || [];
     const mouth = render.mouth;
     const closed = new Image();
@@ -555,6 +612,7 @@ async function playOutput(clip, canvas, render, silence) {
       else if (render.loopMode === "loop" || ++hold > 30) { index = 0; hold = 0; }
     }, Math.max(33, render.frameIntervalMs));
   } catch (error) {
+    if (disposed || generation !== previewGeneration) return;
     canvas.replaceWith(h("div", { class: "tiny" }, String(error.message || error)));
   }
 }
@@ -568,15 +626,14 @@ function qaList(qa) {
 function seamTable(qa) {
   const rows = ["head", "tail", "wrap"].filter((k) => qa && qa[k]);
   if (!rows.length) return null;
-  return h("table", {}, h("tr", {}, h("th", {}, "Seam"), h("th", {}, "Level"), h("th", {}, "Face L*"), h("th", {}, "Δ head top"), h("th", {}, "Δ head centre")),
-    rows.map((k) => h("tr", {}, h("td", {}, k), h("td", {}, badge(qa[k].level)), h("td", {}, qa[k].faceL ?? "—"),
+  return h("table", {}, h("tr", {}, h("th", {}, tx("seam", "Seam")), h("th", {}, tx("level", "Level")), h("th", {}, tx("faceLightness", "Face L*")), h("th", {}, tx("deltaHeadTop", "Δ head top")), h("th", {}, tx("deltaHeadCenter", "Δ head centre"))),
+    rows.map((k) => h("tr", {}, h("td", {}, tx(`status.${k}`, k)), h("td", {}, badge(qa[k].level)), h("td", {}, qa[k].faceL ?? "—"),
       h("td", {}, qa[k].dHeadTop), h("td", {}, qa[k].dHeadCenter))));
 }
 
 async function generate(clip) {
   const provider = state.tools.providers[clip.generation.provider];
-  const ok = window.confirm(`Submit a paid generation of ${clip.id} to ${clip.generation.provider} (${provider.model}), ` +
-    `${clip.generation.durationS}s at ${clip.generation.resolution}?`);
+  const ok = window.confirm(tx("confirmClip", "Submit a paid generation of {clip} to {provider} ({model}), {duration}s at {resolution}?", { clip: clip.id, provider: clip.generation.provider, model: provider.model, duration: clip.generation.durationS, resolution: clip.generation.resolution }));
   if (ok) await startJob("generate", { clip: clip.id });
 }
 
@@ -595,13 +652,13 @@ function highlighted(text) {
 }
 
 function promptView(p, compact = false) {
-  if (p.error) return h("div", { class: "prompt" }, badge("template error", "fail"), " ", p.error);
+  if (p.error) return h("div", { class: "prompt" }, badge(tx("templateError", "template error"), "fail"), " ", p.error);
   return h("div", { class: "prompt-view" },
-    h("div", { class: "row" }, badge(p.complete ? "complete" : `${p.placeholders.length} placeholder(s)`, p.complete ? "pass" : "watch"),
+    h("div", { class: "row" }, badge(p.complete ? "complete" : tx("placeholders", "{count} placeholder(s)", { count: p.placeholders.length }), p.complete ? "pass" : "watch"),
       h("span", { class: "tiny" }, blockVersions(p.blocks)),
-      compact ? null : h("button", { onclick: () => navigator.clipboard.writeText(p.text).then(() => toast("Prompt copied")) }, "Copy prompt")),
+      compact ? null : h("button", { onclick: () => navigator.clipboard.writeText(p.text).then(() => toast(tx("promptCopied", "Prompt copied"))) }, tx("copyPrompt", "Copy prompt"))),
     h("div", { class: "prompt" }, highlighted(p.text)),
-    p.negative ? h("div", { class: "prompt" }, h("span", { class: "tiny" }, "Negative: "), highlighted(p.negative)) : null);
+    p.negative ? h("div", { class: "prompt" }, h("span", { class: "tiny" }, tx("negativePrefix", "Negative: ")), highlighted(p.negative)) : null);
 }
 
 function renderPrompts() {
@@ -617,12 +674,11 @@ function renderPrompts() {
   const rank = (id) => (id.startsWith("pose.") ? 1 : id.startsWith("clip.") ? 2 : 0);
   const ids = Object.keys(library.blocks).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   fill($("promptList"),
-    h("h2", {}, "Prompt library"),
-    h("p", { class: "tiny" }, "Saving a block adds a version; takes keep the exact text and versions they used. " +
-      "Prompts containing {{PLACEHOLDER: ...}} are never sent to a paid provider."),
-    h("table", {}, h("tr", {}, h("th", {}, "Template"), h("th", {}, "Blocks"), h("th", {}, "Joined by"), h("th", {}, "Negative")),
+    h("h2", {}, tx("promptLibrary", "Prompt library")),
+    h("p", { class: "tiny" }, tx("promptSafety", "Saving a block adds a version; takes keep the exact text and versions they used. Prompts containing {{PLACEHOLDER: ...}} are never sent to a paid provider.")),
+    h("table", {}, h("tr", {}, h("th", {}, tx("template", "Template")), h("th", {}, tx("blocks", "Blocks")), h("th", {}, tx("joinedBy", "Joined by")), h("th", {}, tx("negative", "Negative"))),
       Object.entries(library.templates).map(([id, t]) => h("tr", {}, h("td", {}, id), h("td", {}, t.blocks.join(" + ")),
-        h("td", {}, t.join ? `"${t.join}"` : "blank line"), h("td", {}, (t.negative || []).join(" + "))))),
+        h("td", {}, t.join ? `"${t.join}"` : tx("blankLine", "blank line")), h("td", {}, (t.negative || []).join(" + "))))),
     ids.map((id) => blockCard(id, library.blocks[id], usage)));
 }
 
@@ -630,28 +686,58 @@ function blockCard(id, block, usage) {
   const current = block.versions[block.versions.length - 1];
   const area = h("textarea", { value: current.text, "data-block": id });
   const save = h("button", { class: "primary", disabled: true,
-    onclick: () => run(() => api("/api/production/prompt", { block: id, text: area.value }), `${id}: new version saved`) }, "Save as new version");
+    onclick: () => run(() => api("/api/production/prompt", { block: id, text: area.value }), tx("blockSaved", "{block}: new version saved", { block: id })) }, tx("saveVersion", "Save as new version"));
   area.oninput = () => { save.disabled = area.value === current.text; };
   const placeholders = (current.text.match(/\{\{\s*PLACEHOLDER\s*:/g) || []).length;
   return h("div", { class: "card", style: "margin-top:12px" },
     h("div", { class: "row" }, h("strong", {}, id), badge(`v${current.version}`, "candidate"),
-      placeholders ? badge(`${placeholders} placeholder`, "watch") : badge("written", "pass"),
+      placeholders ? badge(tx("placeholders", "{count} placeholder(s)", { count: placeholders }), "watch") : badge(tx("written", "written"), "pass"),
       h("span", { class: "tiny" }, block.description || "")),
     area,
-    h("div", { class: "row actions" }, save, h("span", { class: "tiny" }, `used by ${usage[`${id}@${current.version}`] || 0} take(s) at this version`)),
-    block.versions.length > 1 ? h("details", {}, h("summary", {}, `History (${block.versions.length} versions)`),
+    h("div", { class: "row actions" }, save, h("span", { class: "tiny" }, tx("usedAtVersion", "used by {count} take(s) at this version", { count: usage[`${id}@${current.version}`] || 0 }))),
+    block.versions.length > 1 ? h("details", {}, h("summary", {}, tx("history", "History ({count} versions)", { count: block.versions.length })),
       block.versions.slice().reverse().map((v) => h("div", {},
-        h("div", { class: "tiny" }, `v${v.version} · ${v.createdAt} · used by ${usage[`${id}@${v.version}`] || 0} take(s)`),
-        h("pre", {}, v.text || "(empty)")))) : null);
+        h("div", { class: "tiny" }, tx("historyUsage", "v{version} · {at} · used by {count} take(s)", { version: v.version, at: v.createdAt, count: usage[`${id}@${v.version}`] || 0 })),
+        h("pre", {}, v.text || tx("empty", "(empty)"))))) : null,
+    context && block.versions.length > 1 ? versionDiff(id, block) : null);
+}
+
+// Compare immutable snapshots in this block; saved prompt text is never translated.
+function versionDiff(id, block) {
+  const versions = block.versions;
+  const from = h("select", { "aria-label": tx("diffFrom", "From version"), "data-diff-from": id }, versions.map((v) => h("option", { value: v.version }, `v${v.version}`)));
+  const to = h("select", { "aria-label": tx("diffTo", "To version"), "data-diff-to": id }, versions.map((v) => h("option", { value: v.version }, `v${v.version}`)));
+  from.value = versions[versions.length - 2].version;
+  to.value = versions[versions.length - 1].version;
+  const output = h("div", { class: "prompt-diff" });
+  const draw = () => {
+    const left = versions.find((v) => String(v.version) === from.value).text.split("\n");
+    const right = versions.find((v) => String(v.version) === to.value).text.split("\n");
+    // Long prompts use a common prefix/suffix comparison to keep this view bounded.
+    let prefix = 0;
+    while (prefix < Math.min(left.length, right.length) && left[prefix] === right[prefix]) prefix++;
+    let suffix = 0;
+    while (suffix < Math.min(left.length, right.length) - prefix && left[left.length - 1 - suffix] === right[right.length - 1 - suffix]) suffix++;
+    const rows = [...left.slice(0, prefix).map((line) => ["same", line]),
+      ...left.slice(prefix, left.length - suffix).map((line) => ["removed", line]),
+      ...right.slice(prefix, right.length - suffix).map((line) => ["added", line]),
+      ...left.slice(left.length - suffix).map((line) => ["same", line])];
+    fill(output, rows.map(([kind, line]) => h("pre", { class: `diff-line ${kind}` }, `${kind === "added" ? "+" : kind === "removed" ? "−" : " "} ${line}`)));
+  };
+  from.onchange = to.onchange = from.oninput = to.oninput = draw;
+  draw();
+  return h("details", { class: "version-diff" }, h("summary", {}, tx("compareVersions", "Compare versions")),
+    h("div", { class: "row" }, h("label", {}, tx("diffFrom", "From version"), from), h("label", {}, tx("diffTo", "To version"), to)), output);
 }
 
 // ── Jobs, uploads and planning ─────────────────────────────────────────
 async function startJob(action, owner, extra = {}) {
-  await run(() => api("/api/production/jobs", { action, ...owner, ...extra }), `${action} started for ${owner.pose || owner.clip}`);
+  await run(() => api("/api/production/jobs", { action, ...owner, ...extra }), tx("jobStarted", "{action} started for {owner}", { action: tx(`action.${action}`, action), owner: owner.pose || owner.clip }));
   pollJobs();
 }
 
 async function pollJobs() {
+  if (context || disposed) return;
   try {
     jobs = (await api("/api/production/jobs")).jobs;
   } catch (error) {
@@ -667,14 +753,32 @@ async function pollJobs() {
 
 function renderJobs() {
   const running = jobs.filter((j) => j.status === "running").length;
-  $("jobBadge").hidden = !running;
-  $("jobBadge").textContent = String(running);
-  fill($("jobList"), h("h2", {}, "Jobs"), jobs.length ? jobs.map((j) => h("div", { class: "card", style: "margin-top:10px" },
-    h("div", { class: "row" }, h("strong", {}, `${j.action} ${j.kind} ${j.owner}`),
+  if ($("jobBadge")) {
+    $("jobBadge").hidden = !running;
+    $("jobBadge").textContent = String(running);
+  }
+  const filter = context ? h("select", { "aria-label": tx("jobFilter", "Filter jobs") },
+    ["all", "running", "failed"].map((value) => h("option", { value }, tx(`jobs${value}`, value === "all" ? "All jobs" : value === "running" ? "Running" : "Failed")))) : null;
+  if (filter) filter.value = jobFilter;
+  const list = h("div", { class: "jobs-results" });
+  const draw = () => {
+    const visible = filter && filter.value !== "all" ? jobs.filter((job) => job.status === filter.value) : jobs;
+    fill(list, visible.length ? visible.map((j) => h("div", { class: "card", style: "margin-top:10px" },
+    h("div", { class: "row" }, h("strong", {}, `${tx(`action.${j.action}`, j.action)} ${tx(`kind.${j.kind}`, j.kind)} ${j.owner}`),
       badge(j.status, j.status === "succeeded" ? "pass" : j.status === "failed" ? "fail" : "pending"),
-      h("span", { class: "tiny" }, j.startedAt), j.result ? h("span", { class: "tiny" }, "result: " + j.result) : null),
+      h("span", { class: "tiny" }, j.startedAt), j.result ? h("span", { class: "tiny" }, tx("result", "result: {result}", { result: j.result })) : null),
     j.error ? h("pre", {}, j.error) : null,
-    j.log.length ? h("pre", {}, j.log.slice(-40).join("\n")) : null)) : h("p", { class: "muted" }, "No jobs in this session."));
+    j.log.length ? h("pre", {}, j.log.slice(-40).join("\n")) : null)) : h("p", { class: "muted" }, tx("noJobs", "No jobs in this session.")));
+  };
+  if (filter) filter.onchange = () => { jobFilter = filter.value; draw(); };
+  fill($("jobList"), h("h2", {}, tx("jobs", "Jobs")), filter, list);
+  draw();
+  if (context) {
+    const submitted = state.clips.flatMap((clip) => clip.takes.filter((take) => take.state === "submitted").map((take) => ({ clip, take })));
+    if (submitted.length) append($("jobList"), [h("h3", {}, tx("submitted", "Submitted provider tasks")), submitted.map(({ clip, take }) =>
+      h("div", { class: "card row" }, h("span", {}, `${clip.id} · ${take.id}`),
+        h("button", { onclick: () => startJob("resume", { clip: clip.id }, { take: take.id }) }, tx("resume", "Resume download"))))]);
+  }
 }
 
 async function uploadFile(kind, owner, file) {
@@ -687,7 +791,7 @@ async function uploadFile(kind, owner, file) {
     if (!data.ok) throw new Error(data.error);
     if (kind === "pose") selection.poseTake = data.take.id;
     return data;
-  }, `Imported ${file.name}`);
+  }, tx("imported", "Imported {file}", { file: file.name }));
 }
 
 function showTab(name) {
@@ -700,15 +804,16 @@ function showTab(name) {
 }
 
 function addPoseInteractive() {
-  const id = window.prompt("New pose id (lowercase letters, digits, _ or -)");
+  const id = window.prompt(tx("newPoseId", "New pose id (lowercase letters, digits, _ or -)"));
   if (!id) return Promise.resolve(null);
-  const description = window.prompt("Short description (optional)", "") || "";
-  return run(() => api("/api/production/pose", { id, description }), `Pose ${id} added`).then((result) => {
+  const description = window.prompt(tx("poseDescription", "Short description (optional)"), "") || "";
+  return run(() => api("/api/production/pose", { id, description }), tx("poseAdded", "Pose {pose} added", { pose: id })).then((result) => {
     if (result) { selection.pose = id; renderActive(); }
     return result;
   });
 }
 
+function bootstrapLegacy() {
 document.querySelectorAll("#tabs button").forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
 $("addPose").addEventListener("click", addPoseInteractive);
 $("addClip").addEventListener("click", () => {
@@ -733,3 +838,29 @@ $("graphSync").addEventListener("click", () => {
 setupCanvas();
 showTab((location.hash || "#canvas").slice(1));
 refresh().then(pollJobs).catch((error) => toast(String(error.message || error), true));
+}
+canvas = window.SFProductionCanvas.create({ $, h, fill, badge, api, run, toast, media, stillFile, takeFile,
+  acceptedStill, poseStatus, firstFrameOnly, generateHint, stillsHint, uploadFile, generate, startJob, selection,
+  renderPoseDetail, renderClipDetail, addPoseInteractive, tx, captureFields, rememberFields, restoreFields,
+  getState: () => state, isActive: () => !disposed && activeTab === "canvas", language: () => context && window.SFStudio.language,
+  setLanguage: (lang) => window.SFStudio.setLanguage(lang), studio: Boolean(context) });
+({ setupCanvas, renderCanvas, clearCanvas } = canvas);
+return {
+  bootstrapLegacy,
+  mount(tab) { activeTab = tab; if (tab === "canvas") setupCanvas(); renderActive(); if (tab === "prompts") rememberFields($("promptList")); },
+  update(next) {
+    const changed = state !== next.state || renderedLanguage !== window.SFStudio.language;
+    state = next.state; jobs = next.jobs; renderedLanguage = window.SFStudio.language;
+    if (activeTab === "jobs") renderJobs();
+    else if (changed && activeTab === "canvas") renderCanvas();
+    else if (changed && activeTab === "prompts") {
+      const drafts = captureFields($("promptList"));
+      renderPrompts(); rememberFields($("promptList")); restoreFields($("promptList"), drafts);
+    }
+  },
+  dispose() { disposed = true; previewGeneration++; clearTimeout(jobTimer); clearInterval(previewTimer); canvas.dispose(); },
+};
+}
+window.SFProduction = { create: createProduction };
+if (document.getElementById("tabs")) createProduction().bootstrapLegacy();
+})();

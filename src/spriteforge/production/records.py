@@ -160,7 +160,8 @@ def new_take(workspace: Path, kind: str, owner_id: str, source: dict[str, Any]) 
             directory.mkdir(parents=True)
         except FileExistsError:
             continue
-        take = {"format": TAKE_FORMAT, "id": take_id, "owner": {"kind": kind, "id": owner_id}, "createdAt": now(),
+        take = {"format": TAKE_FORMAT, "id": take_id, "owner": {"kind": kind, "id": owner_id},
+                "createdAt": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
                 "state": "created", "source": source, "prompt": None, "inputs": {}, "media": None,
                 "rejected": None, "history": [], "error": None}
         return take, directory

@@ -2,8 +2,9 @@
   "name": "amadeus-spriteforge-ui-checks",
   "private": true,
   "scripts": {
-    "check": "node --check src/spriteforge/web/review.js && node --check src/spriteforge/web/production.js && node --check src/spriteforge/web/production-canvas.js",
-    "test:ui": "node tools/browser_smoke.cjs && node tools/production_smoke.cjs"
+    "check": "node tools/check_js.cjs",
+    "test:ui": "node tools/browser_smoke.cjs && node tools/production_smoke.cjs && node tools/studio_smoke.cjs",
+    "test:studio": "node tools/studio_smoke.cjs"
   },
   "devDependencies": {
     "playwright": "1.63.0"

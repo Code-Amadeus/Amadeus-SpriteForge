@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SpriteForge Studio</title>
+  <link rel="stylesheet" href="/static/studio.css">
+  <script defer src="/static/i18n/en.js"></script>
+  <script defer src="/static/i18n/zh-CN.js"></script>
+  <script defer src="/static/studio.js"></script>
+  <script defer src="/static/preview-media.js"></script>
+  <script defer src="/static/production-canvas.js"></script>
+  <script defer src="/static/production.js"></script>
+  <script defer src="/static/studio-tools.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#studioMain" data-i18n="shell.skip">Skip to content</a>
+  <div class="studio-shell">
+    <nav id="studioSidebar" class="studio-sidebar" aria-label="Studio"></nav>
+    <div class="studio-workspace">
+      <header id="studioTopbar" class="studio-topbar"></header>
+      <div class="studio-content">
+        <main id="studioMain" tabindex="-1" aria-busy="true"></main>
+        <aside id="studioDrawer" class="studio-drawer" hidden></aside>
+      </div>
+    </div>
+  </div>
+  <div id="studioToast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

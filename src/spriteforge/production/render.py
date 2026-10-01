@@ -17,6 +17,7 @@ from __future__ import annotations
 import shutil
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 
 import numpy as np
 
@@ -56,6 +57,7 @@ def widen(image: np.ndarray, margin: int) -> np.ndarray:
 
 
 def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=print) -> dict:
+    started = monotonic()
     character, tools = load_character(workspace), load_tools(workspace)
     clip = load_owner(workspace, "clip", clip_id)
     settings = clip_settings(clip)
@@ -156,6 +158,7 @@ def render_clip(workspace: Path, clip_id: str, *, keep_work: bool = False, log=p
             qa["status"] = worst(c["level"] for c in qa["checks"])
         render = {"format": RENDER_FORMAT, "clip": clip_id, "take": take["id"],
                   "stills": stills, "recipe": render_recipe, "renderedAt": now(),
+                  "durationS": round(monotonic() - started, 3),
                   "phase": clip["phase"], "frameCount": total, "sourceFps": fps, "interpolate": factor,
                   "frameIntervalMs": max(1, interval), "loopMode": settings["loopMode"],
                   "registration": registration, "qa": qa,
