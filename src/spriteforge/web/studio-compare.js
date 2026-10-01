@@ -80,16 +80,30 @@
 
     function videoReady(video, token) {
       return new Promise((resolve, reject) => {
+        let metadataReady = false, firstFrame = null, frameRequest;
         const finish = (error) => {
           video.removeEventListener("loadedmetadata", loaded); video.removeEventListener("error", failed);
+          if(frameRequest !== undefined)video.cancelVideoFrameCallback(frameRequest);
           aborts.delete(cancel);
-          if (error || !alive(token)) reject(error || new Error("Preview closed")); else resolve();
+          if (error || !alive(token)) reject(error || new Error("Preview closed")); else resolve(firstFrame);
         };
-        const loaded = () => finish();
+        const loaded = () => { metadataReady = true; if(firstFrame)finish(); };
         const failed = () => finish(videoError(video));
         const cancel = () => finish(new Error("Preview closed"));
         aborts.add(cancel); video.addEventListener("loadedmetadata", loaded); video.addEventListener("error", failed);
+        if(!video.requestVideoFrameCallback){finish(new Error(t("videoUnavailable")));return;}
+        // Register before src is assigned: even a fast initial decode must be
+        // snapshotted when presented, rather than inferred from readyState.
+        frameRequest = video.requestVideoFrameCallback(() => {
+          if(!alive(token)){finish(new Error("Preview closed"));return;}
+          firstFrame = snapshotVideo(video); if(metadataReady)finish();
+        });
       });
+    }
+
+    function snapshotVideo(video) {
+      const canvas = document.createElement("canvas"); canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0); return canvas;
     }
 
     async function loadSource(take, pane, token) {
@@ -114,7 +128,8 @@
           ctx.root.append(video);
           const ready = videoReady(video, token);
           video.src = media(`production/clips/${opts.clip.id}/takes/${take.id}/${take.media.video}`);
-          await ready;
+          const initialFrame = await ready;
+          source.presented = {index:0,frame:initialFrame}; source.cache.set(0,Promise.resolve(initialFrame));
           source.fps = Number(take.media.fps); source.count = Number(take.media.count);
         }
         if (!alive(token)) { if (source.video) releaseVideo(source.video); return source; }
@@ -129,20 +144,26 @@
     function videoFrame(source, index, token) {
       const video = source.video;
       const target = Math.min(index / source.fps, Math.max(0, video.duration - 0.0001));
+      if(source.presented && source.presented.index === index)return Promise.resolve(source.presented.frame);
       return new Promise((resolve, reject) => {
+        let frameRequest;
         const finish = (error) => {
-          video.removeEventListener("seeked", ready); video.removeEventListener("loadeddata", ready); video.removeEventListener("error", failed);
+          video.removeEventListener("error", failed);
+          if(frameRequest !== undefined)video.cancelVideoFrameCallback(frameRequest);
           aborts.delete(cancel);
           if (error || !alive(token)) { reject(error || new Error("Preview closed")); return; }
-          const canvas = document.createElement("canvas"); canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-          canvas.getContext("2d").drawImage(video, 0, 0); resolve(canvas);
+          const canvas = snapshotVideo(video); source.presented = {index,frame:canvas}; resolve(canvas);
         };
-        const ready = () => { if (!video.seeking && video.readyState >= 2) finish(); };
+        const presented = (_, metadata) => {
+          if(!alive(token)){finish(new Error("Preview closed"));return;}
+          if(Math.abs(metadata.mediaTime-target) <= 0.5/source.fps)finish();
+          else frameRequest = video.requestVideoFrameCallback(presented);
+        };
         const failed = () => finish(videoError(video));
         const cancel = () => finish(new Error("Preview closed"));
-        aborts.add(cancel); video.addEventListener("seeked", ready); video.addEventListener("loadeddata", ready); video.addEventListener("error", failed);
-        if (Math.abs(video.currentTime - target) < 0.00001 && video.readyState >= 2 && !video.seeking) finish();
-        else video.currentTime = target;
+        aborts.add(cancel); video.addEventListener("error", failed);
+        frameRequest = video.requestVideoFrameCallback(presented);
+        video.currentTime = target;
       });
     }
 
