@@ -143,7 +143,10 @@
 
     function videoFrame(source, index, token) {
       const video = source.video;
-      const target = Math.min(index / source.fps, Math.max(0, video.duration - 0.0001));
+      const frameStart = index / source.fps;
+      // A seek on a quantized timestamp boundary can present the preceding
+      // frame. Seek inside the requested frame, then verify its native time.
+      const target = Math.min((index + 0.5) / source.fps, Math.max(0, video.duration - 0.0001));
       if(source.presented && source.presented.index === index)return Promise.resolve(source.presented.frame);
       return new Promise((resolve, reject) => {
         let frameRequest;
@@ -156,7 +159,7 @@
         };
         const presented = (_, metadata) => {
           if(!alive(token)){finish(new Error("Preview closed"));return;}
-          if(Math.abs(metadata.mediaTime-target) <= 0.5/source.fps)finish();
+          if(Math.abs(metadata.mediaTime-frameStart) <= 0.5/source.fps)finish();
           else frameRequest = video.requestVideoFrameCallback(presented);
         };
         const failed = () => finish(videoError(video));

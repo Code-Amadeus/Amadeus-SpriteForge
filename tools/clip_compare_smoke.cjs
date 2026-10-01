@@ -130,6 +130,15 @@ import_clip_take(root,"smile_talk",root.parent/"smile_talk",fps=30,note="unrelat
     await page.evaluate(() => compareProof.seek(0)); await drawn(0);
     assert.equal(await page.locator(".compare-frame canvas").first().evaluate((canvas) => canvas.toDataURL()), initial);
 
+    // Onion skin also decodes neighboring video frames. Quantized frame-start
+    // timestamps must not strand a pending read on the preceding native frame.
+    await page.evaluate(() => compareProof.seek(1)); await drawn(1);
+    await page.getByRole("button", {name:"Onion skin",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector(".clip-compare").dataset.mode === "onion");
+    await page.getByRole("button", {name:"Side by side",exact:true}).click();
+    await page.evaluate(()=>compareProof.seek(2));await drawn(2);
+    assert.ok(Math.abs((await pixel())[0]-50)<=5,"Presented video frame 2 matches the synthetic frame pixels despite timestamp rounding");
+
     // QA/mouth records are output-frame facts. They appear only after explicitly
     // choosing a matching render, never on an unrelated candidate or raw take.
     await mount("smile_talk", false); await drawn(0);
