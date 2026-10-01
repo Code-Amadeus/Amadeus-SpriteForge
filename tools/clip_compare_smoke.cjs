@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 from spriteforge.production.project import add_clip
 from spriteforge.production.clips import import_clip_take
+from spriteforge.production.render import render_take
 root=Path(sys.argv[1])
 add_clip(root,"compare_scale","idle","idle")
 for multiplier in (1,2):
@@ -37,7 +38,9 @@ for multiplier in (1,2):
 video=root.parent/"compatible.mp4"
 subprocess.run([shutil.which("ffmpeg"),"-loglevel","error","-y","-framerate","30","-i",str(root.parent/"1"/"%04d.png"),"-c:v","libx264","-pix_fmt","yuv420p",str(video)],check=True)
 import_clip_take(root,"compare_scale",video)
-import_clip_take(root,"smile_talk",root.parent/"smile_talk",fps=30,note="unrelated raw candidate")
+candidate=import_clip_take(root,"smile_talk",root.parent/"smile_talk",fps=30,note="unrelated raw candidate")
+render_take(root,"smile_talk",candidate["id"],log=lambda *_:None)
+import_clip_take(root,"smile_talk",root.parent/"smile_talk",fps=30,note="not processed")
 `, workspace], { encoding: "utf8", windowsHide: true });
   assert.equal(pattern.status, 0, pattern.stderr);
   const server = spawn(python, ["-m", "spriteforge", "review", "--workspace", workspace, "--port", "0", "--no-browser"], { windowsHide: true });
@@ -53,7 +56,7 @@ import_clip_take(root,"smile_talk",root.parent/"smile_talk",fps=30,note="unrelat
     const errors = []; page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(url + "/studio#/overview");
     await page.waitForFunction(() => Boolean(window.SFClipCompare));
-    const mount = async (clipId, pair = true, takeIndex = 0) => page.evaluate(async ({ clipId, pair, takeIndex }) => {
+    const mount = async (clipId, pair = true, takeIndex = 0, candidatePreview = false) => page.evaluate(async ({ clipId, pair, takeIndex, candidatePreview }) => {
       if (window.compareProof) window.compareProof.cleanup();
       const state = await SFStudio.api("/api/production");
       const clip = state.clips.find((entry) => entry.id === clipId);
@@ -61,10 +64,11 @@ import_clip_take(root,"smile_talk",root.parent/"smile_talk",fps=30,note="unrelat
       document.querySelector("#studioMain").replaceChildren(root);
       const ctx = { root, state, jobs: [], t: SFStudio.t, h: SFStudio.h, api: SFStudio.api, toast: SFStudio.toast };
       const takeA = clipId === "compare_scale" ? clip.takes.find((take) => takeIndex === -1 ? take.media.video : take.media.dir && take.media.width === 160)
-        : takeIndex === 1 ? clip.takes.find((take) => take.status === "candidate") : clip.takes.find((take) => take.status === "accepted") || clip.takes[0];
-      const takeB = pair ? clip.takes.find((take) => take.media.dir && take.media.width === (takeIndex === -1 ? 160 : 320)) : null;
-      window.compareProof = SFClipCompare.mount(ctx, { clip, takeA, takeB });
-    }, { clipId, pair, takeIndex });
+        : takeIndex === 2 ? clip.takes.find(take => take.note === "not processed")
+        : takeIndex === 1 ? clip.takes.find((take) => take.note === "unrelated raw candidate") : clip.takes.find((take) => take.status === "accepted") || clip.takes[0];
+      const takeB = pair ? clipId === "compare_scale" ? clip.takes.find((take) => take.media.dir && take.media.width === (takeIndex === -1 ? 160 : 320)) : clip.takes.find(take => take.status === "accepted") : null;
+      window.compareProof = SFClipCompare.mount(ctx, { clip, takeA, takeB, candidatePreview });
+    }, { clipId, pair, takeIndex, candidatePreview });
     const drawn = async (frame) => page.waitForFunction((index) => {
       const root = document.querySelector(".clip-compare");
       return root && Number(root.dataset.frame) === index && root.querySelector("canvas").width > 1;
@@ -129,7 +133,6 @@ import_clip_take(root,"smile_talk",root.parent/"smile_talk",fps=30,note="unrelat
     await page.evaluate(() => compareProof.step(-1)); await drawn(9);
     await page.evaluate(() => compareProof.seek(0)); await drawn(0);
     assert.equal(await page.locator(".compare-frame canvas").first().evaluate((canvas) => canvas.toDataURL()), initial);
-
     // Onion skin also decodes neighboring video frames. Quantized frame-start
     // timestamps must not strand a pending read on the preceding native frame.
     await page.evaluate(() => compareProof.seek(1)); await drawn(1);
@@ -151,10 +154,27 @@ import_clip_take(root,"smile_talk",root.parent/"smile_talk",fps=30,note="unrelat
     await drawn(0);
     assert.equal(await page.locator(".compare-marker").count(), 0);
     assert.ok((await page.locator(".compare-source-label").first().innerText()).includes("Raw take"));
+
+    // Explicit candidate output carries only that take's processed QA. B remains
+    // the immutable raw accepted take until its published preview is requested.
+    await mount("smile_talk", true, 1, true); await drawn(0);
+    assert.ok((await page.locator(".compare-source-label").first().innerText()).includes("Candidate processed preview"));
+    assert.ok((await page.locator(".compare-source-label").nth(1).innerText()).includes("Raw take"));
+    assert.equal(await page.locator(".compare-marker.mouth").count(), 1);
+    await page.getByLabel("Published B render", { exact: true }).check(); await drawn(0);
+    assert.equal(await page.locator(".compare-marker.mouth").count(), 2);
+    await page.evaluate(() => SFStudio.api("/api/production/clip-settings", { clip: "smile_talk", changes: { speed: 1.1 } }));
+    await mount("smile_talk", true, 1, true); await drawn(0);
+    assert.ok((await page.locator(".compare-source-label").first().innerText()).includes("Stale processed preview"));
+    assert.ok((await page.locator(".compare-source-label").nth(1).innerText()).includes("Raw take"));
+    await mount("smile_talk", false, 2, true);
+    await page.waitForFunction(() => document.querySelector(".compare-media-message")?.textContent.includes("Candidate processed preview unavailable"));
+    assert.equal(await page.locator(".compare-marker").count(), 0);
+    assert.ok((await page.locator(".compare-source-label").first().innerText()).includes("Candidate processed preview unavailable"));
     await page.evaluate(() => compareProof.cleanup());
     assert.equal(await page.locator(".clip-compare-video").count(), 0);
     assert.deepEqual(errors, []);
-    console.log("PASS: raw PNG/video A/B, shared display scale, comparison modes, delayed-frame playback, exact stepping, render-only QA provenance and cleanup");
+    console.log("PASS: raw PNG/video A/B, shared display scale, modes, delayed-frame playback, exact stepping, published/candidate QA provenance, current/stale/missing candidate output and cleanup");
   } finally {
     if (browser) await browser.close();
     server.kill();

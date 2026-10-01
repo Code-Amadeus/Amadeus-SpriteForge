@@ -13,9 +13,12 @@ from .graph import layout_coordinates, runtime_graph, validate_graph
 from .production.records import bound_clip, production_dir
 from .workspace import atomic_json, clip_frames, read_json, resolve_asset
 
+UASTC_LEVEL = 4
+ZSTD_LEVEL = 18
+
 
 def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: str,
-                version: str, toktx: str = "toktx", no_mouth: bool = False) -> dict:
+                version: str, toktx: str = "toktx", no_mouth: bool = False, progress=None) -> dict:
     workspace, output = workspace.resolve(), output.resolve()
     if output.exists():
         raise ValueError("Export destination already exists; choose a new directory")
@@ -56,18 +59,24 @@ def export_pack(workspace: Path, output: Path, *, pack_id: str, display_name: st
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
     created_layout = False
     published = False
+    completed = 0
+    total = sum(len(frames) for _, frames in selected.values()) + len(speaking["overlays"])
 
     def encode(source: Path, relative: Path) -> str:
+        nonlocal completed
         target = staging / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         # The shipped packs' settings: KTX-Software 4.4.2 reproduces their textures byte for byte.
-        result = subprocess.run([encoder, "--t2", "--encode", "uastc", "--uastc_quality", "4",
-                                 "--zcmp", "18", "--target_type", "RGBA", str(target), str(source)],
+        result = subprocess.run([encoder, "--t2", "--encode", "uastc", "--uastc_quality", str(UASTC_LEVEL),
+                                 "--zcmp", str(ZSTD_LEVEL), "--target_type", "RGBA", str(target), str(source)],
                                 capture_output=True, text=True)
         if result.returncode:
             raise ValueError(f"KTX encoding failed for {source.name}: {result.stderr.strip()}")
         if not target.is_file() or target.read_bytes()[:12] != b"\xabKTX 20\xbb\r\n\x1a\n":
             raise ValueError(f"Encoder did not produce a KTX2 frame for {source.name}")
+        completed += 1
+        if progress is not None:
+            progress(completed, total)
         return relative.as_posix()
 
     try:

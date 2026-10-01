@@ -309,7 +309,7 @@
       else if(requested?.state==="failed")pendingSheet=null;
       if(!ctx.state.concepts.some((item)=>item.id===selectedSheet))selectedSheet=ctx.state.concepts.find((item)=>item.current)?.id||ctx.state.concepts.at(-1)?.id||null;
       const current=sheet();if(!current?.cells.some((item)=>item.index===selectedCell))selectedCell=current?.cells.find((item)=>item.pose===selectedPose)?.index??current?.cells[0]?.index??null;
-      const owner=pose();if(owner&&!owner.takes.some((item)=>item.id===selectedTake))selectedTake=[...owner.takes].reverse().find((item)=>item.state==="ready"&&item.status==="candidate")?.id||owner.acceptedTake||owner.takes.at(-1)?.id||null;
+      const owner=pose();if(owner&&!owner.takes.some((item)=>item.id===selectedTake))selectedTake=[...owner.takes].reverse().find((item)=>item.needsReview)?.id||owner.acceptedTake||owner.takes.at(-1)?.id||null;
       renderSteps();renderBase();renderConcepts();renderDetail();renderStrip();if(dialogRefresh)dialogRefresh();
       if(focusKey){const field=root.querySelector(`[data-expression-draft="${focusKey}"]`);field?.focus({preventScroll:true});if(field&&selection)field.setSelectionRange(...selection);}
       else if(expectedKey)root.querySelector(`[data-expected="${expectedKey}"]`)?.focus({preventScroll:true});

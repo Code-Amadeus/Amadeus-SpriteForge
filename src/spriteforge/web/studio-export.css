@@ -1,0 +1,29 @@
+.export-studio { display: grid; grid-template-columns: minmax(0,1fr) 400px; gap: 14px; min-height: 0; }
+.export-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.export-heading { display: flex; align-items: flex-end; gap: 14px; }
+.export-heading-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.export-version-label { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.export-version-label input { width: 150px; }
+.export-checklist { display: flex; flex-direction: column; overflow: hidden; }
+.export-checklist-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--divider); }
+.export-check { display: grid; grid-template-columns: 72px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--divider); }
+.export-check:last-child { border-bottom: 0; }
+.export-check .badge { justify-content: center; }
+.export-check-content { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.export-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.export-aside { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.export-aside > .card { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.export-diff-counts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+.export-diff-counts .item { text-align: center; }
+.export-diff-counts b { font-size: 18px; }
+.export-diff-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; overflow-wrap: anywhere; }
+.export-diff-row .mono { min-width: 0; }
+.export-diff-added { color: var(--success); }
+.export-diff-updated { color: var(--info); }
+.export-diff-removed { color: var(--danger); }
+.export-notes { min-height: 110px; }
+.export-log-item { padding-bottom: 10px; border-bottom: 1px solid var(--divider); }
+.export-log-item:last-child { padding-bottom: 0; border-bottom: 0; }
+.export-output { overflow-wrap: anywhere; user-select: text; }
+.export-job { padding: 12px; }
+.export-job pre { max-height: 200px; overflow: auto; }

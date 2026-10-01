@@ -179,16 +179,28 @@ def set_closed_mouth(workspace: Path, source_pose: str | None, *, pose_id: str |
 
 def _summary(owner: dict, take: dict) -> dict:
     from .clips import generation_snapshot
+    status = take_status(owner, take)
+    decision = next((entry["action"] for entry in reversed(take.get("history") or [])
+                     if entry.get("action") in {"accepted", "rejected", "restored"}), None)
     keep = ("id", "createdAt", "state", "source", "prompt", "inputs", "media", "normalization", "qa", "rejected",
             "history", "error", "basedOn")
-    return {**{k: take.get(k) for k in keep}, "status": take_status(owner, take),
+    return {**{k: take.get(k) for k in keep}, "status": status,
+            "needsReview": status == "candidate" and decision != "accepted",
             "note": take.get("note", (take.get("source") or {}).get("note", "")),
             "generation": generation_snapshot(take)}
 
 
 def _takes(workspace: Path, kind: str, owner: dict) -> list[dict]:
     takes = sorted(list_takes(workspace, kind, owner["id"]), key=lambda take: (take["createdAt"], take["id"]))
-    return [{**_summary(owner, take), "version": index} for index, take in enumerate(takes, 1)]
+    summaries = [{**_summary(owner, take), "version": index} for index, take in enumerate(takes, 1)]
+    if kind == "clip":
+        from .records import candidate_output_root, candidate_render_freshness, read_candidate_render
+        for take in summaries:
+            rendered = read_candidate_render(workspace, owner["id"], take["id"])
+            state, reasons = candidate_render_freshness(workspace, owner, take["id"])
+            take["candidateRender"] = {**(rendered or {}), "state": state, "reasons": reasons,
+                                       "output": candidate_output_root(owner["id"], take["id"])}
+    return summaries
 
 
 def _preview(render, library: dict, character: dict, owner: dict) -> dict:
@@ -199,7 +211,7 @@ def _preview(render, library: dict, character: dict, owner: dict) -> dict:
         return {"text": "", "negative": "", "blocks": {}, "placeholders": [], "complete": False, "error": str(exc)}
 
 
-def overview(workspace: Path) -> dict:
+def overview(workspace: Path, *, graph: dict | None = None) -> dict:
     from .clips import clip_cost_estimate
     from .studio import studio_summary
     from .tools import ui_settings
@@ -230,7 +242,7 @@ def overview(workspace: Path) -> dict:
                  for name, config in (tools.get("providers") or {}).items()}
     return {"character": character, "prompts": library, "poses": poses, "clips": clips,
             "canvas": canvas_layout(workspace),
-            **studio_summary(workspace, character, poses, clips),
+            **studio_summary(workspace, character, poses, clips, graph=graph),
             "tools": {"ffmpeg": bool(shutil.which(tools.get("ffmpeg") or "ffmpeg")), "alpha": bool(tools.get("alpha")),
                       "interpolate": bool(tools.get("interpolate")), "providers": providers, **ui_settings(tools)}}
 

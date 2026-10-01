@@ -20,6 +20,9 @@ STATIC = {"review.js": "text/javascript", "review.css": "text/css", "preview-med
           "studio-clips.js": "text/javascript", "studio-clips.css": "text/css",
           "studio-compare.js": "text/javascript", "studio-compare.css": "text/css",
           "studio-expressions.js": "text/javascript", "studio-expressions.css": "text/css",
+          "studio-review.js": "text/javascript", "studio-review.css": "text/css",
+          "studio-behavior.js": "text/javascript", "studio-behavior.css": "text/css",
+          "studio-export.js": "text/javascript", "studio-export.css": "text/css",
           "i18n/en.js": "text/javascript", "i18n/zh-CN.js": "text/javascript"}
 
 
@@ -118,6 +121,15 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                     self.json(200, self.production_api().overview())
                 elif parsed.path == "/api/production/jobs":
                     self.json(200, {"ok": True, "jobs": self.production_api().job_list()})
+                elif parsed.path == "/api/behavior/stats":
+                    self.json(200, {"ok": True, **self.production_api().behavior_stats(
+                        (qs.get("minutes") or ["10"])[0], (qs.get("seed") or ["1"])[0])})
+                elif parsed.path == "/api/review/seam":
+                    self.json(200, {"ok": True, **self.production_api().review_seam((qs.get("key") or [""])[0])})
+                elif parsed.path == "/api/export/preflight":
+                    self.json(200, {"ok": True, **self.production_api().export_preflight()})
+                elif parsed.path == "/api/export/diff":
+                    self.json(200, {"ok": True, **self.production_api().export_diff()})
                 elif parsed.path == "/api/production/media":
                     self.send_file(*self.production_api().media((qs.get("path") or [""])[0]))
                 elif parsed.path == "/api/production/input":
@@ -223,7 +235,7 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
             if parsed.path.startswith("/api/production/"):
                 self.production_post(parsed, upload)
                 return
-            if self.path not in {"/api/graph", "/api/validate", "/api/preview-node"}:
+            if self.path not in {"/api/graph", "/api/validate", "/api/preview-node", "/api/preview-route"}:
                 self.json(404, {"ok": False, "error": "Not found"})
                 return
             try:
@@ -231,6 +243,26 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                 if not 0 < length <= 2_000_000:
                     raise ValueError("Invalid graph request size")
                 raw = json.loads(self.rfile.read(length))
+                if self.path == "/api/preview-route":
+                    if not isinstance(raw, dict) or not isinstance(raw.get("route"), list) or not raw["route"] \
+                            or not all(isinstance(node_id, str) for node_id in raw["route"]):
+                        raise ValueError("Preview route needs a non-empty list of node ids")
+                    graph = pack.graph if pack else validate_graph(workspace, raw.get("graph"))
+                    by_id = {node["id"]: node for node in graph["nodes"]}
+                    segments = {}
+                    for node_id in dict.fromkeys(raw["route"]):
+                        if node_id not in by_id:
+                            raise ValueError("Unknown route node")
+                        node = by_id[node_id]
+                        if pack:
+                            clip = pack.manifest["clips"][node["label"]]
+                            node = {**node, "frameIntervalMs": clip["frameIntervalMs"], "loopMode": clip["loopMode"]}
+                            frames = pack.clip_paths[node["label"]]
+                        else:
+                            frames = clip_frames(workspace, node)
+                        segments[node_id] = {"node": node, "frames": [p.relative_to(workspace).as_posix() for p in frames]}
+                    self.json(200, {"ok": True, "segments": [segments[node_id] for node_id in raw["route"]]})
+                    return
                 if pack:
                     if self.path != "/api/preview-node":
                         self.json(409, {"ok": False, "error": "Runtime packs are read-only. Edit the authoring workspace instead"})

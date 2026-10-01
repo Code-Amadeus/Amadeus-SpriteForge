@@ -2,7 +2,7 @@
 
 ```text
 Idle reference -> production: approved pose stills -> clip takes (import or provider)
-  -> accepted take -> render (register to stills, alpha, interpolate, lock) -> clip output
+  -> candidate processing (register to stills, alpha, interpolate, lock) -> QA -> adoption -> clip output
 Existing PNG frames -> workspace import/discovery -> preview and optional QA
   -> graph editor -> authoring validator -> shared node frame selection
        -> exact clip preview
@@ -62,3 +62,37 @@ from --layout or the exported sibling <pack-name>.graph-layout.json. The sibling
 contains only IDs, labels and coordinates and stays outside the runtime package.
 It cannot override runtime topology, probabilities or clip bindings. Missing
 positions are reported instead of replaced with an automatically invented layout.
+
+## Studio production and editing
+
+Generate & QA and Edit assets are separate views over the same workspace. The
+production side owns imports, generation, candidate processing and review. A
+candidate's processed output lives beside its take; producing or reviewing it
+does not replace the published clip. Adoption requires current non-failing QA
+and publishes the processed output while recording the decision. Publication
+rolls back if that decision fails. The legacy accept-then-render CLI remains
+available for existing callers.
+
+The editing side owns the material library, native graph editor, exact node
+player, assembly seam checks, behavior statistics and versioned exports. Clip
+QA is projected onto bound graph nodes for the canonical export gate; unbound
+candidates never block an existing package. Within one local server, publication
+and export jobs exclude one another. Independent CLI processes are not covered
+by this in-process scheduling rule.
+
+Behavior simulation mirrors Amadeus `render/spriteforge_animator.py`, checked at
+commit `788c506816b6a316e53d8f5118d95309695e3dfd`: node duration at lines 698–699,
+weighted positive edges at 701–713, first-hop BFS at 740–767, and intent consumption
+at 864–869 followed by automatic transitions at 878. The BFS diagnostic permits
+manual edges only on the first hop. An intent forces that first hop; later hops
+are sampled normally, so a found route does not guarantee that the simulation
+reaches its target. Duration comes from actual bound or legacy PNG frame counts
+and the node interval, falling back to 2.5 seconds only when unavailable.
+Simulation never edits the graph. It excludes runtime label aliases, root
+fallback or teleportation, speech holds and release logic.
+
+Versioned exports reuse the existing exporter and write only under the workspace.
+Installed packs are read-only comparison inputs. Texture changes are compared
+using encoded hashes from a recorded export with matching source hashes. Without
+that evidence, the UI reports a comparison awaiting encoding rather than treating
+PNG and KTX2 hashes as interchangeable.

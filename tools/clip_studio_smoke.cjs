@@ -105,10 +105,14 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.locator(`[data-take='${candidate.id}']`).click();
     await page.locator("[data-clip-action='restore']").click();
     await page.locator("[data-clip-action='accept']").waitFor();
+    assert.equal(await page.locator("[data-clip-action='accept']").isDisabled(), true);
+    await page.locator("[data-clip-action='processTake']").click();
+    await page.waitForFunction(id => window.SFStudio.state.clips.find(clip => clip.id === "smile_in").takes.find(take => take.id === id).candidateRender.state === "current", candidate.id);
+    assert.equal((await state()).clips.find(clip => clip.id === "smile_in").acceptedTake, accepted.id, "Processing a candidate keeps the published choice");
     await page.locator(".clip-studio h1").click();
     await page.keyboard.press("a");
     await page.waitForFunction(id => window.SFStudio.state.clips.find(clip => clip.id === "smile_in").acceptedTake === id, candidate.id);
-    assert.equal((await state()).clips.find(clip => clip.id === "smile_in").render.state, "stale");
+    assert.equal((await state()).clips.find(clip => clip.id === "smile_in").render.state, "current", "Adoption publishes the already reviewed candidate");
 
     for (const tab of ["generation", "processing", "playback", "mouth", "qa", "prompt"]) {
       await page.locator(`[data-detail-tab='${tab}']`).click();

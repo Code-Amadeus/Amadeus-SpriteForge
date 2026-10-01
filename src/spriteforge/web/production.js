@@ -14,7 +14,6 @@ let jobs = context ? context.jobs : [];
 let jobFilter = "all";
 let jobTimer = null;
 let previewTimer = null;
-let wasRunning = false;
 let disposed = false;
 let actionPending = false;
 let previewGeneration = 0;
@@ -364,7 +363,9 @@ function decisionButtons(kind, owner, take) {
       tx(action === "accept" ? "decisionAccepted" : action === "reject" ? "decisionArchived" : "decisionRestored", `${action === "accept" ? "Accepted" : action === "reject" ? "Archived" : "Restored"} {take}`, { take: take.id }));
   };
   return [
-    take.status === "candidate" ? h("button", { class: "primary", onclick: decide("accept") }, kind === "pose" ? tx("approveStill", "Approve still") : tx("useTake", "Use this take")) : null,
+    take.status === "candidate" ? context && kind === "clip"
+      ? h("a", { class: "button primary", href: "#/clips/" + encodeURIComponent(owner) }, tx("reviewClip", "Review in Clip Studio"))
+      : h("button", { class: "primary", onclick: decide("accept") }, kind === "pose" ? tx("approveStill", "Approve still") : tx("useTake", "Use this take")) : null,
     take.status !== "rejected" ? h("button", { class: "danger", onclick: decide("reject") }, tx("rejectArchive", "Reject & archive")) : null,
     take.status === "rejected" ? h("button", { onclick: decide("restore") }, tx("restore", "Restore")) : null,
   ];
@@ -747,6 +748,7 @@ function promptView(p, compact = false) {
 }
 
 function renderPrompts() {
+  const drafts = context ? [] : captureFields($("promptList"));
   const library = state.prompts;
   const usage = {};
   for (const owner of [...state.poses, ...state.clips]) {
@@ -765,6 +767,7 @@ function renderPrompts() {
       Object.entries(library.templates).map(([id, t]) => h("tr", {}, h("td", {}, id), h("td", {}, t.blocks.join(" + ")),
         h("td", {}, t.join ? `"${t.join}"` : tx("blankLine", "blank line")), h("td", {}, (t.negative || []).join(" + "))))),
     ids.map((id) => blockCard(id, library.blocks[id], usage)));
+  if (!context) { rememberFields($("promptList")); restoreFields($("promptList"), drafts); }
 }
 
 function blockCard(id, block, usage) {
@@ -817,23 +820,25 @@ function versionDiff(id, block) {
 
 // ── Jobs, uploads and planning ─────────────────────────────────────────
 async function startJob(action, owner, extra = {}) {
-  await run(() => api("/api/production/jobs", { action, ...owner, ...extra }), tx("jobStarted", "{action} started for {owner}", { action: tx(`action.${action}`, action), owner: owner.pose || owner.clip }));
+  const result = await run(() => api("/api/production/jobs", { action, ...owner, ...extra }), tx("jobStarted", "{action} started for {owner}", { action: tx(`action.${action}`, action), owner: owner.pose || owner.clip }));
+  if (!context && result?.job) jobs = [...jobs.filter(job => job.id !== result.job.id), result.job];
   pollJobs();
 }
 
 async function pollJobs() {
   if (context || disposed) return;
+  clearTimeout(jobTimer);
+  const previous = new Map(jobs.map(job => [job.id, job.status]));
   try {
     jobs = (await api("/api/production/jobs")).jobs;
   } catch (error) {
+    if (jobs.some(job => job.status === "running")) jobTimer = setTimeout(pollJobs, 1500);
     return;
   }
   renderJobs();
   const running = jobs.some((j) => j.status === "running");
-  clearTimeout(jobTimer);
   if (running) jobTimer = setTimeout(pollJobs, 1500);
-  else if (wasRunning) refresh();
-  wasRunning = running;
+  if (jobs.some(job => job.status !== "running" && previous.get(job.id) !== job.status)) refresh();
 }
 
 function renderJobs() {

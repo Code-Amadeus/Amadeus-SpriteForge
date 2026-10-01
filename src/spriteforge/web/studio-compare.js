@@ -9,7 +9,8 @@
       start: "Approved start still", end: "Approved end still", qaUnavailable: "Frame markers require a matching render preview.",
       widest: "{pane}: widest mouth f{frame}", qaFrame: "{pane}: {level} · f{frame}", seam: "{pane}: loop seam {value} L*",
       onionHint: "Previous, current and next A frames, overlaid with B.", renderHint: "Show published output only when it belongs to the selected take.",
-      statusAccepted: "accepted", statusCandidate: "to review", statusRejected: "rejected" },
+      candidateRender: "Candidate processed preview", staleRender: "Stale processed preview", missingRender: "Candidate processed preview unavailable", publishedB: "Published B render",
+      statusAccepted: "accepted", statusCandidate: "to review", statusReviewed: "previously adopted", statusRejected: "rejected" },
     "zh-CN": { side: "并排", overlay: "叠加", difference: "差异", onion: "洋葱皮", modes: "对比模式",
       ends: "显示起止静帧", guides: "头部参考线", rendered: "渲染预览", raw: "原始尝试", render: "渲染",
       previous: "上一帧", next: "下一帧", play: "播放", pause: "暂停", loop: "循环", speed: "速度",
@@ -18,7 +19,8 @@
       start: "已批准的起点静帧", end: "已批准的终点静帧", qaUnavailable: "帧标记需要与该尝试匹配的渲染预览。",
       widest: "{pane}：最大张嘴 f{frame}", qaFrame: "{pane}：{level} · f{frame}", seam: "{pane}：循环接缝 {value} L*",
       onionHint: "A 的前一帧、当前帧和后一帧，与 B 叠加。", renderHint: "仅当发布的渲染属于选中的尝试时显示它。",
-      statusAccepted: "已采用", statusCandidate: "待审阅", statusRejected: "已弃用" },
+      candidateRender: "候选处理预览", staleRender: "处理预览已过期", missingRender: "候选处理预览不可用", publishedB: "B 的发布渲染",
+      statusAccepted: "已采用", statusCandidate: "待审阅", statusReviewed: "曾采纳", statusRejected: "已弃用" },
   };
   for (const [lang, entries] of Object.entries(strings)) window.SFStudio.addTranslations(lang,
     Object.fromEntries(Object.entries(entries).map(([key, value]) => [`compare.${key}`, value])));
@@ -107,13 +109,19 @@
     }
 
     async function loadSource(take, pane, token) {
-      const source = { take, pane, frames: [], cache: new Map(), queue: Promise.resolve(), fps: 0, count: 0, duration: 0, rendered: false, error: null };
+      const source = { take, pane, frames: [], cache: new Map(), queue: Promise.resolve(), fps: 0, count: 0, duration: 0, rendered: false, error: null,
+        candidate: Boolean(opts.candidatePreview && pane === "A") };
       if (!take || !take.media || take.state !== "ready") return source;
       try {
-        const record = opts.clip.render;
-        const rendered = ui.rendered && record && record.take === take.id && record.frameCount;
+        const candidate = opts.candidatePreview && pane === "A";
+        const record = candidate ? take.candidateRender : opts.clip.render;
+        source.render = candidate ? record : null;
+        if (candidate && (!record || record.take !== take.id || record.state === "missing" || !record.output || !record.frameCount)) {
+          throw new Error(t("missingRender"));
+        }
+        const rendered = (candidate || ui.rendered) && record && record.take === take.id && record.frameCount;
         if (rendered || take.media.dir) {
-          const directory = rendered ? opts.clip.output : `production/clips/${opts.clip.id}/takes/${take.id}/${take.media.dir}`;
+          const directory = rendered ? (candidate ? record.output : opts.clip.output) : `production/clips/${opts.clip.id}/takes/${take.id}/${take.media.dir}`;
           const data = await ctx.api("/api/clips?root=" + encodeURIComponent(directory));
           if (!alive(token)) return source;
           source.frames = (Object.values(data.clips)[0] || {}).frames || [];
@@ -121,6 +129,7 @@
           source.fps = rendered ? 1000 / record.frameIntervalMs : Number(take.media.fps);
           source.rendered = Boolean(rendered);
           source.render = rendered ? record : null;
+          source.candidate = candidate;
         } else if (take.media.video) {
           const video = document.createElement("video");
           source.video = video; video.muted = true; video.playsInline = true; video.preload = "auto";
@@ -260,9 +269,9 @@
       }
       sources.forEach((source, index) => {
         const take = source.take; const number = take ? opts.clip.takes.findIndex((entry) => entry.id === take.id) + 1 : null;
-        const status = take && ({ accepted: "statusAccepted", candidate: "statusCandidate", rejected: "statusRejected" })[take.status];
+        const status = take && (take.status === "candidate" && !take.needsReview ? "statusReviewed" : ({ accepted: "statusAccepted", candidate: "statusCandidate", rejected: "statusRejected" })[take.status]);
         const indexFrame = Math.min(source.count - 1, Math.floor(time * source.fps + 0.00001));
-        el.labels[index].textContent = `${source.pane} ${number ? `v${number}` : ""}${status ? ` · ${t(status)}` : ""} · ${t(source.rendered ? "render" : "raw")}` +
+        el.labels[index].textContent = `${source.pane} ${number ? `v${number}` : ""}${status ? ` · ${t(status)}` : ""} · ${t(source.candidate ? (!source.rendered ? "missingRender" : source.render.state === "stale" ? "staleRender" : "candidateRender") : source.rendered ? "render" : "raw")}` +
           (source.count ? ` · ${t("frame", { frame: indexFrame, count: source.count })}` : "");
         el.canvases[index].dataset.frame = String(indexFrame);
       });
@@ -361,7 +370,7 @@
       el.stills = h("div", { class: "compare-approved-stills", hidden: !ui.ends });
       el.root = h("div", { class: "clip-compare" }, h("div", { class: "compare-toolbar" },
         h("div", { class: "compare-modes", role: "group", "aria-label": t("modes") }, el.modeButtons),
-        h("div", { class: "compare-options" }, h("label", {}, ends, t("ends")), h("label", {}, guides, t("guides")), h("label", { title: t("renderHint") }, rendered, t("rendered")))),
+        h("div", { class: "compare-options" }, h("label", {}, ends, t("ends")), h("label", {}, guides, t("guides")), h("label", { title: t("renderHint") }, rendered, t(opts.candidatePreview ? "publishedB" : "rendered")))),
         el.views, el.stills, h("div", { class: "compare-timeline" }, el.markers, el.slider), el.markerNote,
         h("div", { class: "compare-controls" }, h("button", { "aria-label": t("previous"), onclick: () => step(-1) }, "‹"), el.play,
           h("button", { "aria-label": t("next"), onclick: () => step(1) }, "›"), el.frame,
@@ -397,7 +406,8 @@
 
     function mediaSignature(value) {
       return JSON.stringify([value.clip.id, value.takeA && [value.takeA.id, value.takeA.state, value.takeA.media],
-        value.takeB && [value.takeB.id, value.takeB.state, value.takeB.media], ui.rendered && value.clip.render]);
+        value.takeB && [value.takeB.id, value.takeB.state, value.takeB.media], ui.rendered && value.clip.render,
+        value.candidatePreview && value.takeA && value.takeA.candidateRender]);
     }
     function update(nextCtx, nextOptions = opts) {
       const nextSignature = mediaSignature(nextOptions);

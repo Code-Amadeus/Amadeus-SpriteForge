@@ -63,6 +63,25 @@ def test_bad_save_and_foreign_origin_leave_graph_intact(editor, workspace):
     assert request(editor, "/frame?path=graph_config.json")[0] == 400
 
 
+def test_route_preview_uses_draft_timing_and_preserves_saved_graph(editor, workspace):
+    graph_file = workspace / "graph_config.json"
+    original = graph_file.read_bytes()
+    graph = read_json(graph_file)
+    graph["nodes"][0]["frameIntervalMs"] = 75
+    graph["nodes"][0]["loopMode"] = "once_then_hold"
+    status, body = request(editor, "/api/preview-route", {"graph": graph, "route": ["idle", "idle"]})
+    segments = json.loads(body)["segments"]
+    assert status == 200 and len(segments) == 2
+    assert segments[0] == segments[1]
+    assert segments[0]["node"]["frameIntervalMs"] == 75
+    assert segments[0]["node"]["loopMode"] == "once_then_hold"
+    assert len(segments[0]["frames"]) == 3
+    for route in ([], ["missing"], [42]):
+        assert request(editor, "/api/preview-route", {"graph": graph, "route": route})[0] == 400
+    assert request(editor, "/api/preview-route", {"graph": graph, "route": ["idle"]}, {"Origin": "https://example.com"})[0] == 403
+    assert graph_file.read_bytes() == original
+
+
 def test_qa_report_matches_ui_contract(editor, workspace):
     pytest.importorskip("cv2")
     root = read_json(workspace / "graph_config.json")["nodes"][0]["root"]
@@ -92,6 +111,11 @@ def test_runtime_pack_is_manifest_indexed_and_read_only():
         preview = json.loads(body)
         assert status == 200 and preview["node"]["frameIntervalMs"] == 160
         assert request(url, "/frame?path=" + preview["frames"][0])[1].startswith(b"\xabKTX 20")
+        status, body = request(url, "/api/preview-route", {"graph": {"nodes": []}, "route": ["idle", "idle"]})
+        segments = json.loads(body)["segments"]
+        assert status == 200 and len(segments) == 2
+        assert segments[0]["node"]["frameIntervalMs"] == 160
+        assert segments[0]["frames"] == preview["frames"]
         assert request(url, "/frame?path=runtime_manifest.json")[0] == 400
         assert request(url, "/api/report?root=idle")[0] == 400
         assert request(url, "/static/vendor/basis_transcoder.wasm")[0] == 200

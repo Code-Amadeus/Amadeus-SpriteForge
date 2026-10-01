@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   const stages = ["overview", "expressions", "clips", "workflows", "review", "behavior", "export"];
-  const modeStages = { produce: ["overview", "expressions", "clips", "review"], edit: ["overview", "behavior", "export"] };
+  const modeStages = { produce: ["overview", "expressions", "clips", "review"], edit: ["overview", "behavior", "review", "export"] };
   const tools = ["canvas", "prompts", "jobs", "settings"];
   const renderers = new Map();
   const toolRenderers = new Map();
@@ -103,13 +103,14 @@
     const tool = parameters.get("tool");
     // Canvas has its own full-main route so a drawer can overlay it and reload there.
     if (tool === "canvas") { stage = "canvas"; id = null; }
-    const mode = ["behavior", "export"].includes(stage) || stage === "overview" && parameters.get("mode") === "edit" ? "edit" : "produce";
-    return { stage, mode, id: stage === "behavior" ? (id === "stats" ? "stats" : "graph") : id, tool: tool !== "canvas" && tools.includes(tool) ? tool : null };
+    const mode = ["behavior", "export"].includes(stage) || ["overview", "review"].includes(stage) && parameters.get("mode") === "edit" ? "edit" : "produce";
+    return { stage, mode, select: parameters.get("select"), id: stage === "behavior" ? (id === "stats" ? "stats" : "graph") : id, tool: tool !== "canvas" && tools.includes(tool) ? tool : null };
   }
 
   function routeHash(value = route, tool = value.tool) {
     const query = new URLSearchParams();
-    if (value.stage === "overview" && value.mode === "edit") query.set("mode", "edit");
+    if (["overview", "review"].includes(value.stage) && value.mode === "edit") query.set("mode", "edit");
+    if (value.select) query.set("select", value.select);
     if (tool) query.set("tool", tool);
     return "#/" + value.stage + (value.id ? "/" + encodeURIComponent(value.id) : "") + (query.size ? "?" + query : "");
   }
@@ -161,11 +162,9 @@
   function version(owner, take) { return take ? take.version || (owner.takes || []).indexOf(take) + 1 : null; }
   function undecided(owner) {
     const takes = owner.takes || [];
-    const approved = accepted(owner);
-    // Video QA is produced by the fixed render pipeline after choosing a take.
+    // The host distinguishes undecided candidates from previously adopted versions.
     const clip = owner.kind === "transition" || owner.kind === "loop";
-    return takes.filter((take) => take.state === "ready" && take.status !== "accepted" && take.status !== "rejected"
-      && (clip || (take.qa && take.qa.status !== "fail")) && (!approved || version(owner, take) > version(owner, approved)));
+    return takes.filter((take) => take.needsReview && (clip || (take.qa && take.qa.status !== "fail")));
   }
   function stillUrl(pose) {
     const take = accepted(pose) || (pose.takes || []).filter((candidate) => candidate.media && candidate.media.still).at(-1);
@@ -200,6 +199,7 @@
   }
 
   function renderChrome() {
+    const stageLabel = stage => t(stage === "review" && route.mode === "edit" ? "stage.connections" : "stage." + stage);
     const focused = document.activeElement;
     const focusData = focused instanceof HTMLElement && (byId("studioSidebar").contains(focused) || byId("studioTopbar").contains(focused))
       ? ["stage", "tool", "lang", "mode", "generationView"].map((key) => focused.dataset[key] ? [key, focused.dataset[key]] : null).find(Boolean) : null;
@@ -223,9 +223,10 @@
       const expressionCount = state.poses.filter((pose) => undecided(pose).length).length;
       for (const stage of route.stage === "workflows" ? ["workflows"] : modeStages[route.mode]) {
         const current = route.stage === stage;
-        const count = stage === "expressions" ? expressionCount : stage === "review" ? blockingIssues().length : 0;
+        const count = stage === "expressions" ? expressionCount : stage === "review" ? (state.issues || []).filter(issue => issue.level === "fail"
+          && (route.mode === "edit" ? ["node", "edge"] : ["pose", "clip"]).includes(issue.kind)).length : 0;
         sidebar.append(h("a", { class: "rail" + (current ? " on" : ""), href: routeHash({ stage, mode: route.mode, id: stage === "behavior" ? "graph" : null }, null), "data-stage": stage, "aria-current": current ? "page" : null },
-          icon(stage), t("stage." + stage), count ? badge(String(count), stage === "review" ? "fail" : "info") : null));
+          icon(stage), stageLabel(stage), count ? badge(String(count), stage === "review" ? "fail" : "info") : null));
       }
       sidebar.append(h("div", { class: "spacer" }));
       for (const tool of route.mode === "produce" ? tools : ["jobs", "settings"]) {
@@ -238,7 +239,7 @@
     const topbar = byId("studioTopbar");
     const crumb = h("div", { class: "breadcrumb" }, ready ? h("span", { class: "tiny" }, state.character.displayName) : null,
       ready ? h("span", { class: "tiny", "aria-hidden": "true" }, "/") : null,
-      h("strong", {}, ready ? t((route.stage === "canvas" ? "tool.canvas" : "stage." + route.stage)) : t("shell.studio")));
+      h("strong", {}, ready ? (route.stage === "canvas" ? t("tool.canvas") : stageLabel(route.stage)) : t("shell.studio")));
     topbar.replaceChildren(crumb, h("div", { class: "spacer" }));
     if (ready) {
       if (route.mode === "produce") {
@@ -469,7 +470,7 @@
   }
 
   function nextSteps() {
-    const issueStep = (issue) => ({ level: issue.level, badge: t(issue.blocksExport ? "status.blocksExport" : "status." + issue.level), title: issueLabel(issue), href: "#/review/" + encodeURIComponent(issue.key), button: t("next.review") });
+    const issueStep = (issue) => ({ level: issue.level, badge: t(issue.blocksExport ? "status.blocksExport" : "status." + issue.level), title: issueLabel(issue), href: "#/review/" + encodeURIComponent(issue.key) + (["node", "edge"].includes(issue.kind) ? "?mode=edit" : ""), button: t("next.review") });
     const steps = blockingIssues().map(issueStep);
     for (const job of runningJobs()) steps.push({ level: "info", badge: t("status.running"), title: t("next.job", { owner: job.owner || "", action: t("job." + ((window.SF_I18N.en || {})["job." + job.action] ? job.action : "process")) }), href: routeHash(route, "jobs"), button: t("next.viewJobs") });
     for (const clip of state.clips) {
