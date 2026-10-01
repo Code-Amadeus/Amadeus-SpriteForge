@@ -49,8 +49,9 @@ def test_candidate_findings_do_not_block_published_graph_or_include_rejected_tak
     clips = [{"id": "loop", "acceptedTake": "adopted", "render": {"state": "current", "qa": {"checks": []}},
               "takes": [{"id": "adopted", "candidateRender": {"qa": {"status": "fail", "checks": [check]}}},
                         {"id": "rejected", "rejected": {"reason": "bad"}, "candidateRender": {"qa": {"status": "fail", "checks": [check]}}},
-                        {"id": "new", "candidateRender": {"qa": {"status": "fail", "checks": [check]}}},
-                        {"id": "opaque", "candidateRender": {"qa": {"status": "fail", "checks": []}}}]}]
+                        {"id": "previous", "needsReview": False, "candidateRender": {"qa": {"status": "fail", "checks": [check]}}},
+                        {"id": "new", "needsReview": True, "candidateRender": {"qa": {"status": "fail", "checks": [check]}}},
+                        {"id": "opaque", "needsReview": True, "candidateRender": {"qa": {"status": "fail", "checks": []}}}]}]
     issues = issue_summary([], clips, {"nodes": [], "edges": []}, {})
     assert [issue["key"] for issue in issues] == ["clip:loop:take:new:alignment", "clip:loop:take:opaque:status"]
     assert all(issue["candidate"] and not issue["blocksExport"] for issue in issues)

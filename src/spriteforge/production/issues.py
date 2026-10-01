@@ -63,7 +63,7 @@ def issue_summary(poses: list[dict], clips: list[dict], graph: dict, report: dic
             add(f"clip:{clip['id']}:{check['check']}", check["level"], "clip", check["message"], clip=clip["id"],
                 **{key: value for key, value in check.items() if key not in {"check", "level", "message"}})
         for take in clip.get("takes", []):
-            if take["id"] == clip.get("acceptedTake") or take.get("rejected"):
+            if not take.get("needsReview"):
                 continue
             qa = (take.get("candidateRender") or {}).get("qa") or {}
             checks = qa.get("checks", [])

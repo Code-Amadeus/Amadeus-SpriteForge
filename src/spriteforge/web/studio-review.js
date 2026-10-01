@@ -36,8 +36,8 @@
     function queue(){
       if(assembly())return [];
       const result=[];
-      for(const owner of ctx.state.poses)for(const take of owner.takes){if(take.state!=="ready"||take.status==="rejected")continue;if(take.status==="candidate"||(owner.needsRecheck&&take.id===owner.acceptedTake))result.push({key:`pose:${owner.id}:${take.id}`,kind:"pose",owner,take});}
-      for(const owner of ctx.state.clips)for(const take of owner.takes){if(take.state!=="ready"||take.status==="rejected")continue;if(take.status==="candidate"||(take.id===owner.acceptedTake&&(owner.render.state!=="current"||owner.render.qa?.status==="fail")))result.push({key:`clip:${owner.id}:${take.id}`,kind:"clip",owner,take});}
+      for(const owner of ctx.state.poses)for(const take of owner.takes){if(take.state!=="ready"||take.status==="rejected")continue;if(take.needsReview||(owner.needsRecheck&&take.id===owner.acceptedTake))result.push({key:`pose:${owner.id}:${take.id}`,kind:"pose",owner,take});}
+      for(const owner of ctx.state.clips)for(const take of owner.takes){if(take.state!=="ready"||take.status==="rejected")continue;if(take.needsReview||(take.id===owner.acceptedTake&&(owner.render.state!=="current"||owner.render.qa?.status==="fail")))result.push({key:`clip:${owner.id}:${take.id}`,kind:"clip",owner,take});}
       return result;
     }
     const selectedQueue=()=>queue().find((item)=>item.key===queueKey);

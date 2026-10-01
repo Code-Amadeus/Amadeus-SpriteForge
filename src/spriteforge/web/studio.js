@@ -162,11 +162,9 @@
   function version(owner, take) { return take ? take.version || (owner.takes || []).indexOf(take) + 1 : null; }
   function undecided(owner) {
     const takes = owner.takes || [];
-    const approved = accepted(owner);
-    // Video QA is produced by the fixed render pipeline after choosing a take.
+    // The host distinguishes undecided candidates from previously adopted versions.
     const clip = owner.kind === "transition" || owner.kind === "loop";
-    return takes.filter((take) => take.state === "ready" && take.status !== "accepted" && take.status !== "rejected"
-      && (clip || (take.qa && take.qa.status !== "fail")) && (!approved || version(owner, take) > version(owner, approved)));
+    return takes.filter((take) => take.needsReview && (clip || (take.qa && take.qa.status !== "fail")));
   }
   function stillUrl(pose) {
     const take = accepted(pose) || (pose.takes || []).filter((candidate) => candidate.media && candidate.media.still).at(-1);

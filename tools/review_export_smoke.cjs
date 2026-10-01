@@ -47,6 +47,8 @@ const { spawn } = require("node:child_process");
     const watchDialog = page.locator("[data-review-dialog='watchTitle']");
     if (await watchDialog.count()) { await watchDialog.locator("[data-review-field='watch-confirm']").check(); await watchDialog.locator("[data-review-submit]").click(); }
     await page.waitForFunction(() => window.SFStudio.state.clips.find(clip => clip.id === "smile_in").takes.some(take => take.status === "accepted" && take.candidateRender?.state === "current"));
+    const formerlyAccepted = initial.clips.find(clip => clip.id === "smile_in").acceptedTake;
+    assert.equal(await page.locator(`[data-review-queue='clip:smile_in:${formerlyAccepted}']`).count(), 0, "Replacing an adopted version must not requeue it as a new review");
     await page.goto(url + "/studio#/review/" + encodeURIComponent(seam.key) + "?mode=edit");
     await page.locator("[data-seam-metric='dHeadCenter']").waitFor();
     const detail = await (await page.request.get(url + "/api/review/seam?key=" + encodeURIComponent(seam.key))).json();

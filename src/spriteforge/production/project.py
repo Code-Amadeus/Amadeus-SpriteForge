@@ -179,9 +179,13 @@ def set_closed_mouth(workspace: Path, source_pose: str | None, *, pose_id: str |
 
 def _summary(owner: dict, take: dict) -> dict:
     from .clips import generation_snapshot
+    status = take_status(owner, take)
+    decision = next((entry["action"] for entry in reversed(take.get("history") or [])
+                     if entry.get("action") in {"accepted", "rejected", "restored"}), None)
     keep = ("id", "createdAt", "state", "source", "prompt", "inputs", "media", "normalization", "qa", "rejected",
             "history", "error", "basedOn")
-    return {**{k: take.get(k) for k in keep}, "status": take_status(owner, take),
+    return {**{k: take.get(k) for k in keep}, "status": status,
+            "needsReview": status == "candidate" and decision != "accepted",
             "note": take.get("note", (take.get("source") or {}).get("note", "")),
             "generation": generation_snapshot(take)}
 

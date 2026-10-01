@@ -10,7 +10,7 @@
       widest: "{pane}: widest mouth f{frame}", qaFrame: "{pane}: {level} · f{frame}", seam: "{pane}: loop seam {value} L*",
       onionHint: "Previous, current and next A frames, overlaid with B.", renderHint: "Show published output only when it belongs to the selected take.",
       candidateRender: "Candidate processed preview", staleRender: "Stale processed preview", missingRender: "Candidate processed preview unavailable", publishedB: "Published B render",
-      statusAccepted: "accepted", statusCandidate: "to review", statusRejected: "rejected" },
+      statusAccepted: "accepted", statusCandidate: "to review", statusReviewed: "previously adopted", statusRejected: "rejected" },
     "zh-CN": { side: "并排", overlay: "叠加", difference: "差异", onion: "洋葱皮", modes: "对比模式",
       ends: "显示起止静帧", guides: "头部参考线", rendered: "渲染预览", raw: "原始尝试", render: "渲染",
       previous: "上一帧", next: "下一帧", play: "播放", pause: "暂停", loop: "循环", speed: "速度",
@@ -20,7 +20,7 @@
       widest: "{pane}：最大张嘴 f{frame}", qaFrame: "{pane}：{level} · f{frame}", seam: "{pane}：循环接缝 {value} L*",
       onionHint: "A 的前一帧、当前帧和后一帧，与 B 叠加。", renderHint: "仅当发布的渲染属于选中的尝试时显示它。",
       candidateRender: "候选处理预览", staleRender: "处理预览已过期", missingRender: "候选处理预览不可用", publishedB: "B 的发布渲染",
-      statusAccepted: "已采用", statusCandidate: "待审阅", statusRejected: "已弃用" },
+      statusAccepted: "已采用", statusCandidate: "待审阅", statusReviewed: "曾采纳", statusRejected: "已弃用" },
   };
   for (const [lang, entries] of Object.entries(strings)) window.SFStudio.addTranslations(lang,
     Object.fromEntries(Object.entries(entries).map(([key, value]) => [`compare.${key}`, value])));
@@ -269,7 +269,7 @@
       }
       sources.forEach((source, index) => {
         const take = source.take; const number = take ? opts.clip.takes.findIndex((entry) => entry.id === take.id) + 1 : null;
-        const status = take && ({ accepted: "statusAccepted", candidate: "statusCandidate", rejected: "statusRejected" })[take.status];
+        const status = take && (take.status === "candidate" && !take.needsReview ? "statusReviewed" : ({ accepted: "statusAccepted", candidate: "statusCandidate", rejected: "statusRejected" })[take.status]);
         const indexFrame = Math.min(source.count - 1, Math.floor(time * source.fps + 0.00001));
         el.labels[index].textContent = `${source.pane} ${number ? `v${number}` : ""}${status ? ` · ${t(status)}` : ""} · ${t(source.candidate ? (!source.rendered ? "missingRender" : source.render.state === "stale" ? "staleRender" : "candidateRender") : source.rendered ? "render" : "raw")}` +
           (source.count ? ` · ${t("frame", { frame: indexFrame, count: source.count })}` : "");

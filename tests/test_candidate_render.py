@@ -7,7 +7,7 @@ from synthetic import clip_with_take, frame_folder
 from spriteforge.production.clips import import_clip_take
 from spriteforge.production.project import overview, set_clip
 from spriteforge.production.records import (candidate_render_freshness, load_owner, read_candidate_render,
-                                             read_render, render_freshness, take_dir)
+                                             read_render, render_freshness, take_dir, decide)
 from spriteforge.production.render import adopt_processed_take, render_clip, render_take
 
 
@@ -44,6 +44,20 @@ def test_preview_is_separate_until_explicit_adoption(studio):
     preview = take_dir(studio.root, "clip", "smile_in", candidate["id"]) / "processed"
     assert files(published) == files(preview)
     assert (studio.root / "graph_config.json").read_bytes() == graph
+
+
+def test_replaced_adopted_version_does_not_reenter_queue_unless_restored(studio):
+    previous, candidate, _ = prepared(studio)
+    render_take(studio.root, "smile_in", candidate["id"], log=lambda *_: None)
+    adopt_processed_take(studio.root, "smile_in", candidate["id"])
+    takes = overview(studio.root)["clips"][0]["takes"]
+    old = next(take for take in takes if take["id"] == previous["id"])
+    assert old["status"] == "candidate" and old["needsReview"] is False
+    assert not any(take["needsReview"] for take in takes)
+    decide(studio.root, "clip", "smile_in", previous["id"], "reject", "Archive the older version")
+    decide(studio.root, "clip", "smile_in", previous["id"], "restore")
+    restored = next(take for take in overview(studio.root)["clips"][0]["takes"] if take["id"] == previous["id"])
+    assert restored["needsReview"] is True
 
 
 def test_failing_candidate_qa_never_replaces_existing_output(studio, monkeypatch):

@@ -4,7 +4,8 @@ permissions:
   contents: read
 jobs:
   contracts:
-    timeout-minutes: 15
+    # Dependency mirrors can take more than 15 minutes before browser checks start.
+    timeout-minutes: 30
     env:
       BROWSER_CHANNEL: ${{ matrix.os == 'windows-latest' && 'msedge' || '' }}
     strategy:
