@@ -522,3 +522,53 @@ def test_workflow_directory_symlink_cannot_escape_selected_workspace(studio):
         assert list(outside.iterdir()) == []
     finally:
         link.unlink()
+
+
+def test_api_accepted_workflow_has_pending_read_until_first_run_receipt(engine, monkeypatch):
+    studio, ops, runner = engine
+    api = ProductionApi(studio.root)
+    api.workflows = runner
+    pending = []
+
+    class ControlledThread:
+        def __init__(self, *, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            pending.append(self.target)
+
+    monkeypatch.setattr(threading, "Thread", ControlledThread)
+    plan = api.post("workflows/plan", {"id": "test-workflow"})
+    job = api.post("workflows/run", {"id": "test-workflow", "planHash": plan["planHash"], "confirmPaid": 1})["job"]
+    assert job["status"] == "running" and ops.calls == []
+    assert not (directory(studio.root) / "runs" / job["runId"] / "run.json").exists()
+    assert api.workflow_get("/runs/" + job["runId"]) == {"run": None}
+    pending[0]()
+    assert api.job_list()[0]["status"] == "succeeded"
+    assert api.workflow_get("/runs/" + job["runId"])["run"]["state"] == "ready"
+
+
+@pytest.mark.parametrize("status", ["failed", "succeeded"])
+def test_api_missing_terminal_run_is_not_pending(studio, status):
+    api = ProductionApi(studio.root)
+    api.jobs["job"] = {"action": "workflow", "runId": "accepted", "status": status}
+    with pytest.raises(FileNotFoundError):
+        api.workflow_get("/runs/accepted")
+
+
+def test_api_unknown_run_is_not_pending_despite_another_running_workflow(studio):
+    api = ProductionApi(studio.root)
+    api.jobs["job"] = {"action": "workflow", "runId": "accepted", "status": "running"}
+    with pytest.raises(FileNotFoundError):
+        api.workflow_get("/runs/unknown")
+
+
+@pytest.mark.parametrize("content", ["{invalid-json", '{"format":"unsupported"}'])
+def test_api_corrupt_receipt_is_not_pending_for_running_job(studio, content):
+    api = ProductionApi(studio.root)
+    api.jobs["job"] = {"action": "workflow", "runId": "accepted", "status": "running"}
+    path = directory(studio.root) / "runs" / "accepted" / "run.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError):
+        api.workflow_get("/runs/accepted")

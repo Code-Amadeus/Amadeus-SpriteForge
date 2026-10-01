@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import urllib.parse
 import webbrowser
@@ -25,6 +26,11 @@ STATIC = {"review.js": "text/javascript", "review.css": "text/css", "preview-med
           "studio-export.js": "text/javascript", "studio-export.css": "text/css",
           "studio-workflows.js": "text/javascript", "studio-workflows.css": "text/css",
           "i18n/en.js": "text/javascript", "i18n/zh-CN.js": "text/javascript"}
+
+
+class EditorHTTPServer(ThreadingHTTPServer):
+    # Let the OS size the pending connection queue for a page's static-resource burst.
+    request_queue_size = socket.SOMAXCONN
 
 
 def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = None) -> ThreadingHTTPServer:
@@ -335,7 +341,7 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
         def log_message(self, *args) -> None:
             pass
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return EditorHTTPServer(("127.0.0.1", port), Handler)
 
 
 def serve(workspace: Path, port: int, no_browser: bool, layout_path: Path | None = None) -> None:

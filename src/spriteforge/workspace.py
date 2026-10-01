@@ -5,7 +5,10 @@ import json
 import os
 import tempfile
 from pathlib import Path, PureWindowsPath
+from threading import Lock
 from typing import Any
+
+_JSON_IO_LOCK = Lock()
 
 
 def resolve_asset(workspace: Path, value: str) -> Path:
@@ -69,7 +72,11 @@ def discover(workspace: Path) -> list[dict]:
 
 
 def read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    # Windows readers deny replacement until their file handle closes. Only
+    # our in-process handle lifetime and replace share this short critical section.
+    with _JSON_IO_LOCK:
+        content = path.read_text(encoding="utf-8-sig")
+    return json.loads(content)
 
 
 def atomic_json(path: Path, value: Any) -> None:
@@ -82,6 +89,7 @@ def atomic_json(path: Path, value: Any) -> None:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(name, path)
+        with _JSON_IO_LOCK:
+            os.replace(name, path)
     finally:
         Path(name).unlink(missing_ok=True)

@@ -344,7 +344,15 @@ class ProductionApi:
         if suffix == "/templates":
             return {"templates": TEMPLATES}
         if suffix.startswith("/runs/"):
-            return {"run": read_run(self.workspace, suffix.removeprefix("/runs/"))}
+            run_id = suffix.removeprefix("/runs/")
+            try:
+                return {"run": read_run(self.workspace, run_id)}
+            except FileNotFoundError:
+                with self.lock:
+                    if any(job.get("action") == "workflow" and job.get("runId") == run_id
+                           and job.get("status") == "running" for job in self.jobs.values()):
+                        return {"run": None}
+                raise
         return {"workflow": load_workflow(self.workspace, suffix.removeprefix("/"))}
 
     def job_list(self) -> list[dict]:

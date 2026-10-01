@@ -197,9 +197,10 @@ def list_workflows(workspace: Path, *, operations=None) -> list[dict]:
 
 def read_run(workspace: Path, identifier: str) -> dict:
     path = _path(workspace, "runs", _identifier(identifier, "Run"), "run.json")
-    if not path.is_file():
-        raise ValueError(f"Unknown workflow run {identifier}")
-    result = read_json(path)
+    try:
+        result = read_json(path)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Unknown workflow run {identifier}") from exc
     if result.get("format") != RUN_FORMAT:
         raise ValueError("Unsupported workflow run format")
     return result
