@@ -48,6 +48,12 @@ Amadeus 继续负责语义 intent、说话状态、嘴部振幅、呈现优先�
 
 ## 生产管线
 
+**生产管线目前是实验版。** 用真实素材验证过：姿态静帧及其归一化、take、渲染与 QA、口型叠加层、
+旧 Kurisu 角色导入、只用首帧生成过渡并取帧建立静帧、画布，以及通过 CLI 调用 Wan 3.0（两段片段）。
+Wan 2.7、Seedance、Qwen 图像编辑和 Seedream 适配器目前只对着本地模拟接口测过。插帧和 Kurisu
+片段一样用 GMFSS（`tools/processors/gmfss_interpolate.py`），这个封装需要 CUDA，还没有在这些
+验证里实际运行。详见[验证记录](validation.md)。
+
 ```powershell
 spriteforge init studio
 spriteforge production init --workspace studio --id kurisu --display-name Kurisu --canvas 764x1028
@@ -85,7 +91,8 @@ Guide 按钮里有中英文的分步说明。哪个片段什么时候播放，�
 - **服务商**：静帧用图像编辑接口，以批准的基准静帧为输入生成新姿态——Qwen 图像编辑
   （`DASHSCOPE_API_KEY`）或 Seedream（`ARK_API_KEY`）；take 保存发送的 `input.png`
   及其 sha256，结果照常抠图、归一化和 QA。视频用 Wan 2.7（`DASHSCOPE_API_KEY`）或
-  Seedance（`ARK_API_KEY`）。key 只从环境变量读；也可以在网页或 ComfyUI 里手动生成再导入。
+  Seedance（`ARK_API_KEY`），也可以通过 Wan 自己的 CLI 用会员积分生成 Wan 3.0（`wan-cli`）。
+  API key 只从环境变量读，CLI 用它自己的登录；也可以在网页或 ComfyUI 里手动生成再导入。
 
 抠图和插帧是外部命令（目录进、目录出），`tools/processors/` 提供 anime-segmentation 和
 GMFSS 的参考封装。详见 [生产管线说明](production.md)。

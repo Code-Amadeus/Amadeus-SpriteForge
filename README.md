@@ -5,8 +5,9 @@ idle reference into approved pose stills and image-to-video clips, review every
 generated take, inspect clips and seams, edit a graph, and export a runtime-only
 character pack for [Amadeus](https://github.com/Code-Amadeus/Amadeus).
 
-**Status: source alpha, 0.1.0.** Image-to-video providers are optional adapters; the
-Amadeus application runtime is separate. [中文说明](docs/README.zh-CN.md)
+**Status: source alpha, 0.1.0; the production pipeline is experimental.** Image-to-video
+providers are optional adapters; the Amadeus application runtime is separate.
+[中文说明](docs/README.zh-CN.md)
 
 ## Reviewer screenshots
 
@@ -114,6 +115,14 @@ is manual. Save validates topology and selected frames before atomically replaci
 the graph. An empty new workspace is an unfinished draft until valid nodes are added.
 
 ## Production pipeline
+
+The production pipeline is **experimental**. Checked with real media: pose stills and
+their normalisation, takes, rendering and QA, mouth overlays, the Kurisu legacy import,
+first-frame-only transitions with adopted stills, the canvas, and Wan 3.0 through its
+CLI (two clips). The Wan 2.7, Seedance, Qwen image edit and Seedream adapters are only
+checked against a local fake API. Interpolation uses GMFSS through
+`tools/processors/gmfss_interpolate.py`, as the Kurisu clips did; the wrapper needs
+CUDA and has not been run in these checks. See [validation evidence](docs/validation.md).
 
 Produce clips from an idle reference instead of importing finished frames:
 
