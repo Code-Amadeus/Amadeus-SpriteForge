@@ -313,7 +313,7 @@ class WorkflowEngine:
         paid_nodes = [{"node": entry["id"], "provider": entry["provider"], "costType": entry["costType"]}
                       for entry in entries.values() if entry["paid"] and not entry["cacheHit"] and not entry["resume"]]
         processors = sorted({node["params"]["processor"] for node in nodes.values() if node["kind"] == "external-processor"}
-                            | {"alpha" for node in nodes.values() if node["kind"] in {"matte", "normalize"}}
+                            | {"alpha" for node in nodes.values() if node["kind"] in {"matte", "normalize", "save-pose-take"}}
                             | {"interpolate" for node in nodes.values() if node["kind"] == "interpolate"})
         fingerprint = digest({"workflow": workflow, "nodes": [{key: entry[key] for key in ("id", "cacheKey", "cacheHit", "resume")}
                                                               for entry in entries.values()], "blocking": blocking})

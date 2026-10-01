@@ -455,6 +455,7 @@ def test_real_paid_context_fingerprints_selected_prompt_model_and_actual_source_
     save_workflow(studio.root, raw)
     runner = WorkflowEngine(studio.root)
     plan = runner.plan(raw["id"])
+    assert plan["processors"] == ["alpha"]  # SavePose may matte an opaque provider image internally.
     result = runner.run(raw["id"], plan_hash=plan["planHash"], confirm_paid=1, log=lambda *_: None)
     assert result["state"] == "ready" and len(calls) == 1
     assert runner.plan(raw["id"])["paidCount"] == 0
