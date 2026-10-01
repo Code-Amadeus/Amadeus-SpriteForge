@@ -120,6 +120,9 @@ const { spawn, spawnSync } = require("node:child_process");
     await page.locator("#renderBtn").click();
     await page.locator("[data-clip='smile_in'] .badge").filter({ hasText: /^current$/ }).waitFor({ timeout: 60000 });
     await page.waitForFunction(() => (document.querySelector("#renderPreview") || {}).dataset?.frame !== undefined);
+    assert.equal(await page.locator("#renderPreview").evaluate((canvas) =>
+      [...canvas.parentElement.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim() === "null")),
+      false, "body-only render previews must omit empty mouth controls");
     await page.screenshot({ path: "test-results/production-clips.png", fullPage: true });
 
     // The last frame of a transition take becomes a candidate still for the clip's end pose.

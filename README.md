@@ -9,6 +9,15 @@ character pack for [Amadeus](https://github.com/Code-Amadeus/Amadeus).
 providers are optional adapters; the Amadeus application runtime is separate.
 [中文说明](docs/README.zh-CN.md)
 
+## Production preview
+
+![Production canvas, pose alignment, rendered transition and loop QA](docs/images/production-pipeline.gif)
+
+A 12-second tour of the actual editor using existing Wan 3.0 takes: pose/clip
+connections, still alignment, a rendered transition and loop QA. Model generation
+time is outside this recording. [Static overview](docs/images/production-pipeline-poster.png)
+· [Try it with the included references](examples/references/kurisu/).
+
 ## Reviewer screenshots
 
 ![KTX2 character preview beside its original saved behavior graph](docs/images/reviewer-ktx2-graph.png)

@@ -39,9 +39,9 @@ spriteforge production take import --workspace reference-studio --pose smile exa
 spriteforge production take accept --workspace reference-studio --pose smile SMILE_TAKE
 spriteforge production clip add --workspace reference-studio idle_to_smile --from idle --to smile
 spriteforge production clip add --workspace reference-studio smile_loop --from smile --to smile
-spriteforge production prompt import --workspace reference-studio examples/prompt-presets/live2d-idle.zh-CN.json
-spriteforge production prompt set --workspace reference-studio clip.idle_to_smile --text "角色自然闭上双眼露出微笑，保持站姿和镜头不变"
-spriteforge production prompt set --workspace reference-studio clip.smile_loop --text "角色保持闭眼微笑，只有轻微自然呼吸，最后回到起始姿态"
+spriteforge production prompt import --workspace reference-studio examples/prompt-presets/live2d-idle.en.json
+spriteforge production prompt set --workspace reference-studio clip.idle_to_smile --text "with the character naturally changing from the neutral expression in the first frame to the gentle closed-eye smile in the last frame, keeping the standing pose and hand positions unchanged and settling smoothly into the supplied final pose"
+spriteforge production prompt set --workspace reference-studio clip.smile_loop --text "with the character maintaining the gentle closed-eye smile and standing pose throughout, showing only very subtle breathing and slight movement in individual strands of hair, then returning naturally to the supplied starting pose for a seamless loop"
 spriteforge production prepare --workspace reference-studio --clip idle_to_smile --output reference-handoff
 spriteforge review --workspace reference-studio
 ```
@@ -76,8 +76,8 @@ for the graph root and a return transition so playback can return to idle:
 ```text
 spriteforge production clip add --workspace reference-studio idle_loop --from idle --to idle
 spriteforge production clip add --workspace reference-studio smile_to_idle --from smile --to idle
-spriteforge production prompt set --workspace reference-studio clip.idle_loop --text "角色保持默认站姿，只有轻微自然呼吸，最后回到起始姿态"
-spriteforge production prompt set --workspace reference-studio clip.smile_to_idle --text "角色自然睁开双眼恢复默认表情，保持站姿和镜头不变"
+spriteforge production prompt set --workspace reference-studio clip.idle_loop --text "with the character maintaining the neutral expression and standing pose in the reference image, showing only very subtle breathing and slight movement in individual strands of hair, then returning naturally to the supplied starting pose for a seamless loop"
+spriteforge production prompt set --workspace reference-studio clip.smile_to_idle --text "with the character naturally opening both eyes and relaxing the smile from the first frame into the neutral expression in the last frame, keeping the standing pose and hand positions unchanged and settling smoothly into the supplied final pose"
 spriteforge production prompt render --workspace reference-studio --clip idle_loop
 ```
 
@@ -88,6 +88,41 @@ you choose to generate additional poses.
 
 确认四个片段的 prompt 预览完整；如果仍显示 `PLACEHOLDER`，先补齐对应块。
 新增姿态的生图 prompt 是另一组配置，本示例已经提供两张静帧，不需要调用生图接口。
+
+The guide uses the **complete English version of the original template**:
+Live2D-style opening → the clip's action → natural transition, everything else
+unchanged, no exaggerated movement, constant brightness. The `--text` values above
+edit only the action block; they are **not the entire provider prompt**. `prepare`
+writes the assembled prompt below to `prompt.txt`. All constraints stay in the
+positive prompt, including for Wan CLI, which has no separate negative-prompt option.
+
+使用原模板的完整英文版：Live2D 风格开头 → 片段动作 → 最自然的过渡、其余保持不变、
+不夸张、不改变明度。上面 `--text` 只编辑动作块；最终发送或复制的是 `prepare`
+导出的完整 `prompt.txt`。以下是四个片段完整拼接后的英文提示词。
+
+**Idle → smile**
+
+```text
+Create a natural Live2D-style idle animation clip, with the character naturally changing from the neutral expression in the first frame to the gentle closed-eye smile in the last frame, keeping the standing pose and hand positions unchanged and settling smoothly into the supplied final pose, using only the most natural transitions, keeping everything else unchanged, avoiding any exaggerated movement, and keeping brightness constant
+```
+
+**Smile loop**
+
+```text
+Create a natural Live2D-style idle animation clip, with the character maintaining the gentle closed-eye smile and standing pose throughout, showing only very subtle breathing and slight movement in individual strands of hair, then returning naturally to the supplied starting pose for a seamless loop, using only the most natural transitions, keeping everything else unchanged, avoiding any exaggerated movement, and keeping brightness constant
+```
+
+**Idle loop**
+
+```text
+Create a natural Live2D-style idle animation clip, with the character maintaining the neutral expression and standing pose in the reference image, showing only very subtle breathing and slight movement in individual strands of hair, then returning naturally to the supplied starting pose for a seamless loop, using only the most natural transitions, keeping everything else unchanged, avoiding any exaggerated movement, and keeping brightness constant
+```
+
+**Smile → idle**
+
+```text
+Create a natural Live2D-style idle animation clip, with the character naturally opening both eyes and relaxing the smile from the first frame into the neutral expression in the last frame, keeping the standing pose and hand positions unchanged and settling smoothly into the supplied final pose, using only the most natural transitions, keeping everything else unchanged, avoiding any exaggerated movement, and keeping brightness constant
+```
 
 ### 2. Generate or import four takes / 生成或导入四段视频
 

@@ -485,9 +485,9 @@ function renderPanel(clip) {
     const { width, height } = state.character.canvas;
     const canvas = h("canvas", { class: "player", id: "renderPreview", width, height });
     const silence = r.mouth ? h("input", { type: "checkbox", id: "silencePreview" }) : null;
-    box.append(h("div", { class: "tiny" }, "Preview is capped at 30 fps; runtime timing is shown above."),
+    append(box, [h("div", { class: "tiny" }, "Preview is capped at 30 fps; runtime timing is shown above."),
       silence ? h("label", { class: "tiny" }, silence, " Simulate silence: paste the closed mouth inside the tracked mask") : null,
-      canvas, r.mouth ? mouthSummary(r.mouth) : null, qaList(r.qa), seamTable(r.qa));
+      canvas, r.mouth ? mouthSummary(r.mouth) : null, qaList(r.qa), seamTable(r.qa)]);
     playOutput(clip, canvas, r, silence);
   }
   return box;
