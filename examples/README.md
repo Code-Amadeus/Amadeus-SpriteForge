@@ -16,6 +16,15 @@ The PNG workspace is editable. Use `spriteforge init workspace --demo` for a fre
 working copy. The runtime pack opens read-only and needs no PNGs or export tool.
 Both examples are AGPL-3.0-only and contain no third-party character artwork.
 
+## Character reference stills
+
+[`references/kurisu/`](references/kurisu/) includes four 764x1028 character stills:
+a current idle/smile pair and two legacy alignment references. Its bilingual guide
+walks through importing and approving the current pair, preparing four clips,
+take selection, rendering, graph editing, QA and export. Initial reference setup
+and preparing generator inputs make no provider calls. These references are separate
+from the geometric demo and its license grant; see the directory's provenance note.
+
 ## Prompt presets
 
 `prompt-presets/live2d-idle.zh-CN.json` is one way to write video prompts, taken from a

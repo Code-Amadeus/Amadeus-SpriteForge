@@ -32,7 +32,7 @@ separately supplied character pack; the repository's runnable examples use geome
 
 ## Try the example
 
-Python 3.10 or newer is required. Reference checks use Windows and Python 3.12.
+Python 3.10 or newer is required. Automated checks use Windows and Ubuntu with Python 3.12.
 
 ```powershell
 git clone https://github.com/Code-Amadeus/Amadeus-SpriteForge.git
@@ -43,8 +43,8 @@ python -m venv .venv
 .\.venv\Scripts\spriteforge.exe review --workspace workspace
 ```
 
-On Linux/macOS use `.venv/bin/python` and `.venv/bin/spriteforge`. Those platforms
-need their own verification; a configured CI job is not completed platform evidence.
+On Linux/macOS use `.venv/bin/python` and `.venv/bin/spriteforge`. Ubuntu's automated
+checks pass; macOS and the real provider/GPU combinations still need their own verification.
 
 Commands below use `spriteforge` for readability. Activate this virtual environment,
 or replace it with `.\.venv\Scripts\spriteforge.exe` on Windows and
@@ -126,6 +126,12 @@ CUDA and has not been run in these checks. See [validation evidence](docs/valida
 
 Produce clips from an idle reference instead of importing finished frames:
 
+For a ready reference, use the included [Kurisu idle and smile stills](examples/references/kurisu/).
+Their [bilingual walkthrough](examples/references/kurisu/#start-a-production-workspace--从参考图开始)
+covers approved poses, four clips, take selection, rendering, graph edges, QA and export.
+No model weights or provider account are needed to import the supplied stills and prepare
+inputs; generating and processing new videos require your own tools and account.
+
 ```powershell
 spriteforge init studio
 spriteforge production init --workspace studio --id kurisu --display-name Kurisu --canvas 764x1028
@@ -133,6 +139,7 @@ spriteforge production take import --workspace studio --pose idle master.png
 spriteforge production take accept --workspace studio --pose idle TAKE
 spriteforge production pose add --workspace studio shy
 spriteforge production take import --workspace studio --pose shy shy.png
+spriteforge production take accept --workspace studio --pose shy SHY_TAKE
 spriteforge production clip add --workspace studio shy_in --from idle --to shy
 spriteforge production prepare --workspace studio --clip shy_in --output handoff/shy_in
 spriteforge production take import --workspace studio --clip shy_in shy_in.mp4
@@ -219,8 +226,9 @@ editor with Playwright. See [validation evidence](docs/validation.md).
 
 ## Scope and license
 
-The repository contains no private artwork, prompts, API keys, model weights or
-personal configuration. Matting and interpolation models are external tools; the
+The repository includes selected [published character reference stills](examples/references/kurisu/),
+geometric demos and example prompt presets. API keys, model weights and personal
+configuration are not included. Matting and interpolation models are external tools; the
 `tools/processors/` wrappers only load them from a path you provide. The wallpaper
 scenario editor and the full Amadeus renderer are out of scope; scenario graphs use a
 separate contract and need a separate migration.
