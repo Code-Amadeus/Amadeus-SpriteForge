@@ -19,6 +19,7 @@ STATIC = {"review.js": "text/javascript", "review.css": "text/css", "preview-med
           "studio.js": "text/javascript", "studio-tools.js": "text/javascript", "studio.css": "text/css",
           "studio-clips.js": "text/javascript", "studio-clips.css": "text/css",
           "studio-compare.js": "text/javascript", "studio-compare.css": "text/css",
+          "studio-expressions.js": "text/javascript", "studio-expressions.css": "text/css",
           "i18n/en.js": "text/javascript", "i18n/zh-CN.js": "text/javascript"}
 
 
@@ -120,8 +121,9 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                 elif parsed.path == "/api/production/media":
                     self.send_file(*self.production_api().media((qs.get("path") or [""])[0]))
                 elif parsed.path == "/api/production/input":
-                    self.send(200, self.production_api().clip_input((qs.get("clip") or [""])[0], (qs.get("end") or [""])[0]),
-                              "image/png")
+                    api = self.production_api()
+                    data = api.pose_input(qs["pose"][0]) if qs.get("pose") else api.clip_input((qs.get("clip") or [""])[0], (qs.get("end") or [""])[0])
+                    self.send(200, data, "image/png")
                 elif parsed.path.startswith("/static/vendor/"):
                     name = parsed.path.rsplit("/", 1)[-1]
                     if name not in {"pixi.min.js", "pixi-basis-ktx2.global.js", "basis_transcoder.js", "basis_transcoder.wasm"}:
@@ -213,7 +215,7 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
 
         def do_POST(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
-            upload = parsed.path == "/api/production/upload"
+            upload = parsed.path in {"/api/production/upload", "/api/production/concepts/import"}
             expected = "application/octet-stream" if upload else "application/json"
             if not self.local_request() or self.headers.get_content_type() != expected:
                 self.json(403, {"ok": False, "error": "Writes require a local request with the expected content type"})
@@ -262,8 +264,12 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                 if upload:
                     qs = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
                     fps = float(qs["fps"]) if qs.get("fps") else None
-                    result = api.upload(qs.get("kind", ""), qs.get("owner", ""), qs.get("name", ""), self.rfile,
-                                        length, fps, qs.get("note", ""))
+                    if parsed.path == "/api/production/concepts/import":
+                        result = api.upload("concept", "", qs.get("name", ""), self.rfile, length, None, "",
+                                            poses=qs.get("poses", "").split(","), grid=qs.get("grid", "3x2"))
+                    else:
+                        result = api.upload(qs.get("kind", ""), qs.get("owner", ""), qs.get("name", ""), self.rfile,
+                                            length, fps, qs.get("note", ""))
                 else:
                     if not 0 < length <= 2_000_000:
                         raise ValueError("Invalid request size")

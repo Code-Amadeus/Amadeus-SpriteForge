@@ -30,6 +30,7 @@ CLAUSE_END = "，。,.;；、 \n"
 PLACEHOLDER = re.compile(r"\{\{\s*PLACEHOLDER\s*:\s*(.*?)\s*\}\}", re.S)
 VARIABLE = re.compile(r"\$\{([a-zA-Z_]+)\}")
 VARIABLES = {"character", "pose", "description", "from", "to", "duration"}
+CONCEPT_VARIABLES = {"rows", "cols", "expressions"}
 BLOCK_ID = re.compile(r"[a-z0-9][a-z0-9_.-]{0,95}")
 
 DEFAULT_BLOCKS = {
@@ -38,6 +39,10 @@ DEFAULT_BLOCKS = {
     "still.edit": ("Edit of the base still into a pose or expression",
                    "{{PLACEHOLDER: keep canvas, framing, character size and head position identical to the input image}}"),
     "still.negative": ("Negative prompt for still edits", "{{PLACEHOLDER: negative prompt for still edits}}"),
+    "still.reference": ("Expression reference for an edit of the approved base still",
+                        "{{PLACEHOLDER: follow the expression in the second image; keep the first image's geometry and framing}}"),
+    "concept.layout": ("Concept grid layout and expression list",
+                       "{{PLACEHOLDER: draw ${cols} columns and ${rows} rows with equal cells and plain outer margins}}\n${expressions}"),
     "video.invariants": ("Constraints shared by every video",
                          "{{PLACEHOLDER: camera locked, no zoom or crop, character scale and position locked, plain background}}"),
     "video.transition": ("Motion from the first frame to the last frame",
@@ -50,6 +55,8 @@ DEFAULT_TEMPLATES = {
     "still": {"blocks": ["character", "still.edit", SUBJECT], "negative": ["still.negative"]},
     "transition": {"blocks": ["character", "video.invariants", "video.transition", SUBJECT], "negative": ["video.negative"]},
     "loop": {"blocks": ["character", "video.invariants", "video.loop", SUBJECT], "negative": ["video.negative"]},
+    "concept": {"blocks": ["character", "concept.layout"], "negative": []},
+    "still-reference": {"blocks": ["character", "still.edit", "still.reference", SUBJECT], "negative": ["still.negative"]},
 }
 
 
@@ -92,7 +99,16 @@ def load_library(workspace: Path) -> dict:
     path = _path(workspace)
     if not path.is_file():
         raise ValueError("This workspace has no prompt library; run 'spriteforge production init'")
-    return validate_library(read_json(path))
+    library = validate_library(read_json(path))
+    # Old workspaces need no migration or read-side write; explicit saved content wins.
+    defaults = default_library()
+    for block_id in ("concept.layout", "still.reference"):
+        library["blocks"].setdefault(block_id, defaults["blocks"][block_id])
+    for template in ("concept", "still-reference"):
+        if template == "still-reference":
+            defaults["templates"][template]["negative"] = list((library["templates"].get("still") or {}).get("negative") or [])
+        library["templates"].setdefault(template, defaults["templates"][template])
+    return validate_library(library)
 
 
 def save_library(workspace: Path, library: dict) -> None:
@@ -110,9 +126,9 @@ def set_block(library: dict, block_id: str, text: str, description: str | None =
     """Append a version when the text changes; returns the current version number."""
     if not BLOCK_ID.fullmatch(block_id) or not isinstance(text, str):
         raise ValueError("A prompt block needs a valid id and text")
-    unknown = sorted(set(VARIABLE.findall(text)) - VARIABLES)
+    unknown = sorted(set(VARIABLE.findall(text)) - (VARIABLES | CONCEPT_VARIABLES))
     if unknown:
-        raise ValueError(f"Unknown prompt variable(s) {', '.join(unknown)}; use {', '.join(sorted(VARIABLES))}")
+        raise ValueError(f"Unknown prompt variable(s) {', '.join(unknown)}; use {', '.join(sorted(VARIABLES | CONCEPT_VARIABLES))}")
     block = library["blocks"].setdefault(block_id, {"description": description or "", "versions": []})
     if description is not None:
         block["description"] = description
@@ -185,17 +201,12 @@ def render(library: dict, template_id: str, subject: str, variables: dict[str, o
             block_id = subject if part == SUBJECT else part
             version = current(library, block_id)
             used[block_id] = version["version"]
-            text = VARIABLE.sub(lambda m: substitute(m.group(1)), version["text"]).strip()
+            text = substitute(version["text"], variables).strip()
             if join != PARAGRAPH:
                 text = text.rstrip(CLAUSE_END)
             if text:
                 texts.append(text)
         return join.join(texts)
-
-    def substitute(name: str) -> str:
-        if name not in variables:
-            raise ValueError(f"Prompt uses unknown variable ${{{name}}}; available: {', '.join(sorted(variables))}")
-        return str(variables[name])
 
     text, negative = compose(template["blocks"]), compose(template.get("negative") or [])
     placeholders = [m.group(1) for m in PLACEHOLDER.finditer(text + "\n" + negative)]
@@ -204,9 +215,38 @@ def render(library: dict, template_id: str, subject: str, variables: dict[str, o
             "placeholders": placeholders, "complete": not placeholders, "sha256": digest, "renderedAt": now()}
 
 
+def substitute(text: str, variables: dict[str, object]) -> str:
+    def value(match) -> str:
+        name = match.group(1)
+        if name not in variables:
+            raise ValueError(f"Prompt uses unknown variable ${{{name}}}; available: {', '.join(sorted(variables))}")
+        return str(variables[name])
+    return VARIABLE.sub(value, text)
+
+
 def pose_prompt(library: dict, character: dict, pose: dict) -> dict:
     return render(library, pose["prompt"]["template"], pose["prompt"]["subject"],
                   {"character": character["displayName"], "pose": pose["id"], "description": pose.get("description", "")})
+
+
+def still_reference_prompt(library: dict, character: dict, pose: dict) -> dict:
+    return render(library, "still-reference", pose["prompt"]["subject"],
+                  {"character": character["displayName"], "pose": pose["id"], "description": pose.get("description", "")})
+
+
+def concept_prompt(library: dict, character: dict, poses: list[dict], grid: dict) -> dict:
+    expressions, versions = [], {}
+    for index, pose in enumerate(poses, 1):
+        subject = pose["prompt"]["subject"]
+        version = current(library, subject)
+        text = substitute(version["text"], {"character": character["displayName"], "pose": pose["id"],
+                                            "description": pose.get("description", "")})
+        expressions.append(f"{index}. {pose['id']}: {text}")
+        versions[subject] = version["version"]
+    snapshot = render(library, "concept", "", {"character": character["displayName"], "rows": grid["rows"],
+                                              "cols": grid["cols"], "expressions": "\n".join(expressions)})
+    snapshot["blocks"].update(versions)
+    return snapshot
 
 
 def clip_prompt(library: dict, character: dict, clip: dict) -> dict:

@@ -482,6 +482,14 @@
   translations["zh-CN"]["production.qaStatus"] = "QA {status}";
   translations.en["production.configured"] = "Configured";
   translations["zh-CN"]["production.configured"] = "已配置";
+  translations.en["production.cliAvailable"] = "CLI available";
+  translations["zh-CN"]["production.cliAvailable"] = "CLI 可用";
+  translations.en["production.cliMissing"] = "Configure the Codex CLI command first";
+  translations["zh-CN"]["production.cliMissing"] = "请先配置 Codex CLI 命令";
+  translations.en["production.cliAuthUnverified"] = "Login is unverified; Codex checks login and quota when you request an image.";
+  translations["zh-CN"]["production.cliAuthUnverified"] = "登录状态未验证；请求图像时由 Codex 检查登录和额度。";
+  translations.en["production.cliProviderStatus"] = "{provider} · {status}";
+  translations["zh-CN"]["production.cliProviderStatus"] = "{provider} · {status}";
   for (const [language, entries] of Object.entries(translations)) {
     const guide = window.SFProductionGuide[language === "zh-CN" ? "zh" : "en"];
     for (const key of ["title", "intro", "wires", "note", "close", "other"]) entries[`production.guide.${key}`] = guide[key];
@@ -578,8 +586,10 @@
       h("h3", {}, tr("language")), language,
       h("h3", {}, tr("providers")),
       ...Object.entries(providers).map(([name, provider]) => h("div", { class: "card item" },
-        h("div", { class: "row" }, h("strong", {}, name), status(provider.keySet)),
-        provider.model ? h("div", { class: "tiny mono" }, provider.model) : null)),
+        h("div", { class: "row" }, h("strong", {}, name), provider.credential === "command"
+          ? h("span", { class: `badge ${provider.keySet ? "candidate" : "fail"}` }, tr(provider.keySet ? "cliAvailable" : "cliMissing")) : status(provider.keySet)),
+        provider.model ? h("div", { class: "tiny mono" }, provider.model) : null,
+        provider.credential === "command" ? h("p", { class: "tiny" }, tr("cliAuthUnverified")) : null)),
       h("h3", {}, tr("processors")),
       h("div", { class: "card row" }, ...["ffmpeg", "alpha", "interpolate"].map((name) => h("span", { class: "row" }, h("strong", {}, name), status(tools[name], name === "ffmpeg" ? "ready" : "configured")))),
       h("h3", {}, tr("defaults")),

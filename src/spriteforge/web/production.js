@@ -170,7 +170,9 @@ function renderTools() {
   const tools = state.tools;
   fill($("tools"),
     ...["ffmpeg", "alpha", "interpolate"].map((k) => badge(`${k} ${tools[k] ? "✓" : "✗"}`, tools[k] ? "yes" : "no")),
-    ...Object.entries(tools.providers).map(([name, p]) => badge(p.credential === "login" ? `${name} ${p.keySet ? "logged in" : "not logged in"}`
+    ...Object.entries(tools.providers).map(([name, p]) => badge(p.credential === "command"
+      ? tx("cliProviderStatus", "{provider} · {status}", { provider: name, status: p.keySet ? tx("cliAvailable", "CLI available") : tx("cliMissing", "Configure the Codex CLI command first") })
+      : p.credential === "login" ? `${name} ${p.keySet ? "logged in" : "not logged in"}`
       : `${name} key ${p.keySet ? "set" : "missing"}`, p.keySet ? "yes" : "missing")));
 }
 
@@ -226,6 +228,7 @@ function stillGenerateHint(pose, name) {
   if (!acceptedStill(state.character.basePose)) return tx("approveBase", "Approve the {pose} still first", { pose: state.character.basePose });
   if (!pose.promptPreview.complete) return tx("writePlaceholders", "Write the prompt placeholders first");
   if (!state.tools.alpha) return tx("alphaRequired", "Configure the alpha processor: provider images are opaque");
+  if (provider.credential === "command" && !provider.keySet) return tx("cliMissing", "Configure the Codex CLI command first");
   if (!provider.keySet) return tx("apiKey", "Set the API key environment variable for {provider}", { provider: name });
   return "";
 }
@@ -266,23 +269,25 @@ function closedMouthControl(pose) {
 function comparePanel(pose, take) {
   const { width, height } = state.character.canvas;
   const canvas = h("canvas", { width, height, id: "compareCanvas" });
-  const mode = h("select", { id: "compareMode" }, [tx("overlay", "overlay"), tx("difference", "difference"), tx("takeOnly", "take only"), tx("baseOnly", "base only")].map((m) => h("option", { value: m }, m)));
+  const mode = h("select", { id: "compareMode" }, [["overlay", "overlay"], ["difference", "difference"], ["take only", "takeOnly"], ["base only", "baseOnly"]]
+    .map(([value, key]) => h("option", { value }, tx(key, value))));
   const opacity = h("input", { id: "compareOpacity", type: "range", min: 0, max: 100, value: 50 });
   const images = {};
   const load = (key, path) => new Promise((resolve) => {
     if (!path) { resolve(); return; }
     const img = new Image();
-    img.onload = () => { images[key] = img; resolve(); };
+    img.onload = () => { if (!disposed && canvas.isConnected) images[key] = img; resolve(); };
     img.onerror = () => resolve();
     img.src = media(path);
   });
   const draw = () => {
+    if (disposed || !canvas.isConnected) return;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, width, height);
-    if (images.base && mode.value !== tx("takeOnly", "take only")) ctx.drawImage(images.base, 0, 0);
-    if (images.take && mode.value !== tx("baseOnly", "base only")) {
-      ctx.globalCompositeOperation = mode.value === tx("difference", "difference") ? tx("difference", "difference") : "source-over";
-      ctx.globalAlpha = mode.value === tx("overlay", "overlay") && images.base ? opacity.value / 100 : 1;
+    if (images.base && mode.value !== "take only") ctx.drawImage(images.base, 0, 0);
+    if (images.take && mode.value !== "base only") {
+      ctx.globalCompositeOperation = mode.value === "difference" ? "difference" : "source-over";
+      ctx.globalAlpha = mode.value === "overlay" && images.base ? opacity.value / 100 : 1;
       ctx.drawImage(images.take, 0, 0);
       ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = 1;
@@ -928,6 +933,9 @@ canvas = window.SFProductionCanvas.create({ $, h, fill, badge, api, run, toast, 
 return {
   bootstrapLegacy,
   mountClipDetails,
+  poseCompare: comparePanel,
+  poseMetrics: metricsTable,
+  closedMouth: closedMouthControl,
   mount(tab) { activeTab = tab; if (tab === "canvas") setupCanvas(); renderActive(); if (tab === "prompts") rememberFields($("promptList")); },
   update(next) {
     const changed = state !== next.state || renderedLanguage !== window.SFStudio.language;

@@ -39,7 +39,8 @@ def default_tools() -> dict:
                 "qwen-image": {"baseUrl": "https://dashscope.aliyuncs.com/api/v1", "model": "qwen-image-edit-plus",
                                "apiKeyEnv": "DASHSCOPE_API_KEY", "requestSeconds": 300},
                 "seedream": {"baseUrl": "https://ark.cn-beijing.volces.com/api/v3", "model": "doubao-seedream-4-0-250828",
-                             "apiKeyEnv": "ARK_API_KEY", "requestSeconds": 300, "size": "match"}}}
+                             "apiKeyEnv": "ARK_API_KEY", "requestSeconds": 300, "size": "match"},
+                "gpt-image": {"command": ["codex"], "model": "gpt-image-2", "timeoutSeconds": 600, "size": "match"}}}
 
 
 def load_tools(workspace: Path) -> dict:

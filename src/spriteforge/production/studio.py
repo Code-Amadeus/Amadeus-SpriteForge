@@ -39,7 +39,8 @@ def _number(value: object) -> int | float | None:
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
 
 
-def usage_summary(poses: list[dict], clips: list[dict], *, at: datetime | None = None) -> dict:
+def usage_summary(poses: list[dict], clips: list[dict], *, at: datetime | None = None,
+                  concepts: list[dict] | None = None) -> dict:
     """Seven days of recorded usage, without estimating missing balances or timing.
 
 Only the latest render of each clip is retained on disk. This is consequently
@@ -64,6 +65,13 @@ the sum of retained renders, not a history of overwritten processing runs.
                     wan.append(recorded_credit_delta(source))
             if stamp is not None and since <= stamp <= at and source.get("provider") == "gpt-image" \
                     and (take.get("media") or {}).get("source"):
+                images += 1
+    for sheet in concepts or []:
+        records = [sheet, *(attempt for cell in sheet["cells"] for attempt in cell.get("rerolls", []))]
+        for record in records:
+            stamp = _timestamp(record.get("createdAt"))
+            if stamp is not None and since <= stamp <= at and record.get("provider") == "gpt-image" \
+                    and record.get("sourceFile") and record.get("size"):
                 images += 1
     for clip in clips:
         render = clip.get("render") or {}
@@ -138,6 +146,11 @@ def issue_summary(poses: list[dict], clips: list[dict], graph: dict, report: dic
 def studio_summary(workspace: Path, character: dict, poses: list[dict], clips: list[dict]) -> dict:
     """Add Studio's read model to an existing overview without reading it again."""
     from .checks import graph_report
+    from .concepts import list_sheets
+
+    sheets = list_sheets(workspace)
+    current = next((sheet["id"] for sheet in reversed(sheets) if sheet["state"] == "ready"), None)
+    concepts = [{**sheet, "current": sheet["id"] == current, "version": index} for index, sheet in enumerate(sheets, 1)]
 
     graph_path = resolve_asset(workspace, "graph_config.json")
     graph = read_json(graph_path) if graph_path.is_file() else {"nodes": [], "edges": []}
@@ -164,5 +177,5 @@ def studio_summary(workspace: Path, character: dict, poses: list[dict], clips: l
                         for node in missing]
     issues = issue_summary(poses, clips, scope, report, known) + conflicts
     issues.sort(key=lambda issue: (ISSUE_LEVELS.index(issue["level"]), issue["key"]))
-    return {"concepts": [], "issues": issues,
-            "variants": variant_groups(clips), "usage": usage_summary(poses, clips)}
+    return {"concepts": concepts, "issues": issues,
+            "variants": variant_groups(clips), "usage": usage_summary(poses, clips, concepts=concepts)}

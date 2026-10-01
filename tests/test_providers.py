@@ -285,11 +285,11 @@ def test_page_job_generates_a_pose_still(studio, providers):
         time.sleep(0.05)
     done = api.job_list()[0]
     assert done["status"] == "succeeded" and done["result"].endswith("QA pass"), done
-    assert done["log"][0].startswith("Sent the idle still to qwen-image")
+    assert any(line.startswith("Sent the idle still to qwen-image") for line in done["log"])
     with pytest.raises(ValueError, match="only generate"):
         api.post("jobs", {"action": "render", "pose": "grin"})
     kinds = {name: p["kind"] for name, p in api.overview()["tools"]["providers"].items()}
-    assert kinds == {"wan": "video", "seedance": "video", "wan-cli": "video", "qwen-image": "image", "seedream": "image"}
+    assert kinds == {"wan": "video", "seedance": "video", "wan-cli": "video", "qwen-image": "image", "seedream": "image", "gpt-image": "image"}
 
 
 @pytest.fixture

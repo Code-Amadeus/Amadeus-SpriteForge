@@ -18,6 +18,7 @@ clip's start still) unless it is a rigid copy of the base still.
 from __future__ import annotations
 
 import hashlib
+import math
 import tempfile
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from .media import IMAGE_SUFFIXES, copy_durable, encode_png, image_suffix, media
 from .mouth import default_set
 from .prompts import load_library, pose_prompt, require_complete
 from .providers import ImageJob, get_image_provider
-from .records import (canvas_size, clip_settings, decide, load_character, load_owner, load_take, new_take,
+from .records import (canvas_size, clip_settings, decide, list_takes, load_character, load_owner, load_take, new_take,
                       save_character, save_owner, save_take, still_path, take_dir, take_media_frames)
 from .tools import load_tools, run_processor
 
@@ -84,16 +85,28 @@ def import_still(workspace: Path, pose_id: str, source: Path, *, note: str = "",
     return take
 
 
-def generate_still(workspace: Path, pose_id: str, provider: str, *, dry_run: bool = False, log=print) -> dict:
+def generate_still(workspace: Path, pose_id: str, provider: str, *, concept: dict | None = None, dry_run: bool = False, log=print) -> dict:
     """Edit the approved base still into a pose with an image provider, then normalise the result."""
     character, pose, tools = load_character(workspace), load_owner(workspace, "pose", pose_id), load_tools(workspace)
     if pose_id == character["basePose"]:
         raise ValueError("The base pose is the reference every generated still starts from: import its still")
     _require_base(character, pose_id)
     adapter = get_image_provider(provider, tools)
-    snapshot = still_prompt(workspace, character, pose)
+    reference, concept_source = None, None
+    if concept is not None:
+        if not isinstance(concept, dict) or set(concept) != {"sheet", "cell"}:
+            raise ValueError("A concept reference needs sheet and cell")
+        if not adapter.supports_reference:
+            raise ValueError(f"Image provider '{provider}' does not support a concept reference")
+        from .concepts import concept_reference
+        from .prompts import still_reference_prompt
+        reference, concept_source = concept_reference(workspace, concept["sheet"], concept["cell"], pose_id)
+        snapshot = still_reference_prompt(load_library(workspace), character, pose)
+    else:
+        snapshot = still_prompt(workspace, character, pose)
     image, inputs = still_input(workspace, character)
-    job = ImageJob(snapshot["text"], snapshot["negative"] if adapter.negative_prompt else "", image)
+    job = ImageJob(snapshot["text"], snapshot["negative"] if adapter.negative_prompt else "", image,
+                   references=[reference] if reference is not None else [])
     request = adapter.preview(job)
     if dry_run:
         return {"provider": provider, "model": adapter.model, "request": request, "prompt": snapshot}
@@ -101,10 +114,16 @@ def generate_still(workspace: Path, pose_id: str, provider: str, *, dry_run: boo
     adapter.key()  # a missing key, like a missing alpha processor, fails before a take is recorded
     if not tools.get("alpha"):
         raise ValueError("Provider images are opaque: configure the 'alpha' processor in production/tools.json first")
-    take, directory = new_take(workspace, "pose", pose_id, {"provider": provider, "model": adapter.model, "request": request})
+    source = {"provider": provider, "model": adapter.model, "request": request}
+    if concept_source is not None:
+        source["concept"] = concept_source
+    take, directory = new_take(workspace, "pose", pose_id, source)
     write_durable(directory / "input.png", image)
     take.update(prompt={**snapshot, "negativeSent": bool(job.negative)}, inputs={"base": {**inputs, "file": "input.png"}},
                 state="submitting")
+    if reference is not None:
+        write_durable(directory / "reference.png", reference)
+        take["inputs"]["reference"] = {"file": "reference.png", "sha256": hashlib.sha256(reference).hexdigest()}
     save_take(workspace, take)
     log(f"Sent the {character['basePose']} still to {provider} ({adapter.model}) as take {take['id']}")
     try:
@@ -244,9 +263,21 @@ def approve_still(workspace: Path, pose_id: str, take_id: str, reason: str = "")
 
 def set_expected(workspace: Path, pose_id: str, head_top: float | None, head_center: float | None) -> dict:
     """Record an intended head offset for a pose (for example a side turn); None clears a value."""
-    if pose_id == load_character(workspace)["basePose"]:
+    for value in (head_top, head_center):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+            raise ValueError("Expected head coordinates must be finite numbers or None")
+    character = load_character(workspace)
+    if pose_id == character["basePose"]:
         raise ValueError("The base pose defines the anchors and cannot carry an offset")
     pose = load_owner(workspace, "pose", pose_id)
     pose["expected"] = {k: v for k, v in (("headTopY", head_top), ("headCenterX", head_center)) if v is not None}
     save_owner(workspace, "pose", pose)
+    # Expected geometry belongs to the pose. Re-check the existing immutable still
+    # pixels against that updated contract; this does not approve or replace a take.
+    for take in list_takes(workspace, "pose", pose_id):
+        name = (take.get("media") or {}).get("still")
+        if take.get("state") == "ready" and name:
+            image = read_bgra(take_dir(workspace, "pose", pose_id, take["id"]) / name)[0]
+            take["qa"] = qa_for(character, pose, image, take.get("normalization"))
+            save_take(workspace, take)
     return pose

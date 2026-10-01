@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "check": "node tools/check_js.cjs",
-    "test:ui": "node tools/browser_smoke.cjs && node tools/production_smoke.cjs && node tools/studio_smoke.cjs && node tools/clip_studio_smoke.cjs && node tools/clip_compare_smoke.cjs",
+    "test:ui": "node tools/browser_smoke.cjs && node tools/production_smoke.cjs && node tools/studio_smoke.cjs && node tools/clip_studio_smoke.cjs && node tools/clip_compare_smoke.cjs && node tools/expressions_smoke.cjs",
     "test:studio": "node tools/studio_smoke.cjs"
   },
   "devDependencies": {
