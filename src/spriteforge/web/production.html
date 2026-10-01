@@ -10,7 +10,8 @@
 <header>
   <div class="brand"><strong id="title">Production</strong> <span id="canvasInfo" class="muted"></span></div>
   <nav class="tabs" id="tabs">
-    <button data-tab="stills" class="active">Stills</button>
+    <button data-tab="canvas" class="active">Canvas</button>
+    <button data-tab="stills">Stills</button>
     <button data-tab="clips">Clips</button>
     <button data-tab="prompts">Prompts</button>
     <button data-tab="jobs">Jobs <span id="jobBadge" class="badge" hidden></span></button>
@@ -20,7 +21,26 @@
 </header>
 <main>
   <section id="notice" class="notice" hidden></section>
-  <section id="tab-stills" class="tab split">
+  <section id="tab-canvas" class="tab canvas-tab">
+    <div class="canvas-bar">
+      <button id="canvasFit">Fit</button>
+      <button id="canvasLayout" title="Arrange every card again from the base pose">Auto layout</button>
+      <button id="canvasAddPose">+ Pose</button>
+      <button id="canvasGuideBtn">Guide · 指南</button>
+      <span class="legend"><svg width="30" height="8" aria-hidden="true"><path d="M0 4H30" class="wire end"/></svg>still sent as a frame</span>
+      <span class="legend"><svg width="30" height="8" aria-hidden="true"><path d="M0 4H30" class="wire open"/></svg>first frame only</span>
+      <span class="legend"><svg width="30" height="8" aria-hidden="true"><path d="M0 4H30" class="wire adopted"/></svg>still taken from a take</span>
+      <span class="tiny">Drag from a pose's right port to make a clip · drag a card's title to move it · wheel to zoom</span>
+    </div>
+    <div class="canvas-wrap">
+      <div id="canvasViewport" class="canvas-viewport">
+        <div id="canvasWorld" class="canvas-world"><svg id="canvasWires" class="canvas-wires" width="1" height="1"></svg></div>
+        <div id="canvasGuide" class="guide" hidden></div>
+      </div>
+      <aside id="canvasInspector" class="inspector" hidden></aside>
+    </div>
+  </section>
+  <section id="tab-stills" class="tab split" hidden>
     <aside><div class="aside-head"><h2>Poses</h2><button id="addPose">+ Pose</button></div><div id="poseList"></div></aside>
     <div id="poseDetail" class="detail"></div>
   </section>
@@ -33,6 +53,7 @@
   <section id="tab-jobs" class="tab" hidden><div id="jobList" class="detail"></div></section>
 </main>
 <div id="toast" role="status" hidden></div>
+<script src="/static/production-canvas.js"></script>
 <script src="/static/production.js"></script>
 </body>
 </html>

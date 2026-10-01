@@ -130,6 +130,11 @@ spriteforge production take import --workspace studio --clip shy_in shy_in.mp4
 spriteforge review --workspace studio   # open /production to approve, reject and render
 ```
 
+The production page opens on a canvas: pose cards with their stills, clip cards with
+their own prompt, takes and actions, and wires that show which still starts or ends
+each clip and which still was taken from which take. Drag from a pose's port to make a
+clip; the Guide button walks through the workflow in English or Chinese.
+
 Pose stills are normalised onto one canvas and must match the base still's head top
 and head centre, so every pose overlaps. Each video take keeps its prompt snapshot,
 inputs and provider task; you accept one take per clip and rejected takes stay

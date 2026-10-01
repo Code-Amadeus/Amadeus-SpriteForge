@@ -33,6 +33,7 @@ CLIP_SETTINGS = {
     "lock_tail": ("processing", "lockTailFrames", int), "edge_guard": ("processing", "edgeGuardPx", int),
     "speed": ("playback", "speed", float), "loop_mode": ("playback", "loopMode", str),
 }
+CANVAS_FORMAT = "spriteforge.production.canvas.v1"
 
 
 def init_production(workspace: Path, *, character_id: str, display_name: str, width: int, height: int,
@@ -172,8 +173,35 @@ def overview(workspace: Path) -> dict:
                         "model": config.get("model"), "keySet": bool(os.environ.get(str(config.get("apiKeyEnv") or "")))}
                  for name, config in (tools.get("providers") or {}).items()}
     return {"character": character, "prompts": library, "poses": poses, "clips": clips,
+            "canvas": canvas_layout(workspace),
             "tools": {"ffmpeg": bool(shutil.which(tools.get("ffmpeg") or "ffmpeg")), "alpha": bool(tools.get("alpha")),
                       "interpolate": bool(tools.get("interpolate")), "providers": providers}}
+
+
+def canvas_layout(workspace: Path) -> dict[str, list[float]]:
+    """Card positions on the production canvas, keyed ``pose:<id>`` or ``clip:<id>``. They are
+    layout only: no production step reads them, and the behavior graph has its own layout."""
+    path = production_dir(workspace) / "canvas.json"
+    data = read_json(path) if path.is_file() else {}
+    positions = data.get("positions") if isinstance(data, dict) else None
+    return positions if isinstance(positions, dict) else {}
+
+
+def save_canvas_layout(workspace: Path, positions: object) -> dict[str, list[float]]:
+    if not isinstance(positions, dict):
+        raise ValueError("Canvas positions must map card keys to [x, y]")
+    clean = {}
+    for key, value in positions.items():
+        kind, _, owner_id = str(key).partition(":")
+        if kind not in {"pose", "clip"}:
+            raise ValueError(f"Unknown canvas card {key!r}")
+        check_id(owner_id, kind.title())
+        if not isinstance(value, list) or len(value) != 2 or not all(
+                isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in value):
+            raise ValueError(f"Canvas position of {key} must be [x, y]")
+        clean[f"{kind}:{owner_id}"] = [round(float(v), 1) for v in value]
+    atomic_json(production_dir(workspace) / "canvas.json", {"format": CANVAS_FORMAT, "positions": clean})
+    return clean
 
 
 def graph_sync(workspace: Path, *, add_missing: bool = False) -> dict:

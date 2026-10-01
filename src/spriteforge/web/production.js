@@ -1,6 +1,9 @@
 "use strict";
-// Production page: approve pose stills, review video takes, edit prompt versions and run jobs.
+// Production page: the canvas of poses and clips, still approval, video takes, prompt versions and jobs.
+// Only the visible tab is drawn: detail views share element ids (render preview, uploads).
 const $ = (id) => document.getElementById(id);
+const TABS = ["canvas", "stills", "clips", "prompts", "jobs"];
+let activeTab = "canvas";
 const media = (path) => "/api/production/media?path=" + encodeURIComponent(path);
 const frameUrl = (path) => "/frame?path=" + encodeURIComponent(path);
 const selection = { pose: null, poseTake: null, clip: null };
@@ -88,9 +91,20 @@ function render() {
   $("canvasInfo").textContent = `canvas ${c.canvas.width}×${c.canvas.height} · base pose ${c.basePose}` +
     (c.anchors ? ` · head top ${c.anchors.headTopY}px · head centre ${c.anchors.headCenterX}px` : " · base still not approved");
   renderTools();
-  renderPoses();
-  renderClips();
-  renderPrompts();
+  renderActive();
+}
+
+function renderActive() {
+  if (!state || !state.initialized) return;
+  clearInterval(previewTimer);
+  if (activeTab !== "stills") { fill($("poseList")); fill($("poseDetail")); }
+  if (activeTab !== "clips") { fill($("clipList")); fill($("clipDetail")); }
+  if (activeTab !== "prompts") fill($("promptList"));
+  if (activeTab !== "canvas") clearCanvas();
+  if (activeTab === "canvas") renderCanvas();
+  else if (activeTab === "stills") renderPoses();
+  else if (activeTab === "clips") renderClips();
+  else if (activeTab === "prompts") renderPrompts();
   renderJobs();
 }
 
@@ -127,8 +141,7 @@ function renderPoses() {
   renderPoseDetail(poses.find((p) => p.id === selection.pose));
 }
 
-function renderPoseDetail(pose) {
-  const root = $("poseDetail");
+function renderPoseDetail(pose, root = $("poseDetail")) {
   if (!pose) { fill(root, h("p", { class: "muted" }, "Add a pose to start.")); return; }
   const ready = pose.takes.filter((t) => t.state === "ready" && t.media && t.media.still);
   const current = ready.find((t) => t.id === selection.poseTake) || ready.find((t) => t.status === "accepted") || ready[ready.length - 1];
@@ -260,7 +273,7 @@ function metricsTable(pose, metrics) {
 function poseTakeCard(pose, take, selected) {
   return h("div", { class: "card" + (selected ? " selected" : ""), "data-take": take.id },
     take.media && take.media.still ? h("img", { class: "thumb", src: media(stillFile(pose, take)),
-      onclick: () => { selection.poseTake = take.id; renderPoses(); } }) : null,
+      onclick: () => { selection.poseTake = take.id; renderActive(); } }) : null,
     h("div", { class: "row" }, badge(take.status), take.qa ? badge("QA " + take.qa.status, take.qa.status) : null,
       h("span", { class: "tiny" }, take.id)),
     h("div", { class: "tiny" }, [stillSource(take.source), take.normalization && take.normalization.method].filter(Boolean).join(" · ")),
@@ -312,19 +325,25 @@ function firstFrameOnly(clip) {
   return clip.generation.lastFrame === "none";
 }
 
-function generateHint(clip, provider) {
+// What blocks generating or importing a take: a missing still at either end.
+function stillsHint(clip) {
   if (!acceptedStill(clip.from)) return `Approve a still for ${clip.from} first`;
   if (!firstFrameOnly(clip) && !acceptedStill(clip.to)) {
     return `Approve a still for ${clip.to}, or set the last frame input to none and adopt a frame of a take as that still`;
   }
+  return "";
+}
+
+function generateHint(clip, provider) {
+  const stills = stillsHint(clip);
+  if (stills) return stills;
   if (clip.generation.provider === "manual") return "Manual clips: copy the prompt and inputs into your generator, then import the video";
   if (!clip.promptPreview.complete) return "Write the prompt placeholders first";
   if (!provider || !provider.keySet) return `Set the API key environment variable for ${clip.generation.provider}`;
   return "";
 }
 
-function renderClipDetail(clip) {
-  const root = $("clipDetail");
+function renderClipDetail(clip, root = $("clipDetail")) {
   clearInterval(previewTimer);
   if (!clip) { fill(root, h("p", { class: "muted" }, "Add a clip between two approved poses.")); return; }
   const provider = state.tools.providers[clip.generation.provider];
@@ -337,6 +356,7 @@ function renderClipDetail(clip) {
     h("div", { class: "row" }, h("h2", {}, clip.id), h("span", { class: "muted" }, `${clip.from} → ${clip.to} · ${clip.kind} · phase ${clip.phase}`)),
     h("div", { class: "inputs", style: "max-width:320px" }, endpoint(clip.from, "first frame"),
       endpoint(clip.to, firstFrameOnly(clip) ? "last frame (not sent)" : "last frame")),
+    inputLinks(clip),
     h("h3", {}, "Settings"), settingsForm(clip),
     h("h3", {}, "Prompt"), promptView(clip.promptPreview),
     h("div", { class: "row", style: "margin-top:8px" },
@@ -350,6 +370,17 @@ function renderClipDetail(clip) {
     archived.length ? h("details", {}, h("summary", {}, `Archive (${archived.length} rejected)`),
       h("div", { class: "grid" }, archived.map((t) => clipTakeCard(clip, t)))) : null,
     h("h3", {}, "Render"), renderPanel(clip));
+}
+
+// The exact images a generator receives (flattened on the background, input scale applied), for
+// generating by hand on a provider's website; import the result as a take.
+function inputLinks(clip) {
+  const link = (end) => h("a", { href: `/api/production/input?clip=${encodeURIComponent(clip.id)}&end=${end}`,
+    download: `${clip.id}-${end}.png`, class: "input-link" }, `${end}.png`);
+  const ends = [acceptedStill(clip.from) ? "first" : null, !firstFrameOnly(clip) && acceptedStill(clip.to) ? "last" : null].filter(Boolean);
+  if (!ends.length) return null;
+  return h("div", { class: "row tiny", style: "margin-top:6px" }, "Generator inputs:", ends.map(link),
+    h("span", {}, "· import the video you make from them as a take"));
 }
 
 function endpoint(poseId, label) {
@@ -437,7 +468,7 @@ function clipTakeCard(clip, take) {
 
 function adoptButton(clip, take) {
   if (clip.kind !== "transition" || take.state !== "ready" || take.status === "rejected") return null;
-  return h("button", { class: "adopt", title: `Make the last frame of this take a candidate still for ${clip.to}; approve it on the Poses tab`,
+  return h("button", { class: "adopt", title: `Make the last frame of this take a candidate still for ${clip.to}; approve it on its pose`,
     onclick: () => startJob("adopt", { pose: clip.to }, { clip: clip.id, take: take.id, frame: "last" }) }, `Last frame → ${clip.to} still`);
 }
 
@@ -652,19 +683,26 @@ async function uploadFile(kind, owner, file) {
 }
 
 function showTab(name) {
-  if (!["stills", "clips", "prompts", "jobs"].includes(name)) name = "stills";
+  if (!TABS.includes(name)) name = "canvas";
+  activeTab = name;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((tab) => { tab.hidden = tab.id !== "tab-" + name; });
   history.replaceState(null, "", "#" + name);
+  renderActive();
+}
+
+function addPoseInteractive() {
+  const id = window.prompt("New pose id (lowercase letters, digits, _ or -)");
+  if (!id) return Promise.resolve(null);
+  const description = window.prompt("Short description (optional)", "") || "";
+  return run(() => api("/api/production/pose", { id, description }), `Pose ${id} added`).then((result) => {
+    if (result) { selection.pose = id; renderActive(); }
+    return result;
+  });
 }
 
 document.querySelectorAll("#tabs button").forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
-$("addPose").addEventListener("click", () => {
-  const id = window.prompt("New pose id (lowercase letters, digits, _ or -)");
-  if (!id) return;
-  const description = window.prompt("Short description (optional)", "") || "";
-  run(() => api("/api/production/pose", { id, description }), `Pose ${id} added`).then(() => { selection.pose = id; renderPoses(); });
-});
+$("addPose").addEventListener("click", addPoseInteractive);
 $("addClip").addEventListener("click", () => {
   const poses = state.poses.map((p) => p.id).join(", ");
   const from = window.prompt(`Start pose (${poses})`, state.character.basePose);
@@ -684,5 +722,6 @@ $("graphSync").addEventListener("click", () => {
   });
 });
 
-showTab((location.hash || "#stills").slice(1));
+setupCanvas();
+showTab((location.hash || "#canvas").slice(1));
 refresh().then(pollJobs).catch((error) => toast(String(error.message || error), true));

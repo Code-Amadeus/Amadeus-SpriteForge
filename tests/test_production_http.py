@@ -11,8 +11,8 @@ cv2 = pytest.importorskip("cv2")
 
 from synthetic import frame_folder, provider_frames, still, write_video  # noqa: E402
 
-from spriteforge.production.clips import import_clip_take  # noqa: E402
-from spriteforge.production.project import add_clip  # noqa: E402
+from spriteforge.production.clips import import_clip_take, prepare  # noqa: E402
+from spriteforge.production.project import add_clip, set_clip  # noqa: E402
 from spriteforge.production.records import load_owner  # noqa: E402
 from spriteforge.server import make_server  # noqa: E402
 
@@ -56,6 +56,28 @@ def test_page_overview_decisions_and_prompt_versions(editor, studio):
     status, result, _ = call(editor, "/api/production/decision", {"kind": "clip", "owner": "smile_in", "take": "bad", "action": "accept"})
     assert status == 400 and "Invalid take id" in result["error"]
     assert call(editor, "/api/production/unknown", {})[0] == 404
+
+
+def test_canvas_positions_and_generator_inputs(editor, studio):
+    assert call(editor, "/static/production-canvas.js")[0] == 200
+    assert call(editor, "/api/production")[1]["canvas"] == {}
+    status, result, _ = call(editor, "/api/production/canvas", {"positions": {"pose:idle": [10, 20.26], "pose:smile": [300, -40]}})
+    saved = {"pose:idle": [10.0, 20.3], "pose:smile": [300.0, -40.0]}
+    assert status == 200 and result["positions"] == saved
+    for bad in ({"node:idle": [0, 0]}, {"pose:Bad": [0, 0]}, {"pose:idle": [0]}, {"pose:idle": [True, 0]},
+                {"pose:idle": [float("nan"), 0]}, ["pose:idle"]):
+        assert call(editor, "/api/production/canvas", {"positions": bad})[0] == 400, bad
+    assert call(editor, "/api/production")[1]["canvas"] == saved
+
+    add_clip(studio.root, "smile_in", "idle", "smile")
+    status, first, headers = call(editor, "/api/production/input?clip=smile_in&end=first")
+    assert status == 200 and headers.get_content_type() == "image/png"
+    prepare(studio.root, "clip", "smile_in", studio.tmp / "handoff")
+    assert first == (studio.tmp / "handoff" / "first.png").read_bytes()
+    set_clip(studio.root, "smile_in", last_frame="none")
+    status, result, _ = call(editor, "/api/production/input?clip=smile_in&end=last")
+    assert status == 400 and "first frame only" in result["error"]
+    assert call(editor, "/api/production/input?clip=smile_in&end=middle")[0] == 400
 
 
 def test_uploads_media_ranges_and_render_job(editor, studio):

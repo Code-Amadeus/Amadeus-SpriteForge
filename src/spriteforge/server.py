@@ -15,7 +15,7 @@ from .workspace import atomic_json, clip_frames, discover, png_frames, read_json
 
 WEB_ROOT = Path(__file__).parent / "web"
 STATIC = {"review.js": "text/javascript", "review.css": "text/css", "preview-media.js": "text/javascript",
-          "production.js": "text/javascript", "production.css": "text/css"}
+          "production.js": "text/javascript", "production-canvas.js": "text/javascript", "production.css": "text/css"}
 
 
 def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = None) -> ThreadingHTTPServer:
@@ -115,6 +115,9 @@ def make_server(workspace: Path, port: int = 7788, layout_path: Path | None = No
                     self.json(200, {"ok": True, "jobs": self.production_api().job_list()})
                 elif parsed.path == "/api/production/media":
                     self.send_file(*self.production_api().media((qs.get("path") or [""])[0]))
+                elif parsed.path == "/api/production/input":
+                    self.send(200, self.production_api().clip_input((qs.get("clip") or [""])[0], (qs.get("end") or [""])[0]),
+                              "image/png")
                 elif parsed.path.startswith("/static/vendor/"):
                     name = parsed.path.rsplit("/", 1)[-1]
                     if name not in {"pixi.min.js", "pixi-basis-ktx2.global.js", "basis_transcoder.js", "basis_transcoder.wasm"}:

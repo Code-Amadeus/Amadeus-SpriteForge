@@ -219,3 +219,20 @@ anime-segmentation code and weights.
 The shipped stills came from the earlier chain alignment, in which the loops were
 aligned to these transitions' last frames. Adopting the same frames reproduces those
 placements within 1 px.
+
+## Production canvas (2026-10-01)
+
+- Python suite: 72 passed, 1 Windows symlink-capability skip. New: canvas positions
+  saved and validated over HTTP (unknown card kinds, bad ids, short, boolean and NaN
+  coordinates refused, the saved layout kept), and the generator-input download
+  byte-identical to `prepare`'s `first.png`, refusing `last` on a first-frame-only clip.
+- `tools/production_smoke.cjs` (Edge) on the synthetic workspace:
+  - 2 pose cards, 3 clip cards and 4 wires (loops draw only their incoming wire);
+  - the seven-step guide; a prompt saved from a clip card as version 2; the clip's
+    side panel with its generator inputs;
+  - a card dragged by its title keeps its new position after a reload;
+  - a wire dragged from the smile port to empty space creates the pose `wink` and the
+    first-frame-only transition `smile_to_wink` (a dotted wire); a video imported on its
+    card, Last frame → wink still, and approval in the side panel turn the wire into a
+    dashed one labelled with the frame number;
+  - then the earlier checks of the list tabs.

@@ -37,6 +37,17 @@ class ProductionApi:
             return {"ok": True, "initialized": False}
         return {"ok": True, "initialized": True, **overview(self.workspace)}
 
+    def clip_input(self, clip_id: str, end: str) -> bytes:
+        """The first or last frame image exactly as a provider receives it (what 'prepare' writes)."""
+        from .clips import clip_inputs
+        from .records import load_character, load_owner
+        if end not in {"first", "last"}:
+            raise ValueError("An input is the clip's first or last frame")
+        first, last, _ = clip_inputs(self.workspace, load_character(self.workspace), load_owner(self.workspace, "clip", clip_id))
+        if end == "last" and last is None:
+            raise ValueError(f"Clip {clip_id} is generated from its first frame only")
+        return first if end == "first" else last
+
     def media(self, raw: str) -> tuple[Path, str]:
         path = resolve_asset(self.workspace, raw)
         if not path.is_relative_to(production_dir(self.workspace)) or path.suffix.lower() not in MEDIA_TYPES \
@@ -74,6 +85,9 @@ class ProductionApi:
                                              str(body.get("to")), body.get("phase") or None)}
         if route == "graph-sync":
             return project.graph_sync(self.workspace, add_missing=bool(body.get("addMissing")))
+        if route == "canvas":
+            with self.lock:
+                return {"positions": project.save_canvas_layout(self.workspace, body.get("positions"))}
         if route == "jobs":
             kind = "pose" if body.get("pose") else "clip"
             adopt = {"clip": str(body.get("clip")), "frame": body.get("frame") or "last"} if kind == "pose" else None
