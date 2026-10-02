@@ -134,7 +134,7 @@ def add_parser(commands) -> None:
     clip_set.add_argument("--last-frame", choices=["still", "none"],
                           help="Transitions: send the end pose still, or generate from the first frame only")
     clip_set.add_argument("--register", action=argparse.BooleanOptionalAction,
-                          help="Register both ends to the pose stills (off: frames are already on the canvas)")
+                          help="Register the whole clip with one first-frame transform (off: frames are already on the canvas)")
     clip_set.add_argument("--crop-black-border", action=argparse.BooleanOptionalAction,
                           help="Crop black borders using one shared rectangle for the entire clip")
     clip_set.add_argument("--crop-black-threshold", type=int, help="Black pixel threshold (0-254)")

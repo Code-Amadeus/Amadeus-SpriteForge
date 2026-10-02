@@ -3,12 +3,13 @@ import hashlib
 
 import pytest
 
-from synthetic import clip_with_take, frame_folder
+from synthetic import clip_with_take, frame_folder, save, still
 from spriteforge.production.clips import import_clip_take
-from spriteforge.production.project import overview, set_clip
+from spriteforge.production.project import add_clip, overview, set_clip
 from spriteforge.production.records import (candidate_render_freshness, load_owner, read_candidate_render,
-                                             read_render, render_freshness, take_dir, decide)
+                                             read_render, render_freshness, save_owner, take_dir, decide)
 from spriteforge.production.render import adopt_processed_take, render_clip, render_take
+from spriteforge.workspace import atomic_json
 
 
 def files(directory):
@@ -102,3 +103,50 @@ def test_failed_adoption_commit_restores_published_output(studio, monkeypatch):
         adopt_processed_take(studio.root, "smile_in", candidate["id"])
     assert load_owner(studio.root, "clip", "smile_in")["acceptedTake"] == previous["id"]
     assert files(published) == original
+
+
+@pytest.mark.parametrize("register", [True, None, False], ids=["registered", "legacy-register-default", "finished-rgba"])
+@pytest.mark.parametrize("legacy_crop", [False, True], ids=["crop-settings", "legacy-crop-defaults"])
+def test_registration_recipe_invalidates_only_old_registered_outputs_without_rewriting_records(studio, register, legacy_crop):
+    clip = add_clip(studio.root, "loop", "idle", "idle")
+    if register is None:
+        del clip["processing"]["register"]
+    else:
+        clip["processing"]["register"] = register
+    if legacy_crop:
+        for key in ("cropBlackBorder", "cropBlackThreshold", "cropBlackMarginPx"):
+            del clip["processing"][key]
+    save_owner(studio.root, "clip", clip)
+    source = studio.tmp / "finished-rgba"
+    for index in range(3):
+        save(source / f"{index:04d}.png", still(studio, "idle"))
+    accepted = import_clip_take(studio.root, "loop", source, fps=30)
+    decide(studio.root, "clip", "loop", accepted["id"], "accept")
+    candidate = import_clip_take(studio.root, "loop", source, fps=30)
+    published = render_clip(studio.root, "loop", log=lambda *_: None)
+    preview = render_take(studio.root, "loop", candidate["id"], log=lambda *_: None)
+    clip = load_owner(studio.root, "clip", "loop")
+    for rendered in (published, preview):
+        assert rendered["recipe"]["processing"] == clip["processing"]
+        if register is False:
+            assert "registrationMethod" not in rendered["recipe"]
+        else:
+            assert rendered["recipe"]["registrationMethod"] == "fixed-head"
+    assert render_freshness(studio.root, clip) == ("current", [])
+    assert candidate_render_freshness(studio.root, clip, candidate["id"]) == ("current", [])
+
+    # These receipts model renders made before the fixed-head algorithm was versioned.
+    published["recipe"].pop("registrationMethod", None)
+    preview["recipe"].pop("registrationMethod", None)
+    atomic_json(studio.root / "production/clips/loop/output/render.json", published)
+    atomic_json(take_dir(studio.root, "clip", "loop", candidate["id"]) / "processed/render.json", preview)
+    before = files(studio.root / "production/clips/loop")
+    expected = ("current", []) if register is False else (
+        "stale", ["processing, playback or mouth settings changed"])
+    assert render_freshness(studio.root, load_owner(studio.root, "clip", "loop")) == expected
+    assert candidate_render_freshness(studio.root, load_owner(studio.root, "clip", "loop"), candidate["id"]) == expected
+    state = overview(studio.root)["clips"][0]
+    assert state["render"]["state"] == expected[0]
+    take = next(take for take in state["takes"] if take["id"] == candidate["id"])
+    assert take["candidateRender"]["state"] == expected[0]
+    assert files(studio.root / "production/clips/loop") == before

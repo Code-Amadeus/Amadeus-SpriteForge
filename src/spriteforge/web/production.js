@@ -464,7 +464,7 @@ function settingsForm(clip, group = null) {
     ["resolution", tx("resolution", "Resolution"), "text", clip.generation.resolution],
     ["seed", tx("seed", "Seed"), "number", clip.generation.seed ?? ""],
     ["input_scale", tx("inputScale", "Input scale"), "number", clip.generation.inputScale],
-    ["register", tx("register", "Register ends to the stills"), "checkbox", clip.processing.register !== false],
+    ["register", tx("register", "Register whole clip from first frame"), "checkbox", clip.processing.register !== false],
     ["margin", tx("margin", "Canvas margin each side (px)"), "number", clip.processing.marginPx || 0],
     ["interpolate", tx("interpolate", "Interpolate ×"), "number", clip.processing.interpolate],
     ["lock_head", tx("lockHead", "Lock head frames"), "number", clip.processing.lockHeadFrames],
