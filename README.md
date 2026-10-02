@@ -195,8 +195,9 @@ clip; the Guide button walks through the workflow in English or Chinese.
 Pose stills are normalised onto one canvas and must match the base still's head top
 and head centre, so every pose overlaps. Each video take keeps its prompt snapshot,
 inputs and provider task; you accept one take per clip and rejected takes stay
-archived with a reason. Processing a candidate registers both ends to the pose
-stills, runs your alpha and interpolation tools, and locks the ends. Explicit
+archived with a reason. Processing a candidate aligns its first frame to the start
+still and uses that same transform throughout, runs your alpha and interpolation
+tools, and locks the ends. Endpoint differences remain visible in QA. Explicit
 adoption publishes a qualified result for graph editing. Optional protection-border
 cropping uses one rectangle across every frame; Settings controls the default for
 new clips and each clip can override it. Prompts are versioned blocks with

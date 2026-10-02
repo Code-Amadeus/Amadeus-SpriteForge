@@ -11,7 +11,7 @@ idle master ──measure──► character contract (canvas, head anchors, tol
                              loop B→B (first = last = B still)
                              out B→A (optional)
         each generation is a take (prompt snapshot, inputs, provider task)
-        process candidate: decode ─► optional whole-clip border crop ─► register both ends ─► pingpong ─► interpolate
+        process candidate: decode ─► optional whole-clip border crop ─► fixed whole-clip registration ─► pingpong ─► interpolate
                 ─► alpha ─► edge guard ─► lock ends to the stills ─► QA
           ▼ human review: adopt / reject and archive / restore
         publish qualified candidate
@@ -179,10 +179,11 @@ against a local fake image provider, including outputs of a different size.
 
 ## Invariants
 
-1. **Approved pose stills are the only geometric authority.** Each clip endpoint is
-   registered, and optionally locked, to the still of its pose, so two clips meeting
-   at a pose share endpoint geometry by construction. This replaces chains such as
-   "align the loop to the processed tail of the transition" and per-clip calibration.
+1. **Approved pose stills are the geometric reference.** A clip's first frame is
+   registered to its start still once. Every frame uses the same crop, scale,
+   rotation and translation, preserving the source motion. The end still supplies
+   QA evidence and optional endpoint locks; a mismatched tail remains a QA finding.
+   Geometry processing belongs to candidate processing and QA before asset adoption.
 2. **Takes are immutable and never deleted.** A take keeps its media, the exact input
    images (a clip's first and last frames, a generated still's base image), the
    rendered prompt with block versions, and the provider request or task. Decisions only change which take a pose or clip accepts, or mark a take
@@ -336,9 +337,10 @@ so the camera is assumed to stay where the clip started. Frames already on the c
 (`register` off) keep their pixels, minus the clip's margin. The base pose cannot be
 adopted: it is the reference every clip starts from.
 
-Rendering T afterwards registers its last frame to the adopted still, so the camera
-drift is near zero and the tail lock changes nothing visible. Keeping `--last-frame
-none` is fine; switching back to `still` makes later takes aim for the adopted still.
+Rendering T uses the same first-frame transform across the whole clip. QA checks its
+tail against the adopted still without changing the transform over time. Keeping
+`--last-frame none` is fine; switching back to `still` makes later takes aim for the
+adopted still.
 
 ## Clips and takes
 
@@ -354,7 +356,7 @@ transition. Phase defaults to `loop`, `out` (ending on the base pose) or `in`.
 | `processing.cropBlackBorder` | off | remove an existing protection border using one crop rectangle for the entire take |
 | `processing.cropBlackThreshold` | 10 | grayscale values at or below this level count as black (0–254) |
 | `processing.cropBlackMarginPx` | 4 | pixels retained around the union of non-black content |
-| `processing.register` | on | register both ends of the take to the pose stills; off takes frames that are already placed on the canvas as they are |
+| `processing.register` | on | align the first frame to the start still and apply that fixed transform to the whole take; off keeps frames already placed on the canvas |
 | `processing.marginPx` | 0 | transparent columns added on each side of the canvas for motion past its edges (hair in the wind) |
 | `processing.interpolate` | 1 | frame multiplier from the interpolate processor |
 | `processing.pingpong` | off | loops only: play forward then backward |
@@ -455,16 +457,25 @@ from or ignore; prompts are yours to explore.
 
 ## Rendering
 
-`production render --clip C` (or `--stale`, or the page) renders the accepted take:
+Studio's **Process & QA** action processes a candidate without changing published
+material; human adoption publishes a qualified result. The CLI's
+`production render --clip C` (or `--stale`) reprocesses an already accepted take.
+Both use the same pipeline:
 
-1. Decode with FFmpeg and an explicit BT.709 limited-to-full conversion.
-2. Register frame 0 to the start still and the last frame to the end still (ORB +
-   RANSAC similarity), interpolating the transform across the clip.
+1. Decode with FFmpeg and an explicit BT.709 limited-to-full conversion, then
+   optionally remove a black protection border using one whole-take rectangle.
+2. Register frame 0 to the start still (ORB + RANSAC similarity) and apply that
+   exact matrix to every frame. The last-frame estimate is diagnostic only: QA
+   reports its disagreement with the first-frame estimate. `render.json` records
+   the applied matrix and method. Earlier renders using interpolated endpoint
+   transforms become stale and require processing again; unregistered renders
+   keep their existing recipe.
 3. Pingpong, then run the interpolate processor (`N × factor` frames for loops,
    `(N − 1) × factor + 1` for transitions).
 4. Run the alpha processor (skipped only for native-alpha frames without interpolation).
 5. Apply the edge guard, blend the locked frames into the stills, write
-   `output/<phase>/000000.png…` and `render.json`, run QA and publish.
+   the candidate's processed frames and `render.json`, then run QA. Endpoint locks
+   remain an explicit blending operation; they do not alter the registration matrix.
 
 Processor contract (`production/tools.json`):
 
@@ -698,7 +709,7 @@ stays blocked until it is resolved with a transition clip or by removing the edg
 | `seedance_transition_pipeline.py` | `seedance` provider, optional whole-clip black-border crop, then render registration |
 | `run_configs/*.json` | take provenance; keys only from the environment |
 | manually aligned `refs/*_aligned.png` | still takes with normalisation, geometry QA and approval |
-| `tools/rebuild_updated_animation_batch.py` | decode, register to both stills, alpha processor |
+| `tools/rebuild_updated_animation_batch.py` | decode, fixed first-frame registration for the whole clip, alpha processor |
 | `tools/calibrate_*.py`, `analyze_front_face_consistency.py` | still QA, intended offsets, drift QA |
 | `tools/lock_transition_tail_to_loop.py` | `lockHeadFrames` / `lockTailFrames` into the pose still |
 | `experiments/gmfss_test/build_graph_gmfss_2x.py` | interpolate processor |

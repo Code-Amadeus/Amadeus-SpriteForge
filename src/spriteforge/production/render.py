@@ -1,7 +1,11 @@
 """Render the accepted take of a clip into its graph-bindable output directory.
 
-decode -> optional clip-wide black-border crop -> register both ends to the pose stills -> pingpong -> interpolate
+decode -> optional clip-wide black-border crop -> fixed first-frame registration -> pingpong -> interpolate
 -> alpha -> edge guard -> lock the ends to the stills -> QA -> publish
+
+Registration maps the first source frame to the start still once, then applies
+that same matrix to every frame. The tail estimate diagnoses drift for QA; it
+does not compensate source motion or scale changes.
 
 A clip with ``marginPx`` renders onto the canvas widened by that many transparent
 columns on each side (for example hair blowing past the canvas); the runtime
@@ -23,7 +27,7 @@ import numpy as np
 
 from ..workspace import atomic_json
 from .checks import clip_report, worst
-from .geometry import composite, estimate_similarity, lerp_matrix, premultiplied_blend, smoothstep, warp
+from .geometry import composite, estimate_similarity, premultiplied_blend, smoothstep, warp
 from .media import copy_durable, crop_black_border, media_frames, read_bgra, sorted_pngs, write_png
 from .mouth import TONE_WATCH, analyze, harmonize
 from .records import (accepted_take, canvas_size, clip_settings, load_character, load_owner, now, output_root, owner_dir,
@@ -109,22 +113,23 @@ def _render(workspace: Path, clip_id: str, *, take_id: str | None = None, keep_w
         first, native_alpha = read_bgra(source[0])
         needs_alpha = not native_alpha or settings["interpolate"] > 1
         registration = drift = None
+        shift = np.array([[0, 0, margin], [0, 0, 0]], np.float64)
         if settings["register"]:
             head_matrix, head_info = estimate_similarity(composite(first, background), composite(start, background))
-            tail_matrix, tail_info = estimate_similarity(composite(read_bgra(source[-1])[0], background),
-                                                         composite(end, background))
-            log(f"{clip_id}: registered head scale {head_info['scale']:.4f}, tail scale {tail_info['scale']:.4f}")
+            _, tail_info = estimate_similarity(composite(read_bgra(source[-1])[0], background),
+                                               composite(end, background))
+            matrix = head_matrix + shift
+            log(f"{clip_id}: fixed head scale {head_info['scale']:.4f}, tail diagnostic scale {tail_info['scale']:.4f}")
             drift = {"scale": round(tail_info["scale"] / head_info["scale"] - 1, 5),
                      **{key: round(tail_info[key] - head_info[key], 3) for key in ("tx", "ty", "rotationDeg")}}
-            registration = {"head": head_info, "tail": tail_info, "drift": drift}
+            registration = {"method": "fixed-head", "matrix": matrix.tolist(),
+                            "head": head_info, "tail": tail_info, "drift": drift}
         border = (*background[::-1], 255) if needs_alpha else (0, 0, 0, 0)
-        shift = np.array([[0, 0, margin], [0, 0, 0]], np.float64)
         if settings["register"] or needs_alpha or settings["pingpong"] or factor > 1:
             registered = []
             for index, path in enumerate(source):
                 frame = read_bgra(path)[0]
                 if settings["register"]:
-                    matrix = lerp_matrix(head_matrix, tail_matrix, index / (len(source) - 1)) + shift
                     frame = warp(frame, matrix, wide_width, height, border)
                 target = work / "registered" / f"{index:06d}.png"
                 write_png(target, composite(frame, background) if needs_alpha else frame)

@@ -115,10 +115,6 @@ def framing_placement(image: np.ndarray, width: int, height: int, framing: dict)
     return placement(scale, width / 2 - scale * (x0 + x1 + 1) / 2, framing["headTop"] * height - scale * top)
 
 
-def lerp_matrix(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
-    return a * (1 - t) + b * t
-
-
 def warp(image: np.ndarray, matrix: np.ndarray, width: int, height: int, border: tuple[int, ...]) -> np.ndarray:
     return cv2.warpAffine(image, matrix, (width, height), flags=cv2.INTER_CUBIC,
                           borderMode=cv2.BORDER_CONSTANT, borderValue=border)

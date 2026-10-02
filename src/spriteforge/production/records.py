@@ -411,6 +411,8 @@ def mouth_prior(character: dict, clip: dict, pose: dict) -> dict:
 def recipe(workspace: Path, clip: dict, *, character: dict | None = None) -> dict:
     """Inputs that determine rendered frames, timing and mouth data, including shared settings."""
     result = {"phase": clip["phase"], "processing": clip["processing"], "playback": clip["playback"]}
+    if clip["processing"].get("register", True):
+        result["registrationMethod"] = "fixed-head"
     if clip.get("mouth"):
         character = character if character is not None else load_character(workspace)
         guess = mouth_prior(character, clip, load_owner(workspace, "pose", clip["to"]))
