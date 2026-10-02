@@ -93,6 +93,55 @@ def write_sequence(directory: Path, frames: list[np.ndarray]) -> list[Path]:
     return paths
 
 
+def crop_black_border(frames: list[Path], directory: Path, *, threshold: int = 10,
+                      margin: int = 4) -> tuple[list[Path], dict]:
+    """Crop every source frame to one clip-wide non-black ROI, without changing the source.
+
+    The bounds include visible pixels from all frames, so motion within the clip
+    keeps its original displacement. Fully transparent RGB does not count as
+    content; cropped files retain the source alpha values.
+    """
+    if not frames:
+        raise ValueError("Black-border crop needs at least one source frame")
+    if isinstance(threshold, bool) or not isinstance(threshold, int) or not 0 <= threshold <= 254:
+        raise ValueError("Black-border threshold must be an integer from 0 to 254")
+    if isinstance(margin, bool) or not isinstance(margin, int) or margin < 0:
+        raise ValueError("Black-border margin must be a non-negative integer")
+    directory = Path(directory)
+    if any(directory.resolve() == Path(path).parent.resolve() for path in frames):
+        raise ValueError("Black-border crop target must be separate from the source frames")
+    if sorted_pngs(directory):
+        raise ValueError(f"Black-border crop target is not empty: {directory}")
+
+    size = bounds = None
+    for path in frames:
+        image = read_bgra(path)[0]
+        current_size = image.shape[1], image.shape[0]
+        if size is None:
+            size = current_size
+        elif current_size != size:
+            raise ValueError("Black-border crop requires all source frames to have the same dimensions")
+        visible = (cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY) > threshold) & (image[:, :, 3] > 0)
+        rows = np.flatnonzero(visible.any(axis=1))
+        if not len(rows):
+            continue
+        columns = np.flatnonzero(visible.any(axis=0))
+        frame_bounds = int(columns[0]), int(rows[0]), int(columns[-1]) + 1, int(rows[-1]) + 1
+        bounds = frame_bounds if bounds is None else (
+            min(bounds[0], frame_bounds[0]), min(bounds[1], frame_bounds[1]),
+            max(bounds[2], frame_bounds[2]), max(bounds[3], frame_bounds[3]))
+    if bounds is None:
+        raise ValueError(f"Black-border crop found no visible pixels above threshold {threshold} in the source clip")
+    width, height = size
+    x0, y0 = max(0, bounds[0] - margin), max(0, bounds[1] - margin)
+    x1, y1 = min(width, bounds[2] + margin), min(height, bounds[3] + margin)
+    targets = [directory / f"{index:06d}.png" for index in range(len(frames))]
+    for source, target in zip(frames, targets):
+        write_png(target, read_bgra(source)[0][y0:y1, x0:x1])
+    return targets, {"sourceSize": {"width": width, "height": height}, "rect": [x0, y0, x1, y1],
+                     "threshold": threshold, "marginPx": margin}
+
+
 def video_info(path: Path) -> dict:
     capture = cv2.VideoCapture(str(path))
     try:

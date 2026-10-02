@@ -20,7 +20,8 @@ from ..workspace import atomic_json, read_json
 from .records import load_character, production_dir
 
 TOOLS_FORMAT = "spriteforge.production.tools.v1"
-UI_DEFAULTS = {"conceptProvider": "qwen-image", "stillProvider": "qwen-image", "batchConfirmThreshold": 3}
+UI_DEFAULTS = {"conceptProvider": "qwen-image", "stillProvider": "qwen-image", "batchConfirmThreshold": 3,
+               "cropBlackBorder": False}
 
 
 def default_tools() -> dict:
@@ -71,15 +72,18 @@ def ui_settings(tools: dict) -> dict:
 
 
 def set_ui_defaults(workspace: Path, changes: object) -> dict:
-    """Update the three UI defaults while retaining machine-local tool configuration."""
+    """Update documented UI defaults while retaining machine-local tool configuration."""
     from .providers import IMAGE_PROVIDERS
 
     if not isinstance(changes, dict) or set(changes) - UI_DEFAULTS.keys():
-        raise ValueError("Settings only accept conceptProvider, stillProvider and batchConfirmThreshold")
+        raise ValueError("Settings only accept conceptProvider, stillProvider, batchConfirmThreshold and cropBlackBorder")
     for key, value in changes.items():
         if key == "batchConfirmThreshold":
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError("batchConfirmThreshold must be a positive integer")
+        elif key == "cropBlackBorder":
+            if not isinstance(value, bool):
+                raise ValueError("cropBlackBorder must be true or false")
         elif not isinstance(value, str) or value not in IMAGE_PROVIDERS:
             raise ValueError(f"{key} must name a supported image provider: {', '.join(IMAGE_PROVIDERS)}")
     tools = load_tools(workspace)

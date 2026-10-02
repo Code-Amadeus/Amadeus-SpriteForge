@@ -1,6 +1,6 @@
 """Render the accepted take of a clip into its graph-bindable output directory.
 
-decode -> register both ends to the pose stills -> pingpong -> interpolate
+decode -> optional clip-wide black-border crop -> register both ends to the pose stills -> pingpong -> interpolate
 -> alpha -> edge guard -> lock the ends to the stills -> QA -> publish
 
 A clip with ``marginPx`` renders onto the canvas widened by that many transparent
@@ -24,7 +24,7 @@ import numpy as np
 from ..workspace import atomic_json
 from .checks import clip_report, worst
 from .geometry import composite, estimate_similarity, lerp_matrix, premultiplied_blend, smoothstep, warp
-from .media import copy_durable, media_frames, read_bgra, sorted_pngs, write_png
+from .media import copy_durable, crop_black_border, media_frames, read_bgra, sorted_pngs, write_png
 from .mouth import TONE_WATCH, analyze, harmonize
 from .records import (accepted_take, canvas_size, clip_settings, load_character, load_owner, now, output_root, owner_dir,
                       recipe, render_stills, still_path, take_media_frames, load_take, take_dir, decide,
@@ -92,6 +92,11 @@ def _render(workspace: Path, clip_id: str, *, take_id: str | None = None, keep_w
         source = media_frames(take_media_frames(workspace, take), tools.get("ffmpeg"), work / "decoded")
         if len(source) < 2:
             raise ValueError("A clip needs at least two frames")
+        source_crop = None
+        if settings["cropBlackBorder"]:
+            source, source_crop = crop_black_border(source, work / "cropped",
+                                                   threshold=settings["cropBlackThreshold"],
+                                                   margin=settings["cropBlackMarginPx"])
         fps = float(take["media"]["fps"])
         log(f"{clip_id}: {len(source)} frames at {fps:g} fps from take {take['id']}")
         factor, wrap = settings["interpolate"], clip["kind"] == "loop"
@@ -177,6 +182,7 @@ def _render(workspace: Path, clip_id: str, *, take_id: str | None = None, keep_w
                   "phase": clip["phase"], "frameCount": total, "sourceFps": fps, "interpolate": factor,
                   "frameIntervalMs": max(1, interval), "loopMode": settings["loopMode"],
                   "registration": registration, "qa": qa,
+                  **({"sourceCrop": source_crop} if source_crop is not None else {}),
                   **({"mouth": mouth} if mouth else {})}
         atomic_json(output / "render.json", render)
         _publish(output, destination)

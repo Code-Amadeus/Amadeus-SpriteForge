@@ -96,10 +96,10 @@ spriteforge production take accept --workspace studio --pose shy SHY_TAKE
 spriteforge production clip add --workspace studio shy_in --from idle --to shy
 spriteforge production prepare --workspace studio --clip shy_in --output handoff/shy_in
 spriteforge production take import --workspace studio --clip shy_in shy_in.mp4
-spriteforge review --workspace studio   # 打开 /production 审批、弃用和渲染
+spriteforge review --workspace studio   # 打开 Studio 做生成、QA 与素材编辑
 ```
 
-生产页默认打开画布：姿态卡显示静帧，片段卡上可以直接改这个片段的 prompt、看 take、生成或导入；
+Studio 默认打开总览。Canvas 工具中的姿态卡显示静帧，片段卡上可以直接改这个片段的 prompt、看 take、生成或导入；
 连线表示哪张静帧作为片段的首帧或尾帧，以及哪张静帧取自哪个 take 的第几帧。从姿态的接口拖线就能新建片段，
 Guide 按钮里有中英文的分步说明。哪个片段什么时候播放，之后在审阅页的行为图里绑定。
 
@@ -114,9 +114,13 @@ Guide 按钮里有中英文的分步说明。哪个片段什么时候播放，�
   服务商任务号。每个片段只采用一个 take，弃用的 take 带原因留档，可恢复。
 - **Prompt 是带版本的数据**：character / 固定约束 / 动作 / 姿态主题分块，保存即新增版本，
   take 记录用到的版本。仍含 `{{PLACEHOLDER: ...}}` 的 prompt 不会提交到付费服务。
-- **渲染**：解码（显式 BT.709）→ 首尾分别配准到两端静帧 → pingpong → 插帧处理器 →
-  抠图处理器 → 边缘保护 → 首尾锁定到静帧 → QA → 整体发布到
+- **处理与采纳**：解码（显式 BT.709）→ 可选去保护黑框 → 首尾分别配准到两端静帧 → pingpong → 插帧处理器 →
+  抠图处理器 → 边缘保护 → 首尾锁定到静帧 → QA；人工采纳后发布到
   `production/clips/<id>/output`，帧间隔等时序写进 `render.json`，`graph-sync` 同步到节点。
+- **去保护黑框**：默认关闭。Settings 可设置新片段的默认开关，片段的 Processing 面板可单独覆盖，
+  并调整黑色阈值和保留边距。扫描整段视频的非黑区域并集，只计算一次裁切框，所有帧使用同一范围，
+  不逐帧自动收紧或缩放。原始 take 保留，处理记录保存裁切范围；从片段取帧为静帧也使用同一全片范围。
+  该步骤处理已有黑框，不会自动给输入造框，也不能补回已经出画的头部。
 - **QA**：静帧几何、断帧、闪烁、首尾配准漂移、首尾接缝、循环接缝、图边接缝；
   阈值沿用接缝色差文档（循环 1.0/1.5/2.2 L*，图边 1.2/1.8/2.5 L*）。
   导出时绑定了生产片段的节点若过期、未同步或 QA 失败，导出会被拒绝。

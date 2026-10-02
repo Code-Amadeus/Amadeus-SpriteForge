@@ -136,12 +136,15 @@ def clip_defaults(kind: str) -> dict:
         "generation": {"provider": "manual", "durationS": 2 if transition else 4, "resolution": "720P",
                        "seed": None, "inputScale": 1.0, "lastFrame": "still"},
         "processing": {"register": True, "interpolate": 1, "pingpong": False, "lockHeadFrames": 6 if transition else 0,
-                       "lockTailFrames": 12 if transition else 0, "edgeGuardPx": 0, "marginPx": 0},
+                       "lockTailFrames": 12 if transition else 0, "edgeGuardPx": 0, "marginPx": 0,
+                       "cropBlackBorder": False, "cropBlackThreshold": 10, "cropBlackMarginPx": 4},
         "playback": {"speed": 1.0, "loopMode": "once_then_hold" if transition else "loop"},
     }
 
 
 def create_clip(workspace: Path, clip_id: str, source: str, target: str, *, phase: str | None = None) -> dict:
+    from .tools import load_tools
+
     character = load_character(workspace)
     if (owner_dir(workspace, "clip", clip_id) / "clip.json").exists():
         raise ValueError(f"Clip {clip_id} already exists")
@@ -154,6 +157,9 @@ def create_clip(workspace: Path, clip_id: str, source: str, target: str, *, phas
     clip = {"format": CLIP_FORMAT, "id": clip_id, "kind": kind, "from": source, "to": target, "phase": phase,
             "prompt": {"template": kind, "subject": f"clip.{clip_id}"}, **clip_defaults(kind),
             "mouth": None, "acceptedTake": None, "notes": ""}
+    # Defaults are captured once; existing clips never inherit later Settings changes.
+    clip["processing"]["cropBlackBorder"] = load_tools(workspace)["defaults"]["cropBlackBorder"]
+    clip_settings(clip)
     save_owner(workspace, "clip", clip)
     return clip
 
@@ -344,6 +350,15 @@ def clip_settings(clip: dict) -> dict:
     register = processing.get("register", True)
     if not isinstance(register, bool):
         raise ValueError("processing.register must be true or false")
+    crop_border = processing.get("cropBlackBorder", False)
+    crop_threshold = processing.get("cropBlackThreshold", 10)
+    crop_margin = processing.get("cropBlackMarginPx", 4)
+    if not isinstance(crop_border, bool):
+        raise ValueError("processing.cropBlackBorder must be true or false")
+    if isinstance(crop_threshold, bool) or not isinstance(crop_threshold, int) or not 0 <= crop_threshold <= 254:
+        raise ValueError("processing.cropBlackThreshold must be an integer between 0 and 254")
+    if isinstance(crop_margin, bool) or not isinstance(crop_margin, int) or crop_margin < 0:
+        raise ValueError("processing.cropBlackMarginPx must be a non-negative integer")
     speed = playback.get("speed", 1.0)
     if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.1 <= speed <= 16:
         raise ValueError("playback.speed must be between 0.1 and 16")
@@ -371,7 +386,8 @@ def clip_settings(clip: dict) -> dict:
             raise ValueError("A frame closedSource needs a non-negative output frame index")
         if source["kind"] == "pose":
             check_id(source.get("pose"), "Pose")
-    return {**values, "register": register, "pingpong": bool(processing.get("pingpong")), "speed": float(speed),
+    return {**values, "register": register, "cropBlackBorder": crop_border, "cropBlackThreshold": crop_threshold,
+            "cropBlackMarginPx": crop_margin, "pingpong": bool(processing.get("pingpong")), "speed": float(speed),
             "loopMode": playback["loopMode"], "lastFrame": last_frame}
 
 

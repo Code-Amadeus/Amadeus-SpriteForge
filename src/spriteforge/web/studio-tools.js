@@ -52,6 +52,10 @@
   "production.lockHead": "Lock head frames",
   "production.lockTail": "Lock tail frames",
   "production.edgeGuard": "Edge guard (px)",
+  "production.cropBlackBorder": "Remove existing protective black border",
+  "production.cropBlackThreshold": "Black threshold (0–254)",
+  "production.cropBlackMargin": "Retained crop margin (px)",
+  "production.cropBlackHint": "Scans the whole clip once and applies one fixed crop to every frame. Removes an existing black border; it does not add borders or restore cropped content.",
   "production.playbackSpeed": "Playback speed",
   "production.playback": "Playback",
   "production.lastFrameInput": "Last frame input (none: first frame only)",
@@ -192,6 +196,8 @@
   "production.defaultStill": "Default final still provider",
   "production.batchThreshold": "Batch confirmation threshold",
   "production.batchThresholdHint": "Ask for a second confirmation above this many requests.",
+  "production.defaultCropBlackBorder": "Remove protective black borders by default for new clips",
+  "production.defaultCropBlackHint": "Applies only to newly created clips. Existing clips keep their own processing settings.",
   "production.defaults": "Production defaults",
   "production.amadeusDir": "Amadeus character pack directory",
   "production.notConfigured": "Not configured",
@@ -275,6 +281,10 @@
   "production.lockHead": "锁定开头帧",
   "production.lockTail": "锁定结尾帧",
   "production.edgeGuard": "边缘保护（px）",
+  "production.cropBlackBorder": "去除素材已有的保护黑框",
+  "production.cropBlackThreshold": "黑色阈值（0–254）",
+  "production.cropBlackMargin": "裁切后保留边距（像素）",
+  "production.cropBlackHint": "扫描全片一次，所有帧使用同一个裁切框。仅去除素材已有的黑框，不会添加黑框，也不能恢复已经截掉的内容。",
   "production.playbackSpeed": "播放速度",
   "production.playback": "播放方式",
   "production.lastFrameInput": "尾帧输入（none：只用首帧）",
@@ -415,6 +425,8 @@
   "production.defaultStill": "默认正式静帧服务商",
   "production.batchThreshold": "批量确认阈值",
   "production.batchThresholdHint": "一次请求超过此数量时再次确认。",
+  "production.defaultCropBlackBorder": "新片段默认去保护黑框",
+  "production.defaultCropBlackHint": "仅应用于之后新建的片段；已有片段保留各自的处理设置。",
   "production.defaults": "生产默认设置",
   "production.amadeusDir": "Amadeus 角色包目录",
   "production.notConfigured": "未配置",
@@ -553,8 +565,9 @@
     let fields = null;
     let baselines = null;
     let renderedLanguage = window.SFStudio.language;
+    const valueOf = el => el.type === "checkbox" ? el.checked : el.value;
     function render(next) {
-    const drafts = fields ? Object.fromEntries(Object.entries(fields).filter(([key, el]) => el.value !== baselines[key]).map(([key, el]) => [key, el.value])) : {};
+    const drafts = fields ? Object.fromEntries(Object.entries(fields).filter(([key, el]) => valueOf(el) !== baselines[key]).map(([key, el]) => [key, valueOf(el)])) : {};
     ctx = next;
     renderedLanguage = window.SFStudio.language;
     const { h, t, state } = ctx;
@@ -573,11 +586,12 @@
     const concept = providerSelect("conceptProvider");
     const still = providerSelect("stillProvider");
     const threshold = h("input", { id: "settings-batchConfirmThreshold", type: "number", min: 1, step: 1, required: true, value: defaults.batchConfirmThreshold ?? 3 });
+    const crop = h("input", { id: "settings-cropBlackBorder", type: "checkbox", checked: defaults.cropBlackBorder === true });
     const save = h("button", { class: "primary", disabled: !names.length }, tr("saveDefaults"));
     save.onclick = () => {
       if (!threshold.reportValidity()) return;
       ctx.run(() => ctx.api("/api/production/tools-settings", { defaults: {
-        conceptProvider: concept.value, stillProvider: still.value, batchConfirmThreshold: Number(threshold.value),
+        conceptProvider: concept.value, stillProvider: still.value, batchConfirmThreshold: Number(threshold.value), cropBlackBorder: crop.checked,
       } }), tr("defaultsSaved"), save);
     };
     const language = h("div", { class: "row", role: "group", "aria-label": tr("language") },
@@ -596,15 +610,19 @@
       h("div", { class: "card row" }, ...["ffmpeg", "alpha", "interpolate"].map((name) => h("span", { class: "row" }, h("strong", {}, name), status(tools[name], name === "ffmpeg" ? "ready" : "configured")))),
       h("h3", {}, tr("defaults")),
       h("div", { class: "form" }, h("label", {}, tr("defaultConcept"), concept), h("label", {}, tr("defaultStill"), still),
-        h("label", {}, tr("batchThreshold"), threshold)),
+        h("label", {}, tr("batchThreshold"), threshold), h("label", {}, tr("defaultCropBlackBorder"), crop)),
       h("p", { class: "tiny" }, tr("batchThresholdHint")),
+      h("p", { class: "tiny" }, tr("defaultCropBlackHint")),
       names.length ? null : h("p", { class: "muted" }, tr("noImageProviders")), save,
       h("h3", {}, tr("amadeusDir")),
       h("p", { class: "mono" }, tools.amadeus && tools.amadeus.packDir || tr("notConfigured")),
       h("p", { class: "tiny" }, tr("readOnly"))));
-    fields = { conceptProvider: concept, stillProvider: still, batchConfirmThreshold: threshold };
-    baselines = Object.fromEntries(Object.entries(fields).map(([key, el]) => [key, el.value]));
-    for (const [key, value] of Object.entries(drafts)) fields[key].value = value;
+    fields = { conceptProvider: concept, stillProvider: still, batchConfirmThreshold: threshold, cropBlackBorder: crop };
+    baselines = Object.fromEntries(Object.entries(fields).map(([key, el]) => [key, valueOf(el)]));
+    for (const [key, value] of Object.entries(drafts)) {
+      if (fields[key].type === "checkbox") fields[key].checked = value;
+      else fields[key].value = value;
+    }
     }
     render(ctx);
     return { cleanup() {}, update(next) {

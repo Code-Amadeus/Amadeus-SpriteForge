@@ -15,6 +15,7 @@ from spriteforge.production.legacy import apply_import, pad_top, plan_import  # 
 from spriteforge.production.media import read_bgra, sorted_pngs  # noqa: E402
 from spriteforge.production.records import (list_owners, list_takes, load_character, load_owner, output_root,  # noqa: E402
                                             read_render)
+from spriteforge.production.tools import default_tools, save_tools  # noqa: E402
 from spriteforge.workspace import atomic_json, read_json  # noqa: E402
 
 
@@ -65,7 +66,11 @@ def test_plan_groups_meeting_endpoints_into_poses_and_finds_the_shipped_variants
 def test_apply_keeps_the_shipped_frames_and_can_run_again(legacy, tmp_path, monkeypatch):
     plan = plan_import(legacy.root, legacy.pack)
     workspace = empty_workspace(tmp_path / "imported")
+    tools = default_tools()
+    tools["defaults"]["cropBlackBorder"] = True
+    save_tools(workspace, tools)
     report = apply_import(workspace, plan, log=quiet)
+    assert all(clip["processing"]["cropBlackBorder"] is False for clip in list_owners(workspace, "clip"))
     character = load_character(workspace)
     base = measure(pose())
     assert (character["anchors"]["headTopY"], character["runtimeClips"]) == (base["headTopY"], ["smile"])

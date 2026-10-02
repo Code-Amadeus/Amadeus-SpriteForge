@@ -28,6 +28,9 @@ CLIP_SETTINGS = {
     "resolution": ("generation", "resolution", str), "seed": ("generation", "seed", int),
     "input_scale": ("generation", "inputScale", float), "last_frame": ("generation", "lastFrame", str),
     "register": ("processing", "register", bool),
+    "crop_black_border": ("processing", "cropBlackBorder", bool),
+    "crop_black_threshold": ("processing", "cropBlackThreshold", int),
+    "crop_black_margin": ("processing", "cropBlackMarginPx", int),
     "interpolate": ("processing", "interpolate", int), "margin": ("processing", "marginPx", int),
     "pingpong": ("processing", "pingpong", bool), "lock_head": ("processing", "lockHeadFrames", int),
     "lock_tail": ("processing", "lockTailFrames", int), "edge_guard": ("processing", "edgeGuardPx", int),
@@ -120,6 +123,8 @@ def set_clip(workspace: Path, clip_id: str, *, mouth: str | None = None, mouth_s
         if value is None:
             continue
         section, key, kind = CLIP_SETTINGS[name]
+        if kind in (bool, int) and type(value) is not kind:
+            raise ValueError(f"{section}.{key} must be {'true or false' if kind is bool else 'an integer'}")
         clip[section][key] = kind(value)
     if mouth is not None:
         if mouth == "off":

@@ -56,13 +56,34 @@ def test_production_entry_points_open_studio(studio_server):
 def test_settings_shared_with_overview_and_origin_checked(studio_server, studio):
     changes = {"stillProvider": "seedream", "conceptProvider": "qwen-image", "batchConfirmThreshold": 4}
     assert request(studio_server, "/api/production/tools-settings", {"defaults": changes})[0] == 200
-    assert request(studio_server, "/api/production")[1]["tools"]["defaults"] == changes
+    assert request(studio_server, "/api/production")[1]["tools"]["defaults"] == {**changes, "cropBlackBorder": False}
     path = studio.root / "production" / "tools.json"
     before = path.read_bytes()
-    for invalid in ({"command": ["evil"]}, {"stillProvider": "wan"}, {"batchConfirmThreshold": True}, {"batchConfirmThreshold": 0}):
+    for invalid in ({"command": ["evil"]}, {"stillProvider": "wan"}, {"batchConfirmThreshold": True},
+                    {"batchConfirmThreshold": 0}, {"cropBlackBorder": "false"}, {"cropBlackBorder": 1}):
         assert request(studio_server, "/api/production/tools-settings", {"defaults": invalid})[0] == 400
         assert path.read_bytes() == before
     assert request(studio_server, "/api/production/tools-settings", {"defaults": changes}, Origin="https://example.com")[0] == 403
+
+
+def test_crop_settings_http_share_creation_and_validation_boundaries(studio_server, studio):
+    from spriteforge.production.project import add_clip
+
+    add_clip(studio.root, "before", "idle", "idle")
+    assert request(studio_server, "/api/production/tools-settings", {"defaults": {"cropBlackBorder": True}})[0] == 200
+    add_clip(studio.root, "after", "idle", "idle")
+    clips = {clip["id"]: clip for clip in request(studio_server, "/api/production")[1]["clips"]}
+    assert clips["before"]["processing"]["cropBlackBorder"] is False
+    assert clips["after"]["processing"]["cropBlackBorder"] is True
+    changes = {"crop_black_border": False, "crop_black_threshold": 0, "crop_black_margin": 0}
+    status, result = request(studio_server, "/api/production/clip-settings", {"clip": "after", "changes": changes})
+    assert status == 200 and result["clip"]["processing"]["cropBlackBorder"] is False
+    path = studio.root / "production/clips/after/clip.json"
+    before = path.read_bytes()
+    for invalid in ({"crop_black_border": "false"}, {"crop_black_threshold": True}, {"crop_black_threshold": 255},
+                    {"crop_black_margin": 1.5}, {"crop_black_margin": -1}):
+        assert request(studio_server, "/api/production/clip-settings", {"clip": "after", "changes": invalid})[0] == 400
+        assert path.read_bytes() == before
 
 
 def test_settings_cli_reads_without_writing_and_uses_same_contract(studio):

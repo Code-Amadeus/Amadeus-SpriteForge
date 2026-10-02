@@ -27,7 +27,8 @@ import numpy as np
 from .checks import still_report
 from .geometry import (composite, estimate_similarity, fit_placement, framing_placement, is_rigid, measure, placement,
                        warp)
-from .media import IMAGE_SUFFIXES, copy_durable, encode_png, image_suffix, media_frames, read_bgra, write_durable, write_png
+from .media import (IMAGE_SUFFIXES, copy_durable, crop_black_border, encode_png, image_suffix, media_frames,
+                    read_bgra, write_durable, write_png)
 from .mouth import default_set
 from .prompts import load_library, pose_prompt, require_complete
 from .providers import ImageJob, get_image_provider
@@ -177,6 +178,11 @@ def adopt_frame(workspace: Path, clip_id: str, take_id: str, *, pose_id: str | N
     settings = clip_settings(clip)
     with tempfile.TemporaryDirectory(prefix="spriteforge-adopt-") as temporary:
         frames = media_frames(take_media_frames(workspace, source), load_tools(workspace).get("ffmpeg"), Path(temporary))
+        source_crop = None
+        if settings["cropBlackBorder"]:
+            frames, source_crop = crop_black_border(frames, Path(temporary) / "cropped",
+                                                   threshold=settings["cropBlackThreshold"],
+                                                   margin=settings["cropBlackMarginPx"])
         index = _frame_index(frame, len(frames))
         inputs = {}
         if settings["register"]:
@@ -188,7 +194,8 @@ def adopt_frame(workspace: Path, clip_id: str, take_id: str, *, pose_id: str | N
         else:  # the frames are already on the canvas, widened by the clip's margin
             framing = placement(1.0, -settings["marginPx"], 0.0)
         take, directory = new_take(workspace, "pose", pose_id, {"provider": "clip", "clip": clip_id, "take": take_id,
-                                                               "frame": index, "frames": len(frames), "note": note})
+                                                               "frame": index, "frames": len(frames), "note": note,
+                                                               **({"sourceCrop": source_crop} if source_crop is not None else {})})
         try:
             name = "source" + frames[index].suffix.lower()
             copy_durable(frames[index], directory / name)
