@@ -11,7 +11,7 @@ idle master ──measure──► character contract (canvas, head anchors, tol
                              loop B→B (first = last = B still)
                              out B→A (optional)
         each generation is a take (prompt snapshot, inputs, provider task)
-        process candidate: decode ─► register both ends to the stills ─► pingpong ─► interpolate
+        process candidate: decode ─► optional whole-clip border crop ─► register both ends ─► pingpong ─► interpolate
                 ─► alpha ─► edge guard ─► lock ends to the stills ─► QA
           ▼ human review: adopt / reject and archive / restore
         publish qualified candidate
@@ -351,6 +351,9 @@ transition. Phase defaults to `loop`, `out` (ending on the base pose) or `in`.
 | `generation.durationS` | 2 / 4 | seconds requested |
 | `generation.inputScale` | 1.0 | shrink the subject inside provider inputs to leave a safety margin |
 | `generation.lastFrame` | `still` | transitions only: `none` generates from the first frame alone, for an end pose that adopts its still from the result |
+| `processing.cropBlackBorder` | off | remove an existing protection border using one crop rectangle for the entire take |
+| `processing.cropBlackThreshold` | 10 | grayscale values at or below this level count as black (0–254) |
+| `processing.cropBlackMarginPx` | 4 | pixels retained around the union of non-black content |
 | `processing.register` | on | register both ends of the take to the pose stills; off takes frames that are already placed on the canvas as they are |
 | `processing.marginPx` | 0 | transparent columns added on each side of the canvas for motion past its edges (hair in the wind) |
 | `processing.interpolate` | 1 | frame multiplier from the interpolate processor |
@@ -360,6 +363,32 @@ transition. Phase defaults to `loop`, `out` (ending on the base pose) or `in`.
 | `processing.edgeGuardPx` | 0 | clear alpha near closed canvas edges |
 | `playback.speed` | 1.0 | playback multiplier |
 | `playback.loopMode` | `once_then_hold` / `loop` | runtime loop mode |
+
+**Protection-border cropping is optional and uses one rectangle for the whole clip.**
+It scans every decoded frame, takes the union of their non-black content, adds the
+configured margin, and applies that same rectangle to every frame before registration.
+It does not tighten the crop separately per frame or rescale individual frames.
+The raw take stays unchanged; `render.json` records `sourceCrop`, including the source
+size and rectangle `[x0, y0, x1, y1]` with exclusive right/bottom bounds. Adopting a
+frame as a pose uses the same full-take crop before selecting the frame.
+
+Settings can enable **Crop protection border for new clips** by default. The default
+is copied when a clip is created; existing clips retain their own setting. Importing
+finished legacy frames explicitly disables cropping to preserve their pixels. Each clip's
+Processing panel overrides it and exposes the threshold and retained margin. Older
+workspaces with no crop fields keep cropping disabled. For example:
+
+```powershell
+spriteforge production settings --workspace studio --crop-black-border
+spriteforge production clip set --workspace studio shy_in --crop-black-border --crop-black-threshold 10 --crop-black-margin 4
+spriteforge production clip set --workspace studio shy_in --no-crop-black-border
+```
+
+Enable this only for material with an existing black protection border. This step
+does not add a border to generator inputs, estimate alpha, or recover a head already
+cut off in the generated video. An all-black sequence is rejected. With registration
+disabled, the cropped frames must already match the output canvas, including its
+side margins. A changed crop setting makes the corresponding render stale.
 
 A clip with a margin renders the canvas widened on both sides. The pose stills are
 widened the same way for locks and QA, and graph seams compare the canvas part only.
@@ -666,7 +695,7 @@ stays blocked until it is resolved with a transition clip or by removing the edg
 | Earlier tool | Production step |
 | --- | --- |
 | `seedance_web_gui.py` presets (neutral/reference frame, in/loop/out prompts) | poses, clips and the prompt library |
-| `seedance_transition_pipeline.py` | `seedance` provider (one request shape) and render registration instead of black-border cropping |
+| `seedance_transition_pipeline.py` | `seedance` provider, optional whole-clip black-border crop, then render registration |
 | `run_configs/*.json` | take provenance; keys only from the environment |
 | manually aligned `refs/*_aligned.png` | still takes with normalisation, geometry QA and approval |
 | `tools/rebuild_updated_animation_batch.py` | decode, register to both stills, alpha processor |

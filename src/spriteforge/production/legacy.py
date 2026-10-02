@@ -368,7 +368,7 @@ def _import_clip(workspace: Path, legacy: Path, shipped: dict, label: str, spec:
     except ValueError:
         add_clip(workspace, label, spec["from"], spec["to"], spec["phase"])
     mouth = spec.get("mouth") or {}
-    set_clip(workspace, label, register=False, margin=spec["marginPx"], interpolate=1, pingpong=False, lock_head=0,
+    set_clip(workspace, label, register=False, crop_black_border=False, margin=spec["marginPx"], interpolate=1, pingpong=False, lock_head=0,
              lock_tail=0, edge_guard=0, speed=1.0, loop_mode=spec["loopMode"], mouth=mouth.get("set"),
              mouth_source=mouth.get("closedSource"))
     if load_owner(workspace, "clip", label).get("acceptedTake"):

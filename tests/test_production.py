@@ -20,10 +20,11 @@ from spriteforge.production.media import read_bgra, sorted_pngs  # noqa: E402
 from spriteforge.production.project import (add_clip, add_pose, graph_sync, overview, set_clip,  # noqa: E402
                                             set_runtime_clips)
 from spriteforge.production.api import ProductionApi  # noqa: E402
-from spriteforge.production.records import (bound_clip, decide, load_character, load_owner, load_take, output_root,  # noqa: E402
-                                            read_render, render_freshness, take_dir)
+from spriteforge.production.records import (bound_clip, clip_settings, decide, load_character, load_owner, load_take,  # noqa: E402
+                                            output_root, read_render, render_freshness, save_owner, take_dir)
 from spriteforge.production.render import render_clip, widen  # noqa: E402
 from spriteforge.production.stills import adopt_frame, approve_still, import_still, set_expected  # noqa: E402
+from spriteforge.production.tools import load_tools, save_tools, set_ui_defaults  # noqa: E402
 from spriteforge.workspace import atomic_json, discover, read_json  # noqa: E402
 
 
@@ -295,6 +296,70 @@ def test_loop_pingpong_wrap_and_staleness(studio):
     state, reasons = render_freshness(studio.root, load_owner(studio.root, "clip", "smile_loop"))
     assert state == "stale" and reasons == ["the accepted take changed"]
     assert read_render(studio.root, "smile_loop")["take"] == take["id"]
+
+
+def test_legacy_crop_defaults_do_not_rewrite_or_stale_a_render(studio):
+    clip_with_take(studio, "legacy", "idle", "idle", 6)
+    clip = load_owner(studio.root, "clip", "legacy")
+    for key in ("cropBlackBorder", "cropBlackThreshold", "cropBlackMarginPx"):
+        del clip["processing"][key]
+    save_owner(studio.root, "clip", clip)
+    render_clip(studio.root, "legacy", log=quiet)
+    clip_path = studio.root / "production/clips/legacy/clip.json"
+    render_path = studio.root / "production/clips/legacy/output/render.json"
+    before = (clip_path.read_bytes(), render_path.read_bytes())
+    set_ui_defaults(studio.root, {"cropBlackBorder": True})
+    settings = clip_settings(load_owner(studio.root, "clip", "legacy"))
+    assert {key: settings[key] for key in ("cropBlackBorder", "cropBlackThreshold", "cropBlackMarginPx")} == {
+        "cropBlackBorder": False, "cropBlackThreshold": 10, "cropBlackMarginPx": 4}
+    assert render_freshness(studio.root, load_owner(studio.root, "clip", "legacy")) == ("current", [])
+    overview(studio.root)
+    assert (clip_path.read_bytes(), render_path.read_bytes()) == before
+
+
+@pytest.mark.parametrize("change", [{"crop_black_border": True}, {"crop_black_threshold": 11}, {"crop_black_margin": 5}])
+def test_explicit_crop_changes_stale_the_published_render(studio, change):
+    clip_with_take(studio, "loop", "idle", "idle", 6)
+    render_clip(studio.root, "loop", log=quiet)
+    set_clip(studio.root, "loop", **change)
+    assert render_freshness(studio.root, load_owner(studio.root, "clip", "loop")) == (
+        "stale", ["processing, playback or mouth settings changed"])
+
+
+@pytest.mark.parametrize("name,value", [("crop_black_border", "false"), ("crop_black_border", 1),
+                                     ("crop_black_threshold", True), ("crop_black_threshold", 1.5),
+                                     ("crop_black_threshold", "10"), ("crop_black_threshold", -1),
+                                     ("crop_black_threshold", 255), ("crop_black_margin", True),
+                                     ("crop_black_margin", 1.5), ("crop_black_margin", "4"),
+                                     ("crop_black_margin", -1)])
+def test_invalid_crop_settings_never_rewrite_a_clip(studio, name, value):
+    clip = add_clip(studio.root, "loop", "idle", "idle")
+    path = studio.root / "production/clips/loop/clip.json"
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        set_clip(studio.root, "loop", **{name: value})
+    assert path.read_bytes() == before
+    field = {"crop_black_border": "cropBlackBorder", "crop_black_threshold": "cropBlackThreshold",
+             "crop_black_margin": "cropBlackMarginPx"}[name]
+    clip["processing"][field] = value
+    with pytest.raises(ValueError):
+        clip_settings(clip)
+
+
+def test_crop_settings_accept_boundary_values_and_invalid_defaults_do_not_create_clips(studio):
+    add_clip(studio.root, "loop", "idle", "idle")
+    for enabled, threshold, margin in ((True, 0, 0), (False, 254, 20)):
+        clip = set_clip(studio.root, "loop", crop_black_border=enabled, crop_black_threshold=threshold,
+                        crop_black_margin=margin)
+        assert clip_settings(clip)["cropBlackBorder"] is enabled
+        assert clip_settings(clip)["cropBlackThreshold"] == threshold
+        assert clip_settings(clip)["cropBlackMarginPx"] == margin
+    tools = load_tools(studio.root)
+    tools["defaults"]["cropBlackBorder"] = "false"
+    save_tools(studio.root, tools)
+    with pytest.raises(ValueError, match="cropBlackBorder"):
+        add_clip(studio.root, "invalid", "idle", "idle")
+    assert not (studio.root / "production/clips/invalid").exists()
 
 
 def test_graph_sync_and_export_only_accept_current_reviewed_renders(studio, monkeypatch):

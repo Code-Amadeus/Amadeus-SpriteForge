@@ -167,7 +167,8 @@ def test_ui_defaults_preserve_tool_configuration_and_expose_only_safe_fields(stu
     assert set_ui_defaults(studio.root, {})["batchConfirmThreshold"] == 3
     assert path.read_bytes() == before
     defaults = set_ui_defaults(studio.root, {"stillProvider": "seedream", "batchConfirmThreshold": 5})
-    assert defaults == {"conceptProvider": "qwen-image", "stillProvider": "seedream", "batchConfirmThreshold": 5}
+    assert defaults == {"conceptProvider": "qwen-image", "stillProvider": "seedream", "batchConfirmThreshold": 5,
+                        "cropBlackBorder": False}
     saved = load_tools(studio.root)
     assert saved["providers"]["wan"]["private"] == "provider-secret"
     assert saved["defaults"]["private"] == "defaults-secret"
@@ -178,6 +179,7 @@ def test_ui_defaults_preserve_tool_configuration_and_expose_only_safe_fields(stu
 
 @pytest.mark.parametrize("changes", [{"batchConfirmThreshold": True}, {"batchConfirmThreshold": 0},
                                     {"batchConfirmThreshold": 1.5}, {"stillProvider": "wan"},
+                                    {"cropBlackBorder": 1}, {"cropBlackBorder": "false"}, {"cropBlackBorder": None},
                                     {"conceptProvider": "unknown"}, {"providers": {}}, {"apiKey": "secret"}, None])
 def test_invalid_ui_settings_never_rewrite_configuration(studio, changes):
     path = studio.root / "production" / "tools.json"
@@ -193,3 +195,16 @@ def test_defaults_show_does_not_initialize_an_empty_workspace(tmp_path):
     with pytest.raises(ValueError, match="no production character"):
         set_ui_defaults(tmp_path, {"batchConfirmThreshold": 4})
     assert not (tmp_path / "production").exists()
+
+
+def test_crop_default_is_captured_only_when_a_clip_is_created(studio):
+    old = add_clip(studio.root, "before", "idle", "idle")
+    assert old["processing"]["cropBlackBorder"] is False
+    assert set_ui_defaults(studio.root, {"cropBlackBorder": True})["cropBlackBorder"] is True
+    new = add_clip(studio.root, "after", "idle", "smile")
+    assert {key: new["processing"][key] for key in ("cropBlackBorder", "cropBlackThreshold", "cropBlackMarginPx")} == {
+        "cropBlackBorder": True, "cropBlackThreshold": 10, "cropBlackMarginPx": 4}
+    set_ui_defaults(studio.root, {"cropBlackBorder": False})
+    by_id = {clip["id"]: clip for clip in overview(studio.root)["clips"]}
+    assert by_id["before"]["processing"]["cropBlackBorder"] is False
+    assert by_id["after"]["processing"]["cropBlackBorder"] is True

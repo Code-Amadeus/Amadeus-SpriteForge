@@ -31,10 +31,12 @@ def add_parser(commands) -> None:
     init.add_argument("--cut-edges", default="bottom", help="Comma list of canvas edges the body may cross")
     status = command("status", "Summarise poses, clips, takes and renders")
     status.add_argument("--json", action="store_true")
-    settings = command("settings", "Show or change Studio's image provider and batch confirmation defaults")
+    settings = command("settings", "Show or change Studio defaults for image providers, confirmation and new clips")
     settings.add_argument("--concept-provider")
     settings.add_argument("--still-provider")
     settings.add_argument("--batch-confirm-threshold", type=int)
+    settings.add_argument("--crop-black-border", action=argparse.BooleanOptionalAction,
+                          help="Crop black borders by default for newly created clips")
     known = command("review-known", "Annotate a current watch issue, or clear its annotation")
     known.add_argument("key")
     annotation = known.add_mutually_exclusive_group(required=True)
@@ -133,6 +135,10 @@ def add_parser(commands) -> None:
                           help="Transitions: send the end pose still, or generate from the first frame only")
     clip_set.add_argument("--register", action=argparse.BooleanOptionalAction,
                           help="Register both ends to the pose stills (off: frames are already on the canvas)")
+    clip_set.add_argument("--crop-black-border", action=argparse.BooleanOptionalAction,
+                          help="Crop black borders using one shared rectangle for the entire clip")
+    clip_set.add_argument("--crop-black-threshold", type=int, help="Black pixel threshold (0-254)")
+    clip_set.add_argument("--crop-black-margin", type=int, help="Pixels retained around the shared crop rectangle")
     clip_set.add_argument("--margin", type=int, help="Transparent columns added on each side of the canvas")
     clip_set.add_argument("--interpolate", type=int, help="Frame multiplier from the interpolate processor")
     clip_set.add_argument("--pingpong", action=argparse.BooleanOptionalAction)
@@ -311,6 +317,7 @@ def run(args) -> None:
         values = {key: value for key, value in {
             "conceptProvider": args.concept_provider, "stillProvider": args.still_provider,
             "batchConfirmThreshold": args.batch_confirm_threshold,
+            "cropBlackBorder": args.crop_black_border,
         }.items() if value is not None}
         print(json.dumps(set_ui_defaults(workspace, values), ensure_ascii=False, indent=2))
     elif action == "review-known":

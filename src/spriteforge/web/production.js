@@ -470,6 +470,9 @@ function settingsForm(clip, group = null) {
     ["lock_head", tx("lockHead", "Lock head frames"), "number", clip.processing.lockHeadFrames],
     ["lock_tail", tx("lockTail", "Lock tail frames"), "number", clip.processing.lockTailFrames],
     ["edge_guard", tx("edgeGuard", "Edge guard (px)"), "number", clip.processing.edgeGuardPx],
+    ["crop_black_border", tx("cropBlackBorder", "Remove existing protective black border"), "checkbox", clip.processing.cropBlackBorder ?? false],
+    ["crop_black_threshold", tx("cropBlackThreshold", "Black threshold (0–254)"), "number", clip.processing.cropBlackThreshold ?? 10],
+    ["crop_black_margin", tx("cropBlackMargin", "Retained crop margin (px)"), "number", clip.processing.cropBlackMarginPx ?? 4],
     ["speed", tx("playbackSpeed", "Playback speed"), "number", clip.playback.speed],
     ["loop_mode", tx("playback", "Playback"), "select", clip.playback.loopMode, ["loop", "once_then_hold"]],
   ];
@@ -485,7 +488,7 @@ function settingsForm(clip, group = null) {
   }
   const groups = {
     generation: ["provider", "duration", "resolution", "seed", "input_scale", "last_frame"],
-    processing: ["register", "margin", "interpolate", "pingpong", "lock_head", "lock_tail", "edge_guard"],
+    processing: ["register", "margin", "interpolate", "pingpong", "lock_head", "lock_tail", "edge_guard", "crop_black_border", "crop_black_threshold", "crop_black_margin"],
     playback: ["speed", "loop_mode"], mouth: ["mouth", "mouth_source"],
   };
   const visible = group ? fields.filter(([key]) => (groups[group] || []).includes(key)) : fields;
@@ -495,11 +498,16 @@ function settingsForm(clip, group = null) {
     const input = type === "select" ? h("select", {}, options.map((o) => h("option", { value: o }, o)))
       : h("input", { type, step: "any", value: type === "checkbox" ? null : value, checked: type === "checkbox" && value });
     if (type === "select") input.value = value;
+    if (key === "crop_black_threshold") { input.min = 0; input.max = 254; input.step = 1; }
+    if (key === "crop_black_margin") { input.min = 0; input.step = 1; }
     input.dataset.setting = key;
     inputs[key] = [input, type];
     return h("label", {}, label, input);
   }));
   const save = h("button", { onclick: () => {
+    for (const key of ["crop_black_threshold", "crop_black_margin"]) {
+      if (inputs[key] && !inputs[key][0].reportValidity()) return;
+    }
     const changes = {};
     for (const [key, [input, type]] of Object.entries(inputs)) {
       if (type === "checkbox") changes[key] = input.checked;
@@ -510,7 +518,8 @@ function settingsForm(clip, group = null) {
     run(() => api("/api/production/clip-settings", { clip: clip.id, changes }), tx("settingsSaved", "Settings saved"));
   } }, tx("saveSettings", "Save settings"));
   return h("div", {}, form, h("div", { class: "row actions" }, save,
-    h("span", { class: "tiny" }, tx("settingsStale", "Changing processing or playback makes the current render stale."))));
+    h("span", { class: "tiny" }, tx("settingsStale", "Changing processing or playback makes the current render stale."))),
+    !group || group === "processing" ? h("p", { class: "tiny" }, tx("cropBlackHint", "Scans the whole clip once and applies one fixed crop to every frame. Removes an existing black border; it does not add borders or restore cropped content.")) : null);
 }
 
 function mouthSetEditor(clip) {

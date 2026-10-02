@@ -184,10 +184,10 @@ spriteforge production take accept --workspace studio --pose shy SHY_TAKE
 spriteforge production clip add --workspace studio shy_in --from idle --to shy
 spriteforge production prepare --workspace studio --clip shy_in --output handoff/shy_in
 spriteforge production take import --workspace studio --clip shy_in shy_in.mp4
-spriteforge review --workspace studio   # open /production to approve, reject and render
+spriteforge review --workspace studio   # open Studio for generation, QA and asset editing
 ```
 
-The production page opens on a canvas: pose cards with their stills, clip cards with
+Studio opens on Overview. Its Canvas tool has pose cards with their stills, clip cards with
 their own prompt, takes and actions, and wires that show which still starts or ends
 each clip and which still was taken from which take. Drag from a pose's port to make a
 clip; the Guide button walks through the workflow in English or Chinese.
@@ -195,9 +195,11 @@ clip; the Guide button walks through the workflow in English or Chinese.
 Pose stills are normalised onto one canvas and must match the base still's head top
 and head centre, so every pose overlaps. Each video take keeps its prompt snapshot,
 inputs and provider task; you accept one take per clip and rejected takes stay
-archived with a reason. Rendering registers both ends of the accepted take to the
-pose stills, runs your alpha and interpolation tools, locks the ends and publishes a
-graph-bindable folder with explicit timing. Prompts are versioned blocks with
+archived with a reason. Processing a candidate registers both ends to the pose
+stills, runs your alpha and interpolation tools, and locks the ends. Explicit
+adoption publishes a qualified result for graph editing. Optional protection-border
+cropping uses one rectangle across every frame; Settings controls the default for
+new clips and each clip can override it. Prompts are versioned blocks with
 placeholders that never reach a paid provider; `examples/prompt-presets/` has an
 optional example of one-sentence video prompts to start from. Pose stills can be generated as
 image edits of the base still (Qwen image edit, Seedream) and video takes with Wan 2.7
